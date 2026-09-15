@@ -1,0 +1,14 @@
+{
+  ".url": {
+    "SYNO.SDS.Kantele": {
+      "type": "url",
+      "allUsers": true,
+      "title": "Kantele",
+      "desc": "What the music server is serving, and what it refused",
+      "icon": "images/kantele_{0}.png",
+      "protocol": "http",
+      "port": "8200",
+      "url": "/config"
+    }
+  }
+}

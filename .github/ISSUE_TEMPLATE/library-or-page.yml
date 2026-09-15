@@ -1,0 +1,32 @@
+name: Something the server got wrong
+description: A menu, a count, a page or a setting that does not say what your library holds
+body:
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you asked for and what came back
+      placeholder: |
+        One album in one folder, and the Albums menu lists it twice.
+    validations:
+      required: true
+  - type: textarea
+    id: library
+    attributes:
+      label: The files behind it
+      description: The folder layout and the tags of one or two of the files, which is usually
+        what decides this. `--report` prints what the server read.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: From `kantele --version`, or beside the name at the top of the config page.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Where the server runs
+      placeholder: macOS 15.6, Apple silicon
+    validations:
+      required: true

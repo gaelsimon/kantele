@@ -1,0 +1,40 @@
+---
+source: tests/wire_snapshots.rs
+expression: xml
+---
+<?xml version="1.0" encoding="utf-8"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+  <specVersion><major>1</major><minor>0</minor></specVersion>
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>
+    <dlna:X_DLNADOC xmlns:dlna="urn:schemas-dlna-org:device-1-0">DMS-1.50</dlna:X_DLNADOC>
+    <friendlyName>Kantele</friendlyName>
+    <manufacturer>Kantele</manufacturer>
+    <modelName>Kantele</modelName>
+    <modelNumber>[version]</modelNumber>
+    <serialNumber>3D5D1CBE8F2A</serialNumber>
+    <UDN>uuid:3d5d1cbe-8f2a-4d1e-9a9c-7c2f0a1b2c3d</UDN>
+    <iconList>
+      <icon><mimetype>image/png</mimetype><width>120</width><height>120</height><depth>24</depth><url>/icon/icon-120.png</url></icon>
+      <icon><mimetype>image/jpeg</mimetype><width>120</width><height>120</height><depth>24</depth><url>/icon/icon-120.jpg</url></icon>
+      <icon><mimetype>image/png</mimetype><width>48</width><height>48</height><depth>24</depth><url>/icon/icon-48.png</url></icon>
+      <icon><mimetype>image/jpeg</mimetype><width>48</width><height>48</height><depth>24</depth><url>/icon/icon-48.jpg</url></icon>
+    </iconList>
+    <serviceList>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType>
+        <serviceId>urn:upnp-org:serviceId:ContentDirectory</serviceId>
+        <SCPDURL>/scpd/ContentDirectory.xml</SCPDURL>
+        <controlURL>/control/ContentDirectory</controlURL>
+        <eventSubURL>/event/ContentDirectory</eventSubURL>
+      </service>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
+        <serviceId>urn:upnp-org:serviceId:ConnectionManager</serviceId>
+        <SCPDURL>/scpd/ConnectionManager.xml</SCPDURL>
+        <controlURL>/control/ConnectionManager</controlURL>
+        <eventSubURL>/event/ConnectionManager</eventSubURL>
+      </service>
+    </serviceList>
+  </device>
+</root>

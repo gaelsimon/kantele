@@ -1,0 +1,108 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getFolders, getShares, rescan, writeConfiguration } from './api';
+
+/// The last request the page made, and a body of the caller's choosing in reply.
+function answering(body: unknown, ok = true, text?: string) {
+  const fetch = vi.fn(async (_path: string, _init?: RequestInit) => ({
+    ok,
+    status: ok ? 200 : 400,
+    statusText: ok ? 'OK' : 'Bad Request',
+    text: async () => text ?? JSON.stringify(body),
+  }));
+  vi.stubGlobal('fetch', fetch);
+  return fetch;
+}
+
+function asked(fetch: ReturnType<typeof answering>) {
+  const [path] = fetch.mock.calls.at(0) ?? ['', undefined];
+  return path;
+}
+
+function sent(fetch: ReturnType<typeof answering>) {
+  const [, init] = fetch.mock.calls.at(0) ?? ['', undefined];
+  return init ?? {};
+}
+
+beforeEach(() => answering({}));
+afterEach(() => vi.unstubAllGlobals());
+
+describe('asking for a folder listing', () => {
+  it('asks for the top of the library with no query at all', async () => {
+    const fetch = answering({});
+    await getFolders('', '', false);
+    expect(asked(fetch)).toBe('/api/folders');
+  });
+
+  it('names the folder it is opening', async () => {
+    const fetch = answering({});
+    await getFolders('Blue Note', '', false);
+    expect(asked(fetch)).toBe('/api/folders?under=Blue+Note');
+  });
+
+  it('carries the search and the changed filter', async () => {
+    const fetch = answering({});
+    await getFolders('', 'kremerata', true);
+    expect(asked(fetch)).toBe('/api/folders?q=kremerata&changed=true');
+  });
+
+  it('carries the tag a listener is chasing', async () => {
+    const fetch = answering({});
+    await getFolders('', '', false, 'album-artist');
+    expect(asked(fetch)).toBe('/api/folders?missing=album-artist');
+  });
+
+  /// Null is how the page says "no filter", and a literal "null" in the query would be a fault.
+  it('leaves the tag out where none is chased', async () => {
+    const fetch = answering({});
+    await getFolders('', '', false, null);
+    expect(asked(fetch)).toBe('/api/folders');
+  });
+
+  it('escapes a folder name that would break the query', async () => {
+    const fetch = answering({});
+    await getFolders('Rock & Roll/AC?DC', '', false);
+    expect(asked(fetch)).toBe('/api/folders?under=Rock+%26+Roll%2FAC%3FDC');
+  });
+});
+
+describe('the other routes', () => {
+  it('asks the picker for images only when it wants an icon', async () => {
+    const fetch = answering({});
+    await getShares('/volume1', true);
+    expect(asked(fetch)).toBe('/api/shares?under=%2Fvolume1&images=true');
+  });
+
+  it('rescans everything where no folder is named', async () => {
+    const fetch = answering({});
+    await rescan();
+    expect(asked(fetch)).toBe('/api/rescan');
+  });
+
+  it('escapes the folder it rescans', async () => {
+    const fetch = answering({});
+    await rescan('Blue Note/Sierra');
+    expect(asked(fetch)).toBe('/api/rescan?folder=Blue%20Note%2FSierra');
+  });
+
+  it('sends a settings write as a JSON body', async () => {
+    const fetch = answering({});
+    await writeConfiguration({ 'scan.threads': 8 });
+    expect(sent(fetch).method).toBe('PUT');
+    expect(sent(fetch).body).toBe('{"scan.threads":8}');
+  });
+});
+
+describe('when the server refuses', () => {
+  /// The server writes its refusals to be read, so the page shows them rather than a status code.
+  it('throws the server own words', async () => {
+    answering(null, false, 'scan.cover_art is held by the environment');
+    await expect(writeConfiguration({})).rejects.toThrow(
+      'scan.cover_art is held by the environment',
+    );
+  });
+
+  it('falls back to the status where the server said nothing', async () => {
+    answering(null, false, '   ');
+    await expect(writeConfiguration({})).rejects.toThrow('400 Bad Request');
+  });
+});

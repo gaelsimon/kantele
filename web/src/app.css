@@ -1,0 +1,128 @@
+/* The palette and the type of the mockup. No web font: a NAS may have no route to the internet. */
+:root {
+  --paper: #f4f3ef;
+  --surface: #ffffff;
+  --row: #faf9f5;
+  --edge: #c9c5bc;
+  --hairline: #e5e2da;
+  --ink: #2a2e33;
+  --ink-soft: #4b5563;
+  --muted: #6b7280;
+  --faint: #9ca3af;
+  --link: #1f4b99;
+  --link-strong: #163772;
+  --warn: #b45309;
+  --warn-paper: #fdf6e7;
+  --warn-edge: #e0c889;
+  --warn-ink: #6b4a12;
+
+  --text: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --mono: ui-monospace, Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--text);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+input {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--link);
+}
+a:hover {
+  color: var(--link-strong);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  padding: 24px 28px;
+}
+
+.cap {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.dim {
+  color: var(--muted);
+}
+
+.problem {
+  color: var(--warn);
+}
+
+.button {
+  height: 36px;
+  padding: 0 18px;
+  border: 1px solid var(--ink);
+  display: inline-flex;
+  align-items: center;
+  font-weight: 600;
+  font-size: 14px;
+  background: var(--surface);
+}
+.button:hover:not(:disabled) {
+  background: var(--row);
+}
+.button:disabled {
+  border-color: var(--faint);
+  color: var(--faint);
+  cursor: default;
+}
+
+.quiet {
+  color: var(--link);
+  font-size: 13px;
+  white-space: nowrap;
+  padding: 0;
+}
+.quiet:hover {
+  color: var(--link-strong);
+  text-decoration: underline;
+}
+.quiet:disabled {
+  color: var(--faint);
+  cursor: default;
+  text-decoration: none;
+}
+
+@media (max-width: 720px) {
+  .card {
+    padding: 18px 20px;
+  }
+}

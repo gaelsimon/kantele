@@ -1,0 +1,18 @@
+---
+source: tests/wire_snapshots.rs
+expression: readable(&didl)
+---
+<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/">
+<item id="t0000000000000001" parentID="0" restricted="1">
+<dc:title>Rock &amp; Roll &lt;live&gt; &quot;take 2&quot;</dc:title>
+<upnp:genre>Latin</upnp:genre>
+<dc:date>1994-01-01</dc:date>
+<upnp:album>A &amp; B</upnp:album>
+<upnp:artist>Sierra Maestra</upnp:artist>
+<dc:creator>Sierra Maestra</dc:creator>
+<upnp:artist role="AlbumArtist">Sierra Maestra</upnp:artist>
+<upnp:originalTrackNumber>1</upnp:originalTrackNumber>
+<res duration="0:00:01.000" size="10" bitsPerSample="16" bitrate="176400" sampleFrequency="44100" nrAudioChannels="2" protocolInfo="http-get:*:audio/x-flac:DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000">http://192.0.2.1:8200/media/t0000000000000001</res>
+<upnp:class>object.item.audioItem.musicTrack</upnp:class>
+</item>
+</DIDL-Lite>

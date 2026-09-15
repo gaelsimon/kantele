@@ -1,0 +1,31 @@
+# The gate that holds this server against another server's answers, and the corpus it reads.
+# Both live under _internal.
+/tests/reference_parity.rs
+
+# Rust
+/target/
+**/*.rs.bk
+
+# Built packages
+/dist/
+
+# Local config and state
+/kantele.toml
+*.db
+*.db-wal
+*.db-shm
+
+# Snapshot review artefacts
+**/*.snap.new
+
+# The front end's dependencies. The built page under assets/web is committed, so a clone builds
+# and tests with no node at all; tools/package-spk.sh rebuilds it and refuses a stale one.
+web/node_modules/
+
+# Tooling and editors
+__pycache__/
+.idea/
+.DS_Store
+
+# Working notes and deployment scratch.
+/_internal/

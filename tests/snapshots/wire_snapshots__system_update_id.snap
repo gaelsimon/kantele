@@ -1,0 +1,12 @@
+---
+source: tests/wire_snapshots.rs
+expression: "readable(&contentdirectory::simple_envelope(\"GetSystemUpdateID\",\n\"ContentDirectory\", \"Id\", \"1\"))"
+---
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+<s:Body>
+<u:GetSystemUpdateIDResponse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
+<Id>1</Id>
+</u:GetSystemUpdateIDResponse>
+</s:Body>
+</s:Envelope>

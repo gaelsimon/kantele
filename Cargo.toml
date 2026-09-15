@@ -1,0 +1,40 @@
+[package]
+name = "kantele"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+description = "A UPnP/DLNA music server for the amplifier in the listening room"
+repository = "https://github.com/gaelsimon/kantele"
+
+[dependencies]
+anyhow = "1.0.104"
+arc-swap = "1.9.2"
+axum = "0.8.9"
+hex = "0.4.3"
+if-addrs = "0.15.0"
+libc = "0.2.189"
+lofty = "0.25.1"
+mime = "0.3.17"
+notify = "8.2.0"
+notify-debouncer-full = "0.7.0"
+quick-xml = "0.42.0"
+rayon = "1.12.0"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+socket2 = "0.6.5"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "fs", "macros", "signal", "sync", "time"] }
+tokio-stream = "0.1.19"
+toml = "1.1.5"
+toml_edit = "0.25"
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.1", features = ["fs", "trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+unicode-normalization = "0.1.25"
+uuid = { version = "1.26.0", features = ["v4"] }
+
+[dev-dependencies]
+insta = "1.48.0"

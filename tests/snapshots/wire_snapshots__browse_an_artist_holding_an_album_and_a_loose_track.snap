@@ -1,0 +1,15 @@
+---
+source: tests/wire_snapshots.rs
+expression: "readable(&browse(&library, artist.as_str(),\ncontentdirectory::BrowseFlag::DirectChildren, 10))"
+---
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+<s:Body>
+<u:BrowseResponse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
+<Result>&lt;DIDL-Lite xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/&quot; xmlns:dc=&quot;http://purl.org/dc/elements/1.1/&quot; xmlns:upnp=&quot;urn:schemas-upnp-org:metadata-1-0/upnp/&quot; xmlns:dlna=&quot;urn:schemas-dlna-org:metadata-1-0/&quot;&gt;&lt;container id=&quot;al-74a3d9055aef241e&quot; parentID=&quot;ar-4fd8dfd0637a3306&quot; restricted=&quot;1&quot; searchable=&quot;1&quot; childCount=&quot;2&quot;&gt;&lt;dc:title&gt;!Dundunbanza!&lt;/dc:title&gt;&lt;upnp:genre&gt;Latin&lt;/upnp:genre&gt;&lt;dc:date&gt;1994-01-01&lt;/dc:date&gt;&lt;upnp:artist&gt;Sierra Maestra&lt;/upnp:artist&gt;&lt;dc:creator&gt;Sierra Maestra&lt;/dc:creator&gt;&lt;upnp:artist role=&quot;AlbumArtist&quot;&gt;Sierra Maestra&lt;/upnp:artist&gt;&lt;upnp:class&gt;object.container.album.musicAlbum&lt;/upnp:class&gt;&lt;/container&gt;&lt;item id=&quot;tr-3ae5ca07e6c4a012&quot; parentID=&quot;ar-4fd8dfd0637a3306&quot; restricted=&quot;1&quot;&gt;&lt;dc:title&gt;No Me Llores Más&lt;/dc:title&gt;&lt;upnp:genre&gt;Latin&lt;/upnp:genre&gt;&lt;dc:date&gt;1994-01-01&lt;/dc:date&gt;&lt;upnp:artist&gt;Sierra Maestra&lt;/upnp:artist&gt;&lt;dc:creator&gt;Sierra Maestra&lt;/dc:creator&gt;&lt;upnp:originalTrackNumber&gt;1&lt;/upnp:originalTrackNumber&gt;&lt;res duration=&quot;0:04:03.026&quot; size=&quot;27296681&quot; bitsPerSample=&quot;16&quot; bitrate=&quot;176400&quot; sampleFrequency=&quot;44100&quot; nrAudioChannels=&quot;2&quot; protocolInfo=&quot;http-get:*:audio/x-flac:DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000&quot;&gt;http://192.0.2.1:8200/media/tr-3ae5ca07e6c4a012&lt;/res&gt;&lt;upnp:class&gt;object.item.audioItem.musicTrack&lt;/upnp:class&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;</Result>
+<NumberReturned>2</NumberReturned>
+<TotalMatches>2</TotalMatches>
+<UpdateID>1</UpdateID>
+</u:BrowseResponse>
+</s:Body>
+</s:Envelope>

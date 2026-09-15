@@ -1,0 +1,84 @@
+---
+source: src/index/store/mod.rs
+expression: "format!(\"schema {SCHEMA_VERSION} playlist {PLAYLIST_VERSION}\\n{payload}\\n{playlist}\")"
+---
+schema 2 playlist 1
+{
+  "tags": {
+    "title": "Juana Peña",
+    "artists": [
+      "Sierra Maestra",
+      "Juan de Marcos"
+    ],
+    "album_artists": [
+      "Sierra Maestra"
+    ],
+    "artist_sorts": [
+      "Sierra Maestra",
+      "Marcos, Juan de"
+    ],
+    "album_artist_sorts": [
+      "Sierra Maestra"
+    ],
+    "composer_sorts": [
+      "Rodríguez, Arsenio"
+    ],
+    "album": "!Dundunbanza!",
+    "composers": [
+      "Arsenio Rodríguez"
+    ],
+    "genres": [
+      "Son",
+      "Latin"
+    ],
+    "date": "1994",
+    "track_number": 1,
+    "track_total": 14,
+    "disc_number": 1,
+    "disc_total": 2,
+    "disc_subtitle": "Cuba",
+    "work": "Suite",
+    "movement_name": "Allegro",
+    "movement_number": 2,
+    "grouping": "Sessions",
+    "compilation": true,
+    "musicbrainz_release_id": "2a1b8f1c-0000-4000-8000-000000000001",
+    "musicbrainz_release_track_id": "2a1b8f1c-0000-4000-8000-000000000002",
+    "musicbrainz_recording_id": "2a1b8f1c-0000-4000-8000-000000000003",
+    "musicbrainz_artist_ids": [
+      "2a1b8f1c-0000-4000-8000-000000000004",
+      "2a1b8f1c-0000-4000-8000-000000000005"
+    ],
+    "musicbrainz_album_artist_ids": [
+      "2a1b8f1c-0000-4000-8000-000000000006"
+    ]
+  },
+  "properties": {
+    "duration": {
+      "secs": 243,
+      "nanos": 26000000
+    },
+    "sample_rate": 44100,
+    "bit_depth": 16,
+    "channels": 2,
+    "bitrate_bps": 1411000
+  },
+  "artwork": {
+    "file": "a/cover.jpg",
+    "index": 0,
+    "mime": "image/jpeg",
+    "dimensions": [
+      500,
+      500
+    ]
+  }
+}
+{
+  "title": "Party",
+  "entries": [
+    {
+      "target": "a/1.flac",
+      "display": "Sierra Maestra - Juana Peña"
+    }
+  ]
+}

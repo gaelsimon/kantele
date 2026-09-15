@@ -1,0 +1,80 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  synology:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          target: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: mlugg/setup-zig@v2
+      - run: cargo install cargo-zigbuild --locked
+      # librsvg is what ImageMagick renders the icon through; without it the SVG comes out wrong.
+      - run: sudo apt-get update && sudo apt-get install -y imagemagick librsvg2-bin
+      - run: tools/package-spk.sh x86_64 armv8
+      - uses: actions/upload-artifact@v7
+        with:
+          name: synology
+          path: dist/*.spk
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          target: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: web
+      - run: git diff --exit-code -- assets/web
+      - run: cargo build --release --target aarch64-apple-darwin
+      - run: cargo build --release --target x86_64-apple-darwin
+      - name: One binary for both Macs
+        run: |
+          mkdir -p dist/kantele-macos
+          lipo -create -output dist/kantele-macos/kantele \
+            target/aarch64-apple-darwin/release/kantele \
+            target/x86_64-apple-darwin/release/kantele
+          cp kantele.example.toml dist/kantele-macos/
+          cp packaging/macos/com.kantele.server.plist packaging/macos/README.md dist/kantele-macos/
+          install -m 755 packaging/macos/install.sh packaging/macos/uninstall.sh dist/kantele-macos/
+          tar -czf "dist/kantele-${GITHUB_REF_NAME}-macos.tar.gz" -C dist kantele-macos
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: dist/*.tar.gz
+
+  publish:
+    needs: [synology, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          body: |
+            Nothing here is signed. Synology asks for a trust level of "Any publisher" in
+            Package Center, and macOS asks for one right-click and Open on the first start.

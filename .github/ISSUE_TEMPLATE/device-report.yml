@@ -1,0 +1,49 @@
+name: Device report
+description: A control point or a renderer, and how far it got
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A device nobody here owns is the one thing this project cannot test for itself, so a report
+        of one that works is as useful as a report of one that does not.
+  - type: input
+    id: device
+    attributes:
+      label: The device
+      description: Make and model, and the app if the control point is one.
+      placeholder: Marantz Model 40N, driven from Denon HEOS on Android
+    validations:
+      required: true
+  - type: checkboxes
+    id: got
+    attributes:
+      label: What it did
+      options:
+        - label: Found the server on its own
+        - label: Browsed the menus
+        - label: Searched
+        - label: Played a track
+        - label: Jumped to a point in a track
+  - type: textarea
+    id: stopped
+    attributes:
+      label: Where it stopped
+      description: What you saw, and what the log said at that moment. Every request is traced
+        there with the user agent that sent it.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: From `kantele --version`, or beside the name at the top of the config page.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Where the server runs
+      placeholder: Synology DS218+, DSM 7.2
+    validations:
+      required: true

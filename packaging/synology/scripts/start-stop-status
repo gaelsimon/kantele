@@ -1,0 +1,49 @@
+#!/bin/sh
+# Runs as the package user. The store, the log and the configuration live under the package's var
+# folder, which DSM keeps on the volume and across upgrades.
+PKG_DEST="${SYNOPKG_PKGDEST:-/var/packages/kantele/target}"
+PKG_VAR="${SYNOPKG_PKGVAR:-/var/packages/kantele/var}"
+BIN="$PKG_DEST/bin/kantele"
+CONF="$PKG_VAR/kantele.toml"
+LOG="$PKG_VAR/kantele.log"
+PID_FILE="$PKG_VAR/kantele.pid"
+
+running() {
+  [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+}
+
+case "$1" in
+  start)
+    if running; then exit 0; fi
+    mkdir -p "$PKG_VAR"
+    # The first start gets the example file, which documents every key beside its default.
+    [ -f "$CONF" ] || cp "$PKG_DEST/share/kantele.example.toml" "$CONF"
+    # One rotation per start keeps the log bounded without a daemon to do it.
+    if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 10485760 ]; then mv -f "$LOG" "$LOG.1"; fi
+    KANTELE_STATE="$PKG_VAR" nohup "$BIN" --config "$CONF" >> "$LOG" 2>&1 &
+    echo $! > "$PID_FILE"
+    exit 0
+    ;;
+  stop)
+    if running; then
+      kill -TERM "$(cat "$PID_FILE")"
+      # The server sends byebye at once and leaves within its own drain allowance.
+      i=0
+      while running && [ $i -lt 20 ]; do sleep 0.5; i=$((i+1)); done
+      running && kill -KILL "$(cat "$PID_FILE")"
+    fi
+    rm -f "$PID_FILE"
+    exit 0
+    ;;
+  status)
+    if running; then exit 0; fi
+    exit 3
+    ;;
+  log)
+    echo "$LOG"
+    exit 0
+    ;;
+  *)
+    exit 1
+    ;;
+esac

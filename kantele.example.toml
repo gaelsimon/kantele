@@ -1,0 +1,108 @@
+# Kantele, configured. Every key is optional; this file shows the defaults.
+#
+# Precedence: this file, then the environment, then the command line. A key nobody recognises is
+# refused rather than ignored, so a typo stops the server instead of silently never applying.
+
+# The library to serve. `kantele <folder>` names it instead, and wins. Several folders are a
+# list: `content_dir = ["/volume1/music", "/volume2/more"]`. They are one library, told apart by
+# their names, so two called `music` are refused and one inside another is too. With several, the
+# folder view opens onto one entry per folder and a path pattern under [scan] starts with its name.
+#
+# Left unset, the server starts anyway and the page opens on Settings to choose one.
+# content_dir = "/volume1/music"
+
+# What control points display. KANTELE_NAME overrides it.
+friendly_name = "Kantele"
+
+# Content and SOAP. Zero asks the operating system for a free port. KANTELE_PORT overrides it.
+http_port = 8200
+
+# Where the store lives. Unset means the platform's data folder. KANTELE_STATE overrides it.
+# Never inside the music folder: a share may be read-only, and a database beside the music writes
+# to the array on every scan.
+#
+# One store serves one library. Two libraries on one machine want a state_dir each, or they share
+# one file and each start reads every file again. Pointed at a folder the store's rows do not
+# name, a start walks before it answers, and says so in the log. The same library at another
+# mount point keeps its whole cache.
+# state_dir = "/volume1/@appstore/kantele"
+
+# A folder every SOAP exchange is written to, one subfolder per client, request and response
+# verbatim, for `tools/replay_clients.py`. Unset writes nothing. KANTELE_CAPTURE overrides it.
+# capture_dir = "/volume1/@appstore/kantele/captures"
+
+[scan]
+# Threads reading tags. Beyond a handful an ARM NAS saturates its disk and goes slower.
+threads = 4
+
+# Minutes between looks at the library for changes nothing announced. A Synology allows fewer
+# folder watches than a library has folders, so the watcher refuses there and this is how a new
+# album appears. A look walks the tree and compares it with what the store remembers; only the
+# folders that differ are read, and a look that finds nothing opens no file and writes nothing.
+# Zero turns it off.
+sweep_minutes = 15
+
+# Names and paths never walked, on top of dotfiles and the platform's own folders, which never are.
+# A pattern without a slash is held against every file and folder name; one with a slash, against
+# the path under the music folder. `*` stands for anything within one name, `?` for one character,
+# and case does not matter. A folder that matches is not entered, so nothing under it is either.
+# exclude = ["*.iso", "Podcasts", "Various/Live*"]
+exclude = []
+
+# Which cover wins where a folder holds an image and the file carries a picture of its own.
+# `folder` takes cover.jpg and its like, `embedded` takes the picture in the file. Whichever is
+# not preferred is still used where the other is missing. Changing this reads the library again.
+cover_art = "folder"
+
+[menus]
+# How many albums a selection may hold before the menus stop narrowing and show them.
+album_threshold = 24
+
+# A long axis stays one sorted list, which is what a control point pages. A listing holding at
+# least this many values also offers an `A-Z` entry at the top, leading to one container per
+# letter, with `#` holding everything starting with neither a letter nor an accented one. It
+# removes nothing from the list, so it is on. Zero turns the entry off.
+alpha_group = 100
+
+# How many of the newest files the `Recently added` menu is built from. It lists the albums those
+# files belong to, newest first, and the loose files among them. The date is when this server
+# first saw the file, kept in the store, so retagging moves nothing. Zero removes the menu.
+recent = 300
+
+# The menus a listener is offered, in this order. An axis left out is offered nowhere; the folder
+# view, the playlists and `[untagged]` do not depend on it. `date` offers years. `quality` sums a
+# file up in one word, from Lossy up through CD, HD, DXD and DSD64; `bits`, `channels`,
+# `frequency` and `type` offer the four figures behind that word. `work` offers the works a
+# tagger named.
+axes = ["genre", "artist", "all-artists", "composer", "date", "quality"]
+
+# Words looked past when ordering a name or a title that has no sort tag, so The Beatles files
+# under B. A whole word, or a prefix ending in an apostrophe such as "L'". A sort tag a tagger wrote
+# always wins, and the letter index follows the same order. An empty list looks past nothing.
+sort_ignore = ["The"]
+
+# Control points that need an answer differing from the conservative one. There are no built-in
+# profiles: this file is where a new one is added, without waiting for a release. A client no
+# profile names is answered conservatively and written to the log once, by what it calls itself.
+#
+# [[clients]]
+# name = "example"
+# # Matched, case-insensitively, against the user agent and X-AV-Client-Info.
+# matches = ["Example-Renderer"]
+# # Which element carries a role: artist, author, or both.
+# roles = "artist"
+# # Send repeated values as one string joined with this, instead of an element each.
+# join = ", "
+# # Hold a media stream to this multiple of the rate the file plays at.
+# rate_cap = 2.0
+#
+# # Per format, keyed on the MIME type this server would otherwise send.
+# [clients.formats."audio/x-dsf"]
+# mime = "audio/dsf"
+# # An empty profile claims none, where a renderer refuses the one that is true.
+# dlna_profile = ""
+
+# A PNG or a JPEG published instead of the icon this server ships, which is Google's Material
+# `library_music` glyph. The type and the size are read from the file's bytes rather than its name,
+# and a file that is not an image is refused with a log line rather than served as one.
+# icon = "/volume1/music/.kantele/icon.png"

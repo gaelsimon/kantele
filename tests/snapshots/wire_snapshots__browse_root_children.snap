@@ -1,0 +1,15 @@
+---
+source: tests/wire_snapshots.rs
+expression: "readable(&browse(&library(), ObjectId::ROOT,\ncontentdirectory::BrowseFlag::DirectChildren, 10))"
+---
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+<s:Body>
+<u:BrowseResponse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
+<Result>&lt;DIDL-Lite xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/&quot; xmlns:dc=&quot;http://purl.org/dc/elements/1.1/&quot; xmlns:upnp=&quot;urn:schemas-upnp-org:metadata-1-0/upnp/&quot; xmlns:dlna=&quot;urn:schemas-dlna-org:metadata-1-0/&quot;&gt;&lt;container id=&quot;music&quot; parentID=&quot;0&quot; restricted=&quot;1&quot; searchable=&quot;1&quot; childCount=&quot;3&quot;&gt;&lt;dc:title&gt;3 items&lt;/dc:title&gt;&lt;upnp:class&gt;object.container&lt;/upnp:class&gt;&lt;/container&gt;&lt;container id=&quot;folders&quot; parentID=&quot;0&quot; restricted=&quot;1&quot; searchable=&quot;1&quot; childCount=&quot;3&quot;&gt;&lt;dc:title&gt;[folder view]&lt;/dc:title&gt;&lt;upnp:class&gt;object.container&lt;/upnp:class&gt;&lt;/container&gt;&lt;/DIDL-Lite&gt;</Result>
+<NumberReturned>2</NumberReturned>
+<TotalMatches>2</TotalMatches>
+<UpdateID>1</UpdateID>
+</u:BrowseResponse>
+</s:Body>
+</s:Envelope>

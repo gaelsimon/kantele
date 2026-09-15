@@ -1,0 +1,13 @@
+---
+source: tests/wire_snapshots.rs
+expression: "readable(&contentdirectory::simple_envelope(\"GetSearchCapabilities\",\n\"ContentDirectory\", \"SearchCaps\", \"\"))"
+---
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+<s:Body>
+<u:GetSearchCapabilitiesResponse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
+<SearchCaps>
+</SearchCaps>
+</u:GetSearchCapabilitiesResponse>
+</s:Body>
+</s:Envelope>

@@ -1,0 +1,249 @@
+//! What the index made of a real library, in plain text.
+
+use std::path::Path;
+
+use crate::index::{Album, IDENTITY_VERSION, Library, Rule};
+
+/// Every album as one tab-separated line: track count, first credit, title.
+pub fn write_album_list(library: &Library, path: &Path) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let column = |value: &str| -> String {
+        value
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect()
+    };
+
+    let mut file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    for album in library.albums() {
+        writeln!(
+            file,
+            "{}\t{}\t{}",
+            album.tracks.len(),
+            column(
+                album
+                    .artists
+                    .first()
+                    .map(|credit| credit.name.as_str())
+                    .unwrap_or_default()
+            ),
+            column(&album.title),
+        )?;
+    }
+    file.flush()
+}
+
+/// What the identity rules made of a real library, in plain text on stdout.
+pub fn report(library: &Library) {
+    println!("identity version {IDENTITY_VERSION}");
+    println!(
+        "tracks {}, albums {}, artists {}",
+        library.len(),
+        library.albums().len(),
+        library.artists().len()
+    );
+    if !library.playlists().is_empty() {
+        let entries: usize = library
+            .playlists()
+            .iter()
+            .map(|playlist| playlist.tracks.len())
+            .sum();
+        println!(
+            "playlists {}, naming {entries} tracks",
+            library.playlists().len()
+        );
+    }
+    let inherited = library
+        .tracks()
+        .iter()
+        .filter(|track| track.album_inherited)
+        .count();
+    if inherited > 0 {
+        // A rule that guesses has to be falsifiable, so it says how often it guessed.
+        println!("tracks whose album was inherited from their folder: {inherited}");
+    }
+    println!(
+        "track identity: {}",
+        tally(library.tracks().iter().map(|track| track.rule))
+    );
+    println!(
+        "album identity: {}",
+        tally(library.albums().iter().map(|album| album.rule))
+    );
+    counts(library);
+    coverage(library);
+    largest_albums(library);
+    collisions(library);
+}
+
+/// How many tracks carry each tag.
+fn coverage(library: &Library) {
+    let coverage = crate::index::Coverage::of(library);
+    println!("tracks carrying each tag, of {}:", coverage.tracks);
+    for (field, count) in coverage.fields() {
+        println!("  {field} {count}");
+    }
+}
+
+/// The counts worth watching, each falsifiable against the library it was run on.
+fn counts(library: &Library) {
+    let albums = |kept: fn(&&Album) -> bool| library.albums().iter().filter(kept).count();
+    println!(
+        "albums on several discs: {}",
+        albums(|album| album.disc_count > 1)
+    );
+    println!(
+        "albums with no credit: {}",
+        albums(|album| album.artists.is_empty())
+    );
+    println!(
+        "tracks belonging to no album: {}",
+        library
+            .tracks()
+            .iter()
+            .filter(|track| track.album_id.is_none())
+            .count()
+    );
+}
+
+/// How a grouping rule that merged too much announces itself.
+fn largest_albums(library: &Library) {
+    let mut largest: Vec<&Album> = library.albums().iter().collect();
+    largest.sort_by_key(|album| std::cmp::Reverse(album.tracks.len()));
+    println!("largest albums:");
+    for album in largest.iter().take(10) {
+        println!(
+            "  {:4} tracks  {:>3} disc(s)  {}",
+            album.tracks.len(),
+            album.disc_count,
+            album.title
+        );
+    }
+}
+
+/// The albums that fell to the path rung, which means two things claimed one identity.
+fn collisions(library: &Library) {
+    let collided: Vec<&Album> = library
+        .albums()
+        .iter()
+        .filter(|album| album.rule == Rule::Path)
+        .collect();
+    if collided.is_empty() {
+        return;
+    }
+    println!("albums keyed on their path, because another album derived the same identity:");
+    for album in collided.iter().take(20) {
+        println!("  {}", album.title);
+    }
+}
+
+/// How many things each rule answered for, most first.
+fn tally(rules: impl Iterator<Item = Rule>) -> String {
+    let mut counts: Vec<(Rule, usize)> = Vec::new();
+    for rule in rules {
+        match counts.iter_mut().find(|(seen, _)| *seen == rule) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((rule, 1)),
+        }
+    }
+    counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    counts
+        .iter()
+        .map(|(rule, count)| format!("{rule} {count}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::Scanned;
+    use crate::tags::FileTags;
+    use std::path::PathBuf;
+
+    fn file(album: &str, artist: &str, title: &str) -> Scanned {
+        Scanned {
+            path: PathBuf::from("/music").join(album).join(title),
+            relative: PathBuf::from(album).join(title),
+            tags: FileTags {
+                title: Some(title.to_owned()),
+                album: Some(album.to_owned()),
+                album_artists: vec![artist.to_owned()],
+                track_number: Some(1),
+                ..FileTags::default()
+            },
+            properties: crate::tags::AudioProperties::default(),
+            size: 1,
+            artwork: None,
+        }
+    }
+
+    #[test]
+    fn the_album_list_is_one_line_an_album_that_two_servers_can_be_diffed_on() {
+        let library = Library::build(
+            "Music".to_owned(),
+            &[
+                file("Dundunbanza", "Sierra Maestra", "01.flac"),
+                file("Dub Landing", "Scientist", "01.flac"),
+            ],
+        );
+        let path = std::env::temp_dir().join("kantele-report-albums.tsv");
+        write_album_list(&library, &path).expect("writing the list");
+        let mut lines: Vec<String> = std::fs::read_to_string(&path)
+            .expect("reading it back")
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        lines.sort();
+        assert_eq!(
+            lines,
+            vec![
+                "1\tScientist\tDub Landing".to_owned(),
+                "1\tSierra Maestra\tDundunbanza".to_owned(),
+            ]
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_tag_holding_a_tab_does_not_split_one_album_across_the_columns() {
+        // There is a real one on the library this was written against.
+        let library = Library::build(
+            "Music".to_owned(),
+            &[file("Two\tColumns", "One\u{1}Artist", "01.flac")],
+        );
+        let path = std::env::temp_dir().join("kantele-report-control.tsv");
+        write_album_list(&library, &path).expect("writing the list");
+        let written = std::fs::read_to_string(&path).expect("reading it back");
+        assert_eq!(written.trim_end(), "1\tOne Artist\tTwo Columns");
+        assert_eq!(written.matches('\t').count(), 2, "{written:?}");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_report_of_an_empty_library_is_a_report_rather_than_a_panic() {
+        // This runs on whatever a user points it at, including a folder they have not filled yet.
+        report(&Library::default());
+        report(&Library::build(
+            "Music".to_owned(),
+            &[file("Dundunbanza", "Sierra Maestra", "01.flac")],
+        ));
+    }
+
+    #[test]
+    fn the_tally_puts_the_commonest_rule_first() {
+        let counted = tally(
+            [
+                Rule::Strings,
+                Rule::Path,
+                Rule::Strings,
+                Rule::ReleaseMbid,
+                Rule::Strings,
+            ]
+            .into_iter(),
+        );
+        assert!(counted.starts_with("strings 3"), "{counted}");
+        assert!(counted.contains("path 1"), "{counted}");
+    }
+}
