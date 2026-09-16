@@ -188,6 +188,8 @@ async fn one_folder_is_read_again_on_its_own_and_a_folder_nobody_has_is_refused(
         Request::builder()
             .method(Method::POST)
             .uri(uri)
+            // Every HTTP/1.1 request carries one, and a pass is refused without it.
+            .header("Host", "192.0.2.42:8200")
             .header("Accept", "application/json")
             .body(Body::empty())
             .expect("a request")
@@ -332,5 +334,33 @@ async fn the_folder_chooser_offers_the_shares_and_refuses_the_rest_of_the_disk()
         elsewhere.status(),
         StatusCode::FORBIDDEN,
         "the page has no password, so it never reads the filesystem"
+    );
+}
+
+#[tokio::test]
+async fn the_count_behind_a_problem_is_what_the_folder_really_holds() {
+    let tree = Tree::new("problems-past-the-hundred");
+    tree.album("Blue Note/Sierra Maestra", &["01.wav"], false);
+    let broken = 150;
+    let mut list = String::from("#EXTM3U\n");
+    for at in 0..broken {
+        list.push_str(&format!("gone-{at}.wav\n"));
+    }
+    tree.text("Blue Note/Sierra Maestra/set.m3u", &list);
+    let server = serving(&tree, None);
+
+    let answered = json(
+        &server,
+        "/api/problems?folder=Blue%20Note&cause=missing-entry",
+    )
+    .await;
+    assert_eq!(
+        answered["total"], broken,
+        "the page says how many there are, not how many the record kept"
+    );
+    assert_eq!(
+        answered["shown"].as_array().expect("a list").len(),
+        100,
+        "and names the hundred it kept"
     );
 }

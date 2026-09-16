@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(1800);
@@ -13,6 +13,11 @@ const MAX_TIMEOUT: Duration = Duration::from_secs(3600);
 const MAX_CALLBACKS: usize = 2;
 const MAX_PER_PEER: usize = 16;
 const DELIVERIES_AT_ONCE: usize = 8;
+/// A renderer on the same network answers in milliseconds, and one that never does holds a
+/// delivery slot for this long.
+const ANSWER_WITHIN: Duration = Duration::from_millis(300);
+/// What a whole round of events may cost the pass that publishes the index it announces.
+const ROUND_WITHIN: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Service {
@@ -188,7 +193,14 @@ impl Subscriptions {
                 });
             }
         }
-        sending.join_all().await;
+        // The pass that published the index waits on this, so slow subscribers are left to finish
+        // on their own rather than holding it up.
+        if tokio::time::timeout(ROUND_WITHIN, sending.join_all())
+            .await
+            .is_err()
+        {
+            tracing::warn!("some subscribers had not taken the event before the round was up");
+        }
     }
 
     async fn send(&self, sid: &str, properties: &[(&str, String)]) {
@@ -262,7 +274,43 @@ async fn deliver(callback: &str, sid: &str, seq: u32, body: &str) -> std::io::Re
     .map_err(|_| std::io::Error::other("connect timed out"))??;
     stream.write_all(request.as_bytes()).await?;
     stream.flush().await?;
-    Ok(())
+    // Half closed, so a subscriber reading to the end sees one, and this end can still be answered.
+    stream.shutdown().await?;
+    refused_by(&mut stream).await
+}
+
+/// A subscriber that answers 404 or 500 holds no such subscription, whatever it asked for. One
+/// that answers nothing at all is left alone: not every renderer writes a response back.
+async fn refused_by(stream: &mut TcpStream) -> std::io::Result<()> {
+    // Read to the end of the status line: TCP is free to hand over "HTTP/1.1 " and " 500" apart.
+    let line = tokio::time::timeout(ANSWER_WITHIN, status_line(stream)).await;
+    let Ok(Ok(line)) = line else {
+        return Ok(());
+    };
+    match line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse::<u16>().ok())
+    {
+        Some(code) if !(200..300).contains(&code) => Err(std::io::Error::other(format!(
+            "the subscriber answered {code}"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// The first line of the answer, up to the newline or to what a status line can hold.
+async fn status_line(stream: &mut TcpStream) -> std::io::Result<String> {
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    while line.len() < 128 {
+        match stream.read(&mut byte).await? {
+            0 => break,
+            _ if byte[0] == b'\n' => break,
+            _ => line.push(byte[0]),
+        }
+    }
+    Ok(String::from_utf8_lossy(&line).into_owned())
 }
 
 fn split_url(url: &str) -> Option<(String, u16, String)> {
@@ -483,6 +531,88 @@ mod tests {
             subs.is_empty(),
             "a subscriber nobody can reach is no longer one"
         );
+    }
+
+    /// A subscriber listening on a port, answering each NOTIFY with the line it was given.
+    async fn answering(with: Option<&'static str>) -> (Subscriptions, String) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("a port");
+        let callback = format!("<http://{}/notify>", listener.local_addr().expect("bound"));
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut seen = [0u8; 1024];
+                let _ = stream.read(&mut seen).await;
+                if let Some(line) = with {
+                    let _ = stream.write_all(line.as_bytes()).await;
+                    let _ = stream.flush().await;
+                }
+            }
+        });
+        let subs = Subscriptions::default();
+        subs.subscribe(
+            Service::ContentDirectory,
+            &callback,
+            at("127.0.0.1"),
+            None,
+            None,
+        )
+        .expect("granted");
+        (subs, callback)
+    }
+
+    /// TCP is free to break a line in two, and a status read in one go would miss the code.
+    #[tokio::test]
+    async fn a_fault_split_across_two_packets_is_still_a_fault() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("a port");
+        let callback = format!("<http://{}/notify>", listener.local_addr().expect("bound"));
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut seen = [0u8; 1024];
+                let _ = stream.read(&mut seen).await;
+                let _ = stream.write_all(b"HTTP/1.1 ").await;
+                let _ = stream.flush().await;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                let _ = stream.write_all(b"404 Not Found\r\n\r\n").await;
+                let _ = stream.flush().await;
+            }
+        });
+        let subs = Subscriptions::default();
+        subs.subscribe(
+            Service::ContentDirectory,
+            &callback,
+            at("127.0.0.1"),
+            None,
+            None,
+        )
+        .expect("granted");
+        subs.notify(
+            Service::ContentDirectory,
+            &[("SystemUpdateID", "2".to_owned())],
+        )
+        .await;
+        assert!(subs.is_empty(), "the code arrived, late and in two pieces");
+    }
+
+    #[tokio::test]
+    async fn a_subscriber_that_answers_with_a_fault_is_dropped_and_one_that_accepts_is_kept() {
+        for (answer, kept) in [
+            (Some("HTTP/1.1 200 OK\r\n\r\n"), true),
+            (Some("HTTP/1.1 404 Not Found\r\n\r\n"), false),
+            (Some("HTTP/1.1 500 Internal Server Error\r\n\r\n"), false),
+            // Not every renderer writes one back, and a silence is not a refusal.
+            (None, true),
+        ] {
+            let (subs, callback) = answering(answer).await;
+            subs.notify(
+                Service::ContentDirectory,
+                &[("SystemUpdateID", "2".to_owned())],
+            )
+            .await;
+            assert_eq!(!subs.is_empty(), kept, "answering {answer:?} at {callback}");
+        }
     }
 
     #[test]

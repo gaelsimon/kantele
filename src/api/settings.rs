@@ -31,6 +31,11 @@ pub(super) async fn write_configuration(
     body: String,
 ) -> Response {
     if !same_origin(&headers) {
+        tracing::warn!(
+            origin = ?headers.get(axum::http::header::ORIGIN).and_then(|value| value.to_str().ok()),
+            host = ?headers.get(axum::http::header::HOST).and_then(|value| value.to_str().ok()),
+            "refusing settings written from another site"
+        );
         return (
             StatusCode::FORBIDDEN,
             "settings may only be written from this server's own page\n",
@@ -86,7 +91,8 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
             )
         }
     };
-    let staged = path.with_extension("toml.writing");
+    // Named for this process: two servers sharing a settings file must not stage over each other.
+    let staged = path.with_extension(format!("toml.writing.{}", std::process::id()));
     std::fs::write(&staged, &rewritten)
         .and_then(|()| std::fs::rename(&staged, &path))
         .map_err(|error| {

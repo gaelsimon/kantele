@@ -862,15 +862,18 @@ async fn rebuild(
     let scope = pass.scope();
     let mut moved = store;
     let began = passes.begin();
+    let serving_nothing = device.served().library.is_empty();
     let scanned = tokio::task::spawn_blocking(move || {
         // The store stays outside the guard.
         let derived = guarded(|| {
             let indexed = index(&indexing, &mut moved, pass)?;
             // The browse view is derived here rather than inside `publish`. It is hundreds.
+            // Only what gets published is worth the menus and the counts over every track.
+            let worth_it = indexed.changed || serving_nothing;
             Ok(Derived {
-                served: browse::Served::new(indexed.library, indexing.menus.clone()),
+                served: worth_it
+                    .then(|| browse::Served::new(indexed.library, indexing.menus.clone())),
                 complete: indexed.complete,
-                changed: indexed.changed,
                 pass: indexed.pass,
             })
         });
@@ -899,20 +902,26 @@ async fn rebuild(
         }
     };
     carry_forward(passes, &scope, &mut fresh.pass);
-    if !fresh.changed && !device.served().library.is_empty() {
-        fresh.pass.outcome = Outcome::Agreed;
-        tracing::info!("{done}: the tree agrees with the index being served");
-    } else if let Some(why) = keeping(&fresh.served.library, fresh.complete, device) {
-        fresh.pass.outcome = Outcome::Kept { why };
-    } else {
-        let id = device.publish(fresh.served).await;
-        // Persisted on every bump, or a restart resumes low and hands a client a value it holds.
-        if let Some(store) = store.as_mut()
-            && let Err(error) = store.remember_update_id(id)
-        {
-            tracing::warn!(%error, "the update id was not persisted: a restart may repeat it");
+    match fresh.served.take() {
+        None => {
+            fresh.pass.outcome = Outcome::Agreed;
+            tracing::info!("{done}: the tree agrees with the index being served");
         }
-        tracing::info!(system_update_id = id, "{done}");
+        Some(served) => {
+            if let Some(why) = keeping(&served.library, fresh.complete, device) {
+                fresh.pass.outcome = Outcome::Kept { why };
+            } else {
+                let id = device.publish(served).await;
+                // Persisted on every bump, or a restart resumes low and hands a client a value
+                // it holds.
+                if let Some(store) = store.as_mut()
+                    && let Err(error) = store.remember_update_id(id)
+                {
+                    tracing::warn!(%error, "the update id was not persisted: a restart may repeat it");
+                }
+                tracing::info!(system_update_id = id, "{done}");
+            }
+        }
     }
     passes.record(fresh.pass);
     store
@@ -944,9 +953,9 @@ fn guarded<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {
 }
 
 struct Derived {
-    served: browse::Served,
+    /// Nothing where the pass agreed with what is already served, since none of it is published.
+    served: Option<browse::Served>,
     complete: bool,
-    changed: bool,
     pass: PassReport,
 }
 
@@ -994,6 +1003,26 @@ fn keeping(library: &Library, complete: bool, device: &Device) -> Option<String>
 }
 
 /// Where `SystemUpdateID` carries on from, which is never a value a client may already hold.
+/// The boot id this start announces, always above the last one's: a control point reads a boot id
+/// that did not rise as the same boot, and two starts inside one second share a clock reading.
+pub fn next_boot_id(store: &mut Option<Store>) -> u32 {
+    let last = match store.as_ref().map(Store::resumed_boot_id) {
+        Some(Ok(held)) => held,
+        Some(Err(error)) => {
+            tracing::warn!(%error, "the last boot id could not be read: a client may ignore this start");
+            None
+        }
+        None => None,
+    };
+    let minted = seconds_since_epoch().max(last.map_or(0, |held| held.saturating_add(1)));
+    if let Some(store) = store.as_mut()
+        && let Err(error) = store.remember_boot_id(minted)
+    {
+        tracing::warn!(%error, "the boot id was not persisted: the next start may repeat it");
+    }
+    minted
+}
+
 pub fn resumed_update_id(store: &mut Option<Store>) -> u32 {
     match store.as_ref().map(Store::resumed_update_id) {
         Some(Ok(Some(held))) => return held,
@@ -1070,6 +1099,31 @@ mod tests {
             "Music".to_owned(),
             &[track("Juana Peña"), track("Dundunbanza")],
         )
+    }
+
+    #[test]
+    fn a_boot_id_rises_even_where_two_starts_share_a_second() {
+        let mut store = Some(Store::in_memory().expect("a store"));
+        let first = next_boot_id(&mut store);
+        let second = next_boot_id(&mut store);
+        assert!(
+            second > first,
+            "two starts inside one second read the same clock: {first} then {second}"
+        );
+
+        // A clock that went backwards is not a new boot id either.
+        let ahead = second.saturating_add(10_000);
+        store
+            .as_mut()
+            .expect("a store")
+            .remember_boot_id(ahead)
+            .expect("remembering one from the future");
+        assert_eq!(next_boot_id(&mut store), ahead + 1);
+
+        assert!(
+            next_boot_id(&mut None) > 0,
+            "a server with no store still announces one"
+        );
     }
 
     #[test]

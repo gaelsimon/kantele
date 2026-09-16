@@ -378,6 +378,8 @@ async fn a_rescan_is_asked_for_once_and_the_second_request_says_so() {
         Request::builder()
             .method(Method::POST)
             .uri("/api/rescan")
+            // Every HTTP/1.1 request carries one, and a pass is refused without it.
+            .header("Host", "192.0.2.42:8200")
             .body(Body::empty())
             .expect("a request")
     };
@@ -550,5 +552,88 @@ async fn a_pass_that_published_nothing_is_still_the_record_of_what_it_refused() 
     assert!(
         !detail.contains("Kremerata/02.wav"),
         "the detail repeats the path the subject already names: {detail}"
+    );
+}
+
+/// A name whose bytes are not text can only exist where the file system allows it, which rules
+/// out APFS and so this developer's Mac; the Linux CI is where this one runs.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_file_whose_name_is_not_text_is_left_out_and_said_so() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let tree = Tree::new("refusals-unnameable");
+    tree.album("Kremerata", &["01.wav"], false);
+    let name = std::ffi::OsStr::from_bytes(b"Kremerata/02\xff.wav");
+    std::fs::write(tree.0.join(name), fixtures::wav(2)).expect("a file the name is bytes of");
+
+    let indexed = service::index(&Indexing::of(&tree.0), &mut None, Pass::Whole).expect("a pass");
+    assert_eq!(
+        indexed.library.len(),
+        1,
+        "the file it could not name is out"
+    );
+    assert!(
+        indexed.pass.complete,
+        "one file left out is not a folder half read, and an incomplete pass publishes nothing"
+    );
+    let held = indexed.pass.refusals.held(Cause::UnreadableFile);
+    let named = held.first().expect("the file whose name is not text");
+    assert!(named.subject.starts_with("Kremerata/02"), "{named:?}");
+    assert!(
+        named
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("not text")),
+        "{named:?}"
+    );
+}
+
+/// What the library names is what it serves: minidlna refuses a link out of its media folders
+/// unless `wide_links` says otherwise, and nothing here is authenticated either.
+#[cfg(unix)]
+#[test]
+fn a_link_out_of_the_music_folder_is_refused_and_named() {
+    let tree = Tree::new("refusals-linked-outside");
+    tree.album("Kremerata", &["01.wav"], false);
+    let elsewhere = Tree::new("refusals-linked-outside-elsewhere");
+    elsewhere.album("Private", &["01.wav", "02.wav"], false);
+
+    std::os::unix::fs::symlink(elsewhere.path("Private"), tree.path("linked-folder"))
+        .expect("a link to a folder outside");
+    std::os::unix::fs::symlink(
+        elsewhere.path("Private/01.wav"),
+        tree.path("Kremerata/linked.wav"),
+    )
+    .expect("a link to a file outside");
+    // A link that stays inside is not refused: it is a folder already walked.
+    std::os::unix::fs::symlink(tree.path("Kremerata"), tree.path("linked-inside"))
+        .expect("a link to a folder inside");
+
+    let indexed = service::index(&Indexing::of(&tree.0), &mut None, Pass::Whole).expect("a pass");
+    assert_eq!(
+        indexed.library.len(),
+        1,
+        "only the track the music folder holds"
+    );
+    let held = indexed.pass.refusals.held(Cause::LinkedOutside);
+    assert_eq!(held.len(), 2, "the folder and the file that left: {held:?}");
+    assert!(
+        held.iter()
+            .any(|refusal| refusal.subject == "linked-folder"),
+        "{held:?}"
+    );
+    // Named under whichever path reached it, since a folder two links name is walked once.
+    assert!(
+        held.iter()
+            .any(|refusal| refusal.subject.ends_with("linked.wav")),
+        "{held:?}"
+    );
+    assert!(
+        held.iter().all(|refusal| refusal
+            .detail
+            .as_deref()
+            .is_some_and(|why| why.contains("Private"))),
+        "a refusal says where the link pointed: {held:?}"
     );
 }

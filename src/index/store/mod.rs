@@ -80,6 +80,27 @@ impl Store {
         Self::prepare(connection)
     }
 
+    /// Opens the store, setting aside a file no build can read so the next start has one that
+    /// works. Without this a single corrupt file costs a full walk of the share on every start,
+    /// for ever, and the dates added never come back.
+    pub fn open_or_replace(path: &Path) -> Result<Self> {
+        let refused = match Self::open(path) {
+            Ok(store) => return Ok(store),
+            Err(refused) => refused,
+        };
+        if !beyond_reading(&refused) {
+            return Err(refused);
+        }
+        let aside = set_aside(path)
+            .with_context(|| format!("setting aside a store that will not open: {refused:#}"))?;
+        tracing::warn!(
+            path = %path.display(), aside = %aside.display(), why = %format!("{refused:#}"),
+            "the saved index would not open: it is set aside and a new one started, so this start \
+             reads every file and the dates added begin again"
+        );
+        Self::open(path)
+    }
+
     fn drop_stale(&mut self, key: &str, version: &str, tables: &[&str]) -> Result<()> {
         match self.meta(key)?.as_deref() {
             Some(held) if held == version => return Ok(()),
@@ -161,6 +182,14 @@ impl Store {
 
     pub fn remember_update_id(&mut self, id: u32) -> Result<()> {
         self.set_meta("system_update_id", &id.to_string())
+    }
+
+    pub fn resumed_boot_id(&self) -> Result<Option<u32>> {
+        Ok(self.meta("boot_id")?.and_then(|held| held.parse().ok()))
+    }
+
+    pub fn remember_boot_id(&mut self, id: u32) -> Result<()> {
+        self.set_meta("boot_id", &id.to_string())
     }
 
     pub fn device_udn(&mut self) -> Result<String> {
@@ -572,6 +601,44 @@ impl Store {
     }
 }
 
+/// A file that is not a database, as against a store that merely could not be written to: a full
+/// disk or a folder gone read-only must never cost the dates added.
+fn beyond_reading(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<rusqlite::Error>(),
+            Some(rusqlite::Error::SqliteFailure(failure, _))
+                if matches!(
+                    failure.code,
+                    rusqlite::ErrorCode::NotADatabase | rusqlite::ErrorCode::DatabaseCorrupt
+                )
+        )
+    })
+}
+
+fn set_aside(path: &Path) -> Result<PathBuf> {
+    let aside = free_name(path);
+    std::fs::rename(path, &aside).with_context(|| format!("moving {} aside", path.display()))?;
+    for suffix in ["-wal", "-shm"] {
+        let mut companion = path.as_os_str().to_owned();
+        companion.push(suffix);
+        let _ = std::fs::remove_file(PathBuf::from(companion));
+    }
+    Ok(aside)
+}
+
+/// The first store set aside keeps the plain name, and a second corruption does not overwrite it.
+fn free_name(path: &Path) -> PathBuf {
+    let first = path.with_extension("unreadable");
+    if !first.exists() {
+        return first;
+    }
+    (1..100)
+        .map(|at| path.with_extension(format!("unreadable.{at}")))
+        .find(|taken| !taken.exists())
+        .unwrap_or(first)
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Saved {
     pub files: usize,
@@ -692,6 +759,10 @@ fn write_refused<'a>(
     )?;
     let mut covered: HashSet<&Path> = HashSet::with_capacity(refused.len());
     for file in refused {
+        // Left uncovered so any row it has is forgotten: the next pass tries the file again.
+        if !file.remember {
+            continue;
+        }
         covered.insert(file.relative.as_path());
         let Some(relative) = text(&file.relative) else {
             continue;
@@ -1446,6 +1517,130 @@ mod tests {
         let minted = file.open().device_udn().expect("minting");
         assert_eq!(file.open().device_udn().expect("reading"), minted);
         assert_eq!(minted.len(), 36, "a UUID in its text form");
+    }
+
+    #[test]
+    fn a_saved_index_nothing_can_read_is_set_aside_so_the_next_start_is_not_a_cold_one() {
+        let file = OnDisk::new("beyond-reading");
+        let aside = file.0.with_extension("unreadable");
+        let _ = std::fs::remove_file(&aside);
+        let junk = b"not a database".to_vec();
+        std::fs::write(&file.0, &junk).expect("writing over the store");
+
+        let mut replaced = Store::open_or_replace(&file.0).expect("a working store in its place");
+        assert!(
+            replaced.device_udn().is_ok(),
+            "the store that replaces it answers rather than merely opening"
+        );
+        assert_eq!(
+            std::fs::read(&aside).expect("the old one is kept"),
+            junk,
+            "it is set aside rather than thrown away"
+        );
+
+        // A second corruption keeps the first rescue rather than writing over it. The store has
+        // to be closed and its journal removed, or sqlite reads the library out of the WAL.
+        drop(replaced);
+        for suffix in ["-wal", "-shm"] {
+            let mut companion = file.0.as_os_str().to_owned();
+            companion.push(suffix);
+            let _ = std::fs::remove_file(PathBuf::from(companion));
+        }
+        let again = b"not a database either".to_vec();
+        std::fs::write(&file.0, &again).expect("writing over the store again");
+        let second = file.0.with_extension("unreadable.1");
+        let _ = std::fs::remove_file(&second);
+        Store::open_or_replace(&file.0).expect("a working store in its place");
+        assert_eq!(std::fs::read(&aside).expect("still there"), junk);
+        assert_eq!(std::fs::read(&second).expect("beside it"), again);
+        let _ = std::fs::remove_file(&second);
+        let _ = std::fs::remove_file(&aside);
+    }
+
+    #[test]
+    fn a_state_folder_nothing_has_written_yet_is_not_mistaken_for_a_broken_store() {
+        let file = OnDisk::new("empty-store");
+        std::fs::write(&file.0, b"").expect("an empty file, which sqlite reads as a new database");
+        Store::open_or_replace(&file.0).expect("it opens");
+        assert!(
+            !file.0.with_extension("unreadable").exists(),
+            "a fresh store must not be set aside on its first start"
+        );
+    }
+
+    #[test]
+    fn a_store_that_could_merely_not_be_written_is_never_set_aside() {
+        let error = anyhow::anyhow!("disk full").context("opening the store");
+        assert!(
+            !beyond_reading(&error),
+            "a full disk or a read-only folder must not cost the dates added"
+        );
+    }
+
+    #[test]
+    fn a_file_refused_for_a_reason_that_may_pass_is_not_remembered_as_refused() {
+        let mut store = Store::in_memory().expect("a store");
+        let print = fingerprint(27, 1_700_000_000);
+        let refused = |relative: &str, remember: bool| RefusedFile {
+            relative: PathBuf::from(relative),
+            fingerprint: print,
+            why: "Permission denied (os error 13)".to_owned(),
+            remember,
+        };
+        let cache = store.cache(Path::new(ROOT)).expect("a cache");
+        let written = store
+            .save(
+                Path::new(ROOT),
+                Reading {
+                    walked: &walked(&[], print),
+                    files: &[],
+                    playlists: &[],
+                    refused: &[refused("a/1.flac", true), refused("a/2.flac", false)],
+                },
+                &cache,
+                &whole(),
+            )
+            .expect("saving");
+        assert_eq!(written.refused, 1);
+
+        let cache = store.cache(Path::new(ROOT)).expect("a cache");
+        assert!(cache.refused(Path::new("a/1.flac"), print).is_some());
+        assert!(
+            cache.refused(Path::new("a/2.flac"), print).is_none(),
+            "a file that would not open must be tried again, not hidden until something edits it"
+        );
+    }
+
+    #[test]
+    fn a_row_for_a_file_that_will_open_again_is_forgotten_rather_than_kept() {
+        let mut store = Store::in_memory().expect("a store");
+        let print = fingerprint(27, 1_700_000_000);
+        let refused = |remember: bool| RefusedFile {
+            relative: PathBuf::from("a/1.flac"),
+            fingerprint: print,
+            why: "Permission denied (os error 13)".to_owned(),
+            remember,
+        };
+        let save = |store: &mut Store, file: RefusedFile| {
+            let cache = store.cache(Path::new(ROOT)).expect("a cache");
+            store
+                .save(
+                    Path::new(ROOT),
+                    Reading {
+                        walked: &walked(&[], print),
+                        files: &[],
+                        playlists: &[],
+                        refused: &[file],
+                    },
+                    &cache,
+                    &whole(),
+                )
+                .expect("saving")
+        };
+        save(&mut store, refused(true));
+        assert_eq!(save(&mut store, refused(false)).forgotten, 1);
+        let cache = store.cache(Path::new(ROOT)).expect("a cache");
+        assert!(cache.refused(Path::new("a/1.flac"), print).is_none());
     }
 
     #[test]

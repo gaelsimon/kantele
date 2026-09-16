@@ -169,7 +169,7 @@ async fn main() -> Result<()> {
     };
 
     let store_path = config::store_path(&state_dir);
-    let mut store = match Store::open(&store_path) {
+    let mut store = match Store::open_or_replace(&store_path) {
         Ok(mut store) => {
             // With no folder chosen the store is left saying which library it holds, or a start
             // before anyone has chosen would drop what the last one wrote.
@@ -307,6 +307,7 @@ async fn serve(
     server
         .device
         .resume_update_id(service::resumed_update_id(&mut store));
+    let boot_id = service::next_boot_id(&mut store);
     let udn = server.device.identity.udn.clone();
 
     let address = SocketAddr::from((
@@ -345,7 +346,7 @@ async fn serve(
     });
 
     let (stop_ssdp, ssdp_stopped) = tokio::sync::oneshot::channel();
-    let advertiser = ssdp::Advertiser::new(udn, bound.port(), server.device.peers.clone());
+    let advertiser = ssdp::Advertiser::new(udn, bound.port(), server.device.peers.clone(), boot_id);
     let discovery = tokio::spawn(async move {
         if let Err(error) = advertiser.run(ssdp_stopped).await {
             tracing::error!(%error, "ssdp stopped");

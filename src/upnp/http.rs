@@ -527,7 +527,20 @@ fn paced(body: Body, bytes_per_second: u32) -> Body {
 /// The short form the reference answers with, not the long one in its own DIDL; the parity gate pins it.
 pub const CONTENT_FEATURES: &str = "DLNA.ORG_OP=01";
 
-async fn media(State(device): State<Shared>, Path(id): Path<String>, request: Request) -> Response {
+/// Several ranges at once would need a multipart answer, which `ServeFile` has none of and
+/// refuses with a 416. RFC 7233 lets a server ignore the header instead, and the whole file is
+/// something every renderer can play.
+fn several_ranges(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::RANGE)
+        .is_some_and(|value| value.as_bytes().contains(&b','))
+}
+
+async fn media(
+    State(device): State<Shared>,
+    Path(id): Path<String>,
+    mut request: Request,
+) -> Response {
     let Ok(object_id) = ObjectId::new(id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -561,6 +574,10 @@ async fn media(State(device): State<Shared>, Path(id): Path<String>, request: Re
         .get("transfermode.dlna.org")
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
+
+    if several_ranges(request.headers()) {
+        request.headers_mut().remove(header::RANGE);
+    }
 
     let client = device.clients.resolve(request.headers());
     let mime = client.mime_for(track.mime).to_owned();
@@ -748,6 +765,21 @@ mod tests {
         );
         assert_eq!(step_of(&Method::GET, "/art/tr-1", &none), None);
         assert_eq!(step_of(&Method::GET, "/api/status", &none), None);
+    }
+
+    #[test]
+    fn a_range_naming_one_span_is_served_and_one_naming_several_is_not_refused() {
+        assert!(!several_ranges(&HeaderMap::new()));
+        assert!(!several_ranges(&headers_with("range", "bytes=0-9")));
+        assert!(!several_ranges(&headers_with("range", "bytes=-10")));
+        assert!(
+            several_ranges(&headers_with("range", "bytes=0-9,20-29")),
+            "a 416 here leaves a renderer with no audio at all"
+        );
+        assert!(several_ranges(&headers_with(
+            "range",
+            "bytes=0-9, 20-29, 40-49"
+        )));
     }
 
     #[test]

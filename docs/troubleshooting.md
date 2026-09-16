@@ -46,6 +46,10 @@ identity with it. Start the second one on an empty state folder and it mints one
   Control Panel.
 - A check that is still running has not filled every menu yet. The progress strip says so.
 - `nothing playable found` appears in the log when the folder holds no audio this server reads.
+- **Music reached through a symbolic link that leaves the music folder is left out**, and the page
+  says so as *leads out of the music folder*. Anything served here can be played by every device on
+  the network, so the server keeps to the folders you named. To serve a second disk, add it as
+  another music folder in Settings.
 
 ## An album is split in two, or filed under nobody
 

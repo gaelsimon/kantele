@@ -55,6 +55,29 @@ track, fetches it plain and with a range, and prints pass or fail.
 
     python3 tools/probe_upnp.py --name Kantele
 
+`tools/probe_library.py` asks the same server the questions a smoke test skips, and wants a real
+library to be worth anything: every menu, the far end of the longest list, the A-Z index, a
+playlist played by range, cover art, every search capability the server declares, and eight clients
+at once.
+
+    python3 tools/probe_library.py --name Kantele
+
+`tools/probe_changes.py` drops a file into a served folder and waits: the library grows, the update
+id moves, a subscriber is told, the new track plays, and all of it comes back when the file goes. It
+writes where the server reads, so it runs on the machine serving the folder.
+
+    python3 tools/probe_changes.py --folder /volume1/music --file track.mp3
+
+`tools/drive_renderer.py` goes the step the probe cannot: it hands a track to a real amplifier,
+plays it, seeks, pauses, resumes, queues the track after it and waits for the change, then stops.
+It makes sound in the room, so it refuses a renderer that is already playing or louder than
+`--max-volume`, and `--dry-run` says what it would play without playing it.
+
+    python3 tools/drive_renderer.py --renderer Marantz --server Kantele
+
+Some amplifiers answer `GetTransportInfo` with empty fields and say what they are doing only in an
+event; the driver subscribes and reads those where that happens.
+
 A fourth gate runs here and not in a clone: captures of another server answering the same requests,
 which are that server's output and are not redistributed. Several answers on the wire are copied
 from it, and those captures are what hold them in place. Say in the pull request when you change a

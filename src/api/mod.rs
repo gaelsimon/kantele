@@ -173,7 +173,7 @@ async fn problem_files(
     Query(asked): Query<AskedProblems>,
 ) -> Response {
     let served = control.device.served();
-    let answered = match asked.cause.as_str() {
+    let (answered, total) = match asked.cause.as_str() {
         folders::NO_ARTWORK => folders::tracks_lacking_artwork(&served, &asked.folder),
         named => {
             let Some(cause) = crate::index::Cause::ALL
@@ -186,11 +186,16 @@ async fn problem_files(
                 )
                     .into_response();
             };
-            refusals_now(&control, &served.library)
-                .held_under(*cause, &asked.folder)
-                .into_iter()
-                .cloned()
-                .collect()
+            let refusals = refusals_now(&control, &served.library);
+            // Counted off the folder tallies: only the first hundred of a cause are kept.
+            (
+                refusals
+                    .held_under(*cause, &asked.folder)
+                    .into_iter()
+                    .cloned()
+                    .collect(),
+                refusals.total_under(*cause, &asked.folder),
+            )
         }
     };
     let label = crate::index::Cause::ALL
@@ -201,7 +206,7 @@ async fn problem_files(
         folder: asked.folder,
         cause: asked.cause,
         label,
-        total: answered.len(),
+        total,
         shown: answered,
     };
     let lines = || {
@@ -291,6 +296,7 @@ async fn rescan(
     if !same_origin(&headers) {
         tracing::warn!(
             origin = ?headers.get(header::ORIGIN).and_then(|value| value.to_str().ok()),
+            host = ?headers.get(header::HOST).and_then(|value| value.to_str().ok()),
             "refusing a pass asked for from another site"
         );
         return (
@@ -353,6 +359,14 @@ async fn rescan(
 
 /// Whether a request that changes something came from this server's own page.
 fn same_origin(headers: &HeaderMap) -> bool {
+    let Some(host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    // A name the world can resolve can be pointed at this server's address, and the page holding
+    // it then sends an Origin matching its own Host. Comparing the two would pass.
+    if !named_on_this_network(host) {
+        return false;
+    }
     let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
         return true;
     };
@@ -364,10 +378,22 @@ fn same_origin(headers: &HeaderMap) -> bool {
     else {
         return false;
     };
-    headers
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|host| host == authority)
+    host == authority
+}
+
+/// Suffixes nothing outside this network can be answering for.
+const LOCAL_SUFFIXES: &[&str] = &[".local", ".home.arpa", ".internal", ".lan"];
+
+/// Whether a `Host` is an address or a name only this network hands out. A bare name carries no
+/// dot, so it cannot be a public one.
+fn named_on_this_network(host: &str) -> bool {
+    let name = host.rsplit_once(':').map_or(host, |(name, _)| name);
+    let name = name.trim_start_matches('[').trim_end_matches(']');
+    if name.parse::<std::net::IpAddr>().is_ok() {
+        return true;
+    }
+    let lower = name.to_ascii_lowercase();
+    !lower.contains('.') || LOCAL_SUFFIXES.iter().any(|end| lower.ends_with(end))
 }
 
 /// JSON where the caller asked for it, and greppable lines otherwise.
@@ -436,6 +462,69 @@ mod tests {
             "a newline in a path or a playlist's own text would invent a key"
         );
         assert_eq!(one_line("bell\u{7}here"), "bell here");
+    }
+
+    fn asking(host: Option<&str>, origin: Option<&str>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        if let Some(host) = host {
+            headers.insert(header::HOST, host.parse().expect("a host"));
+        }
+        if let Some(origin) = origin {
+            headers.insert(header::ORIGIN, origin.parse().expect("an origin"));
+        }
+        headers
+    }
+
+    #[test]
+    fn a_name_the_world_can_point_at_this_server_is_not_this_servers_own_page() {
+        assert!(
+            !same_origin(&asking(Some("evil.example"), Some("http://evil.example"))),
+            "a page whose name was pointed here sends an Origin matching its own Host, and a \
+             comparison of the two passes"
+        );
+        assert!(!same_origin(&asking(
+            Some("evil.example:8200"),
+            Some("http://evil.example:8200")
+        )));
+        assert!(
+            !same_origin(&asking(Some("music.example.com"), None)),
+            "and the same page reaches the write with no Origin at all"
+        );
+    }
+
+    #[test]
+    fn the_ways_an_owner_actually_opens_the_page_still_write() {
+        for host in [
+            "192.0.2.42:8200",
+            "127.0.0.1:8200",
+            "[::1]:8200",
+            "localhost:8200",
+            "diskstation:8200",
+            "nas.local:8200",
+            "nas.home.arpa:8200",
+        ] {
+            assert!(
+                same_origin(&asking(Some(host), Some(&format!("http://{host}")))),
+                "{host} is how this server is reached"
+            );
+            assert!(
+                same_origin(&asking(Some(host), None)),
+                "{host} with no Origin, which is curl on the NAS"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cross_site_page_and_a_request_naming_no_host_are_both_refused() {
+        assert!(!same_origin(&asking(
+            Some("192.0.2.42:8200"),
+            Some("http://evil.example")
+        )));
+        assert!(
+            !same_origin(&asking(Some("192.0.2.42:8200"), Some("null"))),
+            "a sandboxed page says null"
+        );
+        assert!(!same_origin(&asking(None, None)));
     }
 
     #[test]

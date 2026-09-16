@@ -21,6 +21,8 @@
   let open = $state<string[]>([]);
   let failed = $state('');
   let waiting = $state<string[]>([]);
+  /// The latest load asked for per folder, so an answer that arrives late is dropped.
+  let asked = $state<Record<string, number>>({});
   /// The files behind one issue, keyed by folder and cause, fetched when it is opened.
   let behind = $state<Record<string, ProblemFiles | 'asking'>>({});
 
@@ -46,13 +48,18 @@
   const searching = $derived(search.trim().length > 0);
 
   async function load(path: string, wanted: string, only: boolean, lacking: Missing | null) {
+    // Typing in the search box asks again before the last answer arrives, and answers can cross.
+    const ticket = (asked[path] ?? 0) + 1;
+    asked = { ...asked, [path]: ticket };
     waiting = [...waiting, path];
     try {
       const listing = await getFolders(path, path === '' ? wanted : '', only, lacking);
+      if (asked[path] !== ticket) return;
       listings = { ...listings, [path]: listing.folders };
       more = { ...more, [path]: listing.more };
       failed = '';
     } catch (error) {
+      if (asked[path] !== ticket) return;
       failed = error instanceof Error ? error.message : String(error);
     } finally {
       waiting = waiting.filter((one) => one !== path);
@@ -68,19 +75,26 @@
     if (!listings[row.path]) void load(row.path, '', changed, missing);
   }
 
-  /// The rows as the page shows them: each open folder followed by what is under it.
+  type Line =
+    | { kind: 'folder'; key: string; row: FolderRow; depth: number }
+    | { kind: 'more'; key: string; depth: number };
+
+  /// The rows as the page shows them: each open folder followed by what is under it, and at the
+  /// end of any level, whether more was held back than one answer carries.
   const rows = $derived.by(() => {
-    const shown: { row: FolderRow; depth: number; last: boolean }[] = [];
+    const shown: Line[] = [];
     const walk = (under: string, depth: number) => {
       for (const row of listings[under] ?? []) {
-        const unfolded = open.includes(row.path);
-        shown.push({ row, depth, last: !unfolded });
-        if (unfolded) walk(row.path, depth + 1);
+        shown.push({ kind: 'folder', key: row.path, row, depth });
+        if (open.includes(row.path)) walk(row.path, depth + 1);
       }
+      if (more[under]) shown.push({ kind: 'more', key: `more${under}`, depth });
     };
     walk('', 0);
     return shown;
   });
+
+  const nothing = $derived(!rows.some((line) => line.kind === 'folder'));
 
   $effect(() => {
     const wanted = search.trim();
@@ -110,7 +124,7 @@
 
   {#if failed}
     <div class="note problem">{failed}</div>
-  {:else if rows.length === 0}
+  {:else if nothing}
     <div class="note dim">
       {#if waiting.includes('')}
         Reading the folders.
@@ -126,7 +140,14 @@
     </div>
   {/if}
 
-  {#each rows as { row, depth } (row.path)}
+  {#each rows as line (line.key)}
+    {#if line.kind === 'more'}
+      <div class="note dim" style:--depth={line.depth}>
+        More folders here than one listing shows. Narrow it with the search box.
+      </div>
+    {:else}
+      {@const row = line.row}
+      {@const depth = line.depth}
     <div class="row" class:nested={depth > 0} style:--depth={depth}>
       <span class="folder">
         <button
@@ -185,13 +206,8 @@
         {/if}
       </span>
     </div>
+    {/if}
   {/each}
-
-  {#if more['']}
-    <div class="note dim">
-      More folders than one listing shows. Narrow it with the search box.
-    </div>
-  {/if}
 </div>
 
 <style>

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Kept per cause; the rest are only counted.
-const KEPT: usize = 100;
+pub const KEPT: usize = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -29,6 +29,7 @@ pub enum Cause {
     UnreadableFile,
     UnreadablePlaylist,
     UnreadableRow,
+    LinkedOutside,
     MissingEntry,
     UnpublishedPlaylist,
     RepeatedEntry,
@@ -43,6 +44,7 @@ impl Cause {
         Self::UnreadableFile,
         Self::UnreadablePlaylist,
         Self::UnreadableRow,
+        Self::LinkedOutside,
         Self::MissingEntry,
         Self::UnpublishedPlaylist,
         Self::RepeatedEntry,
@@ -57,6 +59,7 @@ impl Cause {
             Self::UnreadableFile => "unreadable-file",
             Self::UnreadablePlaylist => "unreadable-playlist",
             Self::UnreadableRow => "unreadable-row",
+            Self::LinkedOutside => "linked-outside",
             Self::MissingEntry => "missing-entry",
             Self::UnpublishedPlaylist => "unpublished-playlist",
             Self::RepeatedEntry => "repeated-entry",
@@ -102,7 +105,8 @@ impl Cause {
             Self::UnreadableFolder
             | Self::UnreadableFile
             | Self::UnreadablePlaylist
-            | Self::UnreadableRow => Origin::Pass,
+            | Self::UnreadableRow
+            | Self::LinkedOutside => Origin::Pass,
             Self::MissingEntry
             | Self::UnpublishedPlaylist
             | Self::RepeatedEntry
@@ -119,6 +123,7 @@ impl Cause {
             Self::UnreadableFile => "Unreadable",
             Self::UnreadablePlaylist => "Playlist unreadable",
             Self::UnreadableRow => "Not in the saved index",
+            Self::LinkedOutside => "Leads out of the music folder",
             Self::MissingEntry => "Playlist link broken",
             Self::UnpublishedPlaylist => "Playlist empty",
             Self::RepeatedEntry => "Playlist link repeated",
@@ -133,6 +138,7 @@ impl Cause {
         let (one, many) = match self {
             Self::UnreadableFolder => ("folder", "folders"),
             Self::UnreadableFile | Self::UnreadableRow => ("file", "files"),
+            Self::LinkedOutside => ("link", "links"),
             Self::UnreadablePlaylist | Self::UnpublishedPlaylist => ("playlist", "playlists"),
             Self::MissingEntry | Self::RepeatedEntry => ("link", "links"),
             Self::AlbumKeyedOnPath => ("album", "albums"),
@@ -255,6 +261,15 @@ impl Refusals {
                     .is_some_and(|at| at == folder || at.starts_with(&with_slash(folder)))
             })
             .collect()
+    }
+
+    /// What a folder really refused, which the hundred kept per cause cannot say.
+    pub fn total_under(&self, cause: Cause, folder: &str) -> usize {
+        self.by_folder
+            .iter()
+            .filter(|(at, _)| at.as_str() == folder || at.starts_with(&with_slash(folder)))
+            .filter_map(|(_, tally)| tally.get(&cause))
+            .sum()
     }
 
     pub fn reported(&self) -> Vec<Reported> {

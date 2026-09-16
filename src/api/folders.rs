@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::browse::Served;
-use crate::index::refusals::Tally;
+use crate::index::refusals::{KEPT, Tally};
 use crate::index::scan::Scope;
 use crate::index::{Album, Missing, Refusals};
 
@@ -92,24 +92,23 @@ pub fn listing(
         missing: asked.missing,
     };
     let wanted = asked.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
-    let mut paths: Vec<String> = match wanted {
+    let paths: Vec<String> = match wanted {
         Some(wanted) => matching(served, &asked.under, wanted),
         None => children_of(served, &asked.under),
     };
-    let more = paths.len() > MOST;
-    paths.truncate(MOST);
-    let mut rows: Vec<Row> = paths.iter().map(|path| counted.row(path)).collect();
-    if asked.changed {
-        rows.retain(|row| row.changed);
-    }
-    if asked.missing.is_some() {
-        rows.retain(|row| row.missing > 0);
-    }
+    // Counted past the cap, because a filter that rejects the first five hundred folders would
+    // otherwise answer that the library holds none of what it holds.
+    let mut rows = paths
+        .iter()
+        .map(|path| counted.row(path))
+        .filter(|row| !asked.changed || row.changed)
+        .filter(|row| asked.missing.is_none() || row.missing > 0);
+    let folders: Vec<Row> = rows.by_ref().take(MOST).collect();
     Some(Listing {
         here: counted.row(&asked.under),
         under: asked.under.clone(),
-        folders: rows,
-        more,
+        folders,
+        more: rows.next().is_some(),
     })
 }
 
@@ -327,21 +326,29 @@ fn issues_of(problems: &Tally, split: Option<&'static str>, no_artwork: usize) -
     issues
 }
 
-/// The tracks under a folder that carry no cover, as refusals so one route answers for both.
-pub fn tracks_lacking_artwork(served: &Served, folder: &str) -> Vec<crate::index::Refusal> {
-    served
-        .view
-        .folders()
-        .tracks_below(folder)
+/// The tracks under a folder that carry no cover, as refusals so one route answers for both, and
+/// how many there are: a refusal record keeps a hundred of a kind and this answer says so too.
+pub fn tracks_lacking_artwork(
+    served: &Served,
+    folder: &str,
+) -> (Vec<crate::index::Refusal>, usize) {
+    let below = served.view.folders().tracks_below(folder);
+    let lacking = below
         .iter()
         .filter_map(|at| served.library.tracks().get(*at))
-        .filter(|track| Missing::Artwork.absent(track))
-        .take(100)
-        .map(|track| crate::index::Refusal {
-            subject: track.relative.clone(),
-            detail: None,
-        })
-        .collect()
+        .filter(|track| Missing::Artwork.absent(track));
+    let mut total = 0;
+    let mut shown = Vec::new();
+    for track in lacking {
+        total += 1;
+        if shown.len() < KEPT {
+            shown.push(crate::index::Refusal {
+                subject: track.relative.clone(),
+                detail: None,
+            });
+        }
+    }
+    (shown, total)
 }
 
 #[cfg(test)]
@@ -506,6 +513,55 @@ mod tests {
         let served = served();
         let row = &rows(&served, &Refusals::default(), "")[0];
         assert_eq!(row.missing, 0, "though every track here lacks a date");
+    }
+
+    #[test]
+    fn a_filter_reaches_past_the_folders_one_listing_shows() {
+        let mut files: Vec<Scanned> = (0..MOST + 1)
+            .map(|at| track(&format!("{at:04}/01.flac"), "Album"))
+            .collect();
+        // The one folder the filter keeps sits past the cap, alphabetically last.
+        files.push(track(&format!("{:04}/02.flac", MOST + 1), "Album"));
+        let last = format!("{:04}", MOST + 1);
+        let mut lacking = files.pop().expect("the last file");
+        lacking.tags.album = None;
+        files.push(lacking);
+        let served = Served::new(
+            Library::build("Music".to_owned(), &files),
+            crate::browse::Settings::default(),
+        );
+
+        let listed = listing(
+            &served,
+            &Refusals::default(),
+            None,
+            &Asked {
+                missing: Some(Missing::Album),
+                ..Asked::default()
+            },
+        )
+        .expect("the top of the library");
+        assert_eq!(
+            listed.folders.len(),
+            1,
+            "the folder past the cap is the only one that answers the filter"
+        );
+        assert_eq!(listed.folders[0].path, last);
+        assert!(!listed.more, "and nothing else answers it");
+    }
+
+    #[test]
+    fn the_tracks_lacking_a_cover_are_counted_past_the_hundred_that_are_named() {
+        let files: Vec<Scanned> = (0..KEPT + 50)
+            .map(|at| track(&format!("Bare/{at:04}.flac"), "Album"))
+            .collect();
+        let served = Served::new(
+            Library::build("Music".to_owned(), &files),
+            crate::browse::Settings::default(),
+        );
+        let (shown, total) = tracks_lacking_artwork(&served, "Bare");
+        assert_eq!(total, KEPT + 50, "the page says how many carry no cover");
+        assert_eq!(shown.len(), KEPT, "and names the hundred it keeps");
     }
 
     fn rows(served: &Served, refusals: &Refusals, under: &str) -> Vec<Row> {

@@ -1,17 +1,7 @@
 <script lang="ts">
   import type { Setting } from './api';
+  import type { Shape } from './settings';
   import Picker from './Picker.svelte';
-
-  export type Kind =
-    | 'text'
-    | 'number'
-    | 'path'
-    | 'paths'
-    | 'words'
-    | 'chips'
-    | 'choice'
-    | 'read';
-  export type Shape = { kind: Kind; unit?: string; note?: string; images?: boolean };
 
   let {
     setting,

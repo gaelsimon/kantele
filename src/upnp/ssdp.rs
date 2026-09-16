@@ -52,11 +52,11 @@ pub struct Advertiser {
 }
 
 impl Advertiser {
-    pub fn new(udn: impl Into<String>, http_port: u16, peers: Peers) -> Self {
+    pub fn new(udn: impl Into<String>, http_port: u16, peers: Peers, boot_id: u32) -> Self {
         Self {
             udn: udn.into(),
             http_port,
-            boot_id: boot_id(),
+            boot_id,
             peers,
         }
     }
@@ -99,6 +99,10 @@ impl Advertiser {
                     }
                 }
                 known.extend_from_slice(&fresh);
+                // Listed before the first alive, or a stop during the salvos withdraws nothing.
+                if let Ok(mut held) = serving.lock() {
+                    held.clone_from(&known);
+                }
                 tracing::info!(interfaces = ?fresh, "advertising here");
                 for salvo in 0..3 {
                     self.alive(&fresh).await;
@@ -324,13 +328,6 @@ fn local_address_towards(peer: SocketAddr) -> Option<Ipv4Addr> {
     }
 }
 
-fn boot_id() -> u32 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_secs() as u32)
-        .unwrap_or(1)
-}
-
 fn server_header() -> String {
     format!(
         "{}/{} UPnP/1.0 Kantele/{}",
@@ -349,17 +346,36 @@ fn header_value(message: &str, name: &str) -> Option<String> {
     })
 }
 
+/// Somewhere inside the window the searcher gave, so two servers answering one search do not
+/// answer together. The window is held well under the one asked for: a device that would wait
+/// two seconds still wants the music now.
 fn response_delay(mx: Option<&str>) -> Duration {
+    Duration::from_millis(inside(response_window(mx)))
+}
+
+fn response_window(mx: Option<&str>) -> u64 {
     let seconds: u64 = mx.and_then(|v| v.trim().parse().ok()).unwrap_or(1);
-    Duration::from_millis(seconds.clamp(1, 5) * 100)
+    (seconds.clamp(1, 5) * 100).min(500)
+}
+
+/// A draw, from the clock rather than from a generator this server has no other use for.
+fn inside(window: u64) -> u64 {
+    if window == 0 {
+        return 0;
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| u64::from(since.subsec_nanos()))
+        .unwrap_or_default();
+    nanos % window
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn two_servers_do_not_announce_in_step_and_neither_waits_longer_than_it_should() {
-        let one = Advertiser::new("uuid:one", 8200, Peers::default());
-        let mut two = Advertiser::new("uuid:two", 8200, Peers::default());
+        let one = Advertiser::new("uuid:one", 8200, Peers::default(), 1_700_000_000);
+        let mut two = Advertiser::new("uuid:two", 8200, Peers::default(), 1_700_000_000);
         two.boot_id = one.boot_id.wrapping_add(7919);
 
         let base = Duration::from_secs(1);
@@ -430,7 +446,7 @@ mod tests {
 
     #[test]
     fn searches_for_us_are_answered_and_others_are_not() {
-        let advertiser = Advertiser::new(UDN, 8200, Peers::default());
+        let advertiser = Advertiser::new(UDN, 8200, Peers::default(), 1_700_000_000);
         for target in [
             "upnp:rootdevice",
             "urn:schemas-upnp-org:device:MediaServer:1",
@@ -452,7 +468,7 @@ mod tests {
 
     #[test]
     fn a_search_for_everything_is_answered_once_per_notification_type() {
-        let advertiser = Advertiser::new(UDN, 8200, Peers::default());
+        let advertiser = Advertiser::new(UDN, 8200, Peers::default(), 1_700_000_000);
         let answers = advertiser.answers_to("ssdp:all");
         assert_eq!(answers.len(), notification_types(UDN).len());
         assert!(
@@ -463,7 +479,7 @@ mod tests {
 
     #[test]
     fn the_usn_always_carries_the_uuid() {
-        let advertiser = Advertiser::new(UDN, 8200, Peers::default());
+        let advertiser = Advertiser::new(UDN, 8200, Peers::default(), 1_700_000_000);
         for (_, usn) in advertiser.answers_to("ssdp:all") {
             assert!(usn.starts_with(&format!("uuid:{UDN}")), "{usn}");
         }
@@ -476,7 +492,7 @@ mod tests {
 
     #[test]
     fn an_advertisement_carries_what_a_control_point_needs_to_fetch_the_description() {
-        let advertiser = Advertiser::new(UDN, 8200, Peers::default());
+        let advertiser = Advertiser::new(UDN, 8200, Peers::default(), 1_700_000_000);
         let alive = advertiser.notification(
             "ssdp:alive",
             "upnp:rootdevice",
@@ -503,7 +519,7 @@ mod tests {
 
     #[test]
     fn a_withdrawal_offers_nothing_to_fetch() {
-        let advertiser = Advertiser::new(UDN, 8200, Peers::default());
+        let advertiser = Advertiser::new(UDN, 8200, Peers::default(), 1_700_000_000);
         let byebye = advertiser.notification(
             "ssdp:byebye",
             "upnp:rootdevice",
@@ -517,7 +533,7 @@ mod tests {
 
     #[test]
     fn the_advertised_location_names_the_port_the_server_bound() {
-        let advertiser = Advertiser::new(UDN, 8201, Peers::default());
+        let advertiser = Advertiser::new(UDN, 8201, Peers::default(), 1_700_000_000);
         assert_eq!(
             advertiser.location(Ipv4Addr::new(192, 0, 2, 1)),
             "http://192.0.2.1:8201/description.xml"
@@ -533,9 +549,19 @@ mod tests {
 
     #[test]
     fn the_response_delay_stays_inside_the_searchers_window() {
-        assert_eq!(response_delay(Some("3")), Duration::from_millis(300));
-        assert_eq!(response_delay(None), Duration::from_millis(100));
-        assert_eq!(response_delay(Some("120")), Duration::from_millis(500));
-        assert_eq!(response_delay(Some("nonsense")), Duration::from_millis(100));
+        assert_eq!(response_window(Some("3")), 300);
+        assert_eq!(response_window(None), 100);
+        assert_eq!(response_window(Some("120")), 500);
+        assert_eq!(response_window(Some("nonsense")), 100);
+        for mx in ["1", "3", "120"] {
+            for _ in 0..50 {
+                let window = Duration::from_millis(response_window(Some(mx)));
+                assert!(
+                    response_delay(Some(mx)) < window,
+                    "an answer drawn outside the window {mx} asked for"
+                );
+            }
+        }
+        assert_eq!(inside(0), 0, "no window is no wait rather than a panic");
     }
 }

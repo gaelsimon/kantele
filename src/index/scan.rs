@@ -463,7 +463,13 @@ pub fn walk_within(
     exclude: &Exclusions,
 ) -> std::io::Result<Walked> {
     let roots = &roots.into();
-    let mut walk = Walk::default();
+    let mut walk = Walk {
+        inside: roots
+            .paths()
+            .map(|root| root.canonicalize().unwrap_or_else(|_| root.to_path_buf()))
+            .collect(),
+        ..Walk::default()
+    };
     for region in scope.regions() {
         for folder in roots.starts(region.folder()) {
             walk.seen
@@ -517,6 +523,8 @@ struct Walk {
     folders: Vec<(PathBuf, bool)>,
     /// Canonical paths, so a symlink loop is walked once.
     seen: HashSet<PathBuf>,
+    /// The music folders, canonical, so a link is known to leave them.
+    inside: Vec<PathBuf>,
 }
 
 impl Walk {
@@ -530,12 +538,29 @@ impl Walk {
     ) {
         let mut images: Vec<PathBuf> = Vec::new();
         let mut music = false;
-        for entry in entries.filter_map(Result::ok) {
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                // Half a listing is half a library, so the pass is incomplete rather than short.
+                Err(error) => {
+                    self.walked.unreadable += 1;
+                    self.walked.refusals.refuse(
+                        Cause::UnreadableFolder,
+                        relative_to(roots, &folder),
+                        Some(error.to_string()),
+                    );
+                    continue;
+                }
+            };
             let path = entry.path();
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                self.unnamed(roots, &path);
                 continue;
             };
             if is_skipped(name) || exclude.excludes(&roots.relative_or_self(&path)) {
+                continue;
+            }
+            if self.leaves_the_library(roots, &entry, &path) {
                 continue;
             }
             if is_folder(&entry, &path) {
@@ -551,7 +576,49 @@ impl Walk {
                 self.walked.playlists.push(found(&entry, path));
             }
         }
-        if music && let Some(cover) = artwork::preferred_cover(&images) {
+        self.cover_of(folder, music, &images);
+    }
+
+    /// Whether a link points out of every music folder, which the library it names does not
+    /// answer for: serving it would put a file nobody offered on the network.
+    fn leaves_the_library(
+        &mut self,
+        roots: &Roots,
+        entry: &std::fs::DirEntry,
+        path: &Path,
+    ) -> bool {
+        if !entry.file_type().is_ok_and(|kind| kind.is_symlink()) {
+            return false;
+        }
+        let Ok(target) = path.canonicalize() else {
+            return false;
+        };
+        if self.inside.iter().any(|root| target.starts_with(root)) {
+            return false;
+        }
+        self.walked.refusals.refuse(
+            Cause::LinkedOutside,
+            relative_to(roots, path),
+            Some(format!("it points at {}", target.display())),
+        );
+        true
+    }
+
+    /// A name the file system holds as bytes no text can carry. Said only of what the extension
+    /// calls music, since the rest is junk nobody would miss.
+    fn unnamed(&mut self, roots: &Roots, path: &Path) {
+        if mime_for(path).is_none() {
+            return;
+        }
+        self.walked.refusals.refuse(
+            Cause::UnreadableFile,
+            relative_to(roots, path),
+            Some("its name is not text, so it was left out".to_owned()),
+        );
+    }
+
+    fn cover_of(&mut self, folder: PathBuf, music: bool, images: &[PathBuf]) {
+        if music && let Some(cover) = artwork::preferred_cover(images) {
             let fingerprint = std::fs::metadata(&cover)
                 .as_ref()
                 .map(Fingerprint::of)
@@ -645,6 +712,8 @@ pub struct RefusedFile {
     pub relative: PathBuf,
     pub fingerprint: Fingerprint,
     pub why: String,
+    /// Whether the file's own bytes explain this, which is what makes it worth remembering.
+    pub remember: bool,
 }
 
 type Read = (Vec<Scanned>, Vec<RefusedFile>);
@@ -728,6 +797,7 @@ fn read_folder(
                 relative,
                 fingerprint: found.fingerprint,
                 why: reason.to_owned(),
+                remember: true,
             });
             continue;
         }
@@ -739,11 +809,18 @@ fn read_folder(
                     relative,
                     fingerprint: found.fingerprint,
                     why: why(&error),
+                    remember: contents_explain(&found.path),
                 });
             }
         }
     }
     (scanned, refused)
+}
+
+/// A file that will not open may open next time: a permission, a share half mounted, another
+/// process holding it. Remembering that refusal would hide the file until something edited it.
+fn contents_explain(path: &Path) -> bool {
+    std::fs::File::open(path).is_ok()
 }
 
 fn cover_for(image: &Found, cache: &Cache) -> Option<Artwork> {
@@ -826,6 +903,21 @@ pub fn mime_for(path: &Path) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_file_that_opens_is_refused_for_a_reason_worth_remembering() {
+        let here = std::env::temp_dir().join("kantele-scan-contents-explain.flac");
+        std::fs::write(&here, b"not really audio").expect("writing a test file");
+        assert!(
+            contents_explain(&here),
+            "a file that opens and will not parse is refused by its own bytes"
+        );
+        let _ = std::fs::remove_file(&here);
+        assert!(
+            !contents_explain(&here),
+            "and one that is not there may be there next time"
+        );
+    }
 
     struct Tree(PathBuf);
 

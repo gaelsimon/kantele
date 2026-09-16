@@ -25,8 +25,7 @@ the internet at all.
 
 ## Installing
 
-Nothing is tagged yet, so the packages the first two sections describe are not downloadable. Until
-a release exists, build it from source.
+Packages are built for each tag and attached to the release. Nothing in them is signed.
 
 ### Synology
 
@@ -65,7 +64,13 @@ clone builds and tests with no node installed.
 
 At `/config`, on the same port as the music.
 
-![The Library tab, showing what is served, what the last check did, and a folder of the tree per row](docs/config-page.png)
+![The Settings tab, with the server's keys in blocks and the cost of a change beside each block](docs/settings-page.png)
+
+**Settings** writes the keys a page can write, and says what each one costs to change, from applied
+at once to needing a restart. A value the environment or the command line holds is greyed, and the
+page says which one set it.
+
+![The Library tab, showing what is served, what the last check did, and a folder of the tree per row](docs/library-page.png)
 
 **Library** is the folder tree. Per folder it shows how many tracks and albums it holds, what is
 wrong with it, and how many tracks carry no artist, date, genre or cover art. Every count opens
@@ -73,9 +78,6 @@ onto the files behind it.
 
 It also lists every address the server has heard from and how far each got: searching, browsing,
 playing.
-
-**Settings** writes the keys a page can write, and says what each one costs to change, from applied
-at once to needing a restart.
 
 There is no password. A write changes a menu setting or starts a check of the library, and every
 device on the network can already browse and stream all of it, so the firewall is what protects the

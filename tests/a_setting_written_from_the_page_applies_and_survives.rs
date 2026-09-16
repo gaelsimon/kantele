@@ -36,6 +36,13 @@ async fn put(server: &Server, body: &str, headers: &[(&str, &str)]) -> (StatusCo
         .method("PUT")
         .uri("/api/config")
         .header("Content-Type", "application/json");
+    // Every HTTP/1.1 request carries one, and a write is refused without it.
+    if !headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("host"))
+    {
+        request = request.header("Host", "192.0.2.42:8200");
+    }
     for (name, value) in headers {
         request = request.header(*name, *value);
     }
@@ -126,6 +133,22 @@ async fn a_setting_is_written_with_the_comments_kept_and_applied_at_once() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "another site's page");
+    // A page on a name its author points at this server's address sends an Origin that matches
+    // the Host it sent, so comparing the two says yes.
+    let (status, _) = put(
+        &server,
+        r#"{"menus.album_threshold": 5}"#,
+        &[
+            ("Host", "elsewhere.example:8200"),
+            ("Origin", "http://elsewhere.example:8200"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a name the world resolves is not this network's"
+    );
     assert_eq!(
         device.served().view.settings.album_threshold,
         3,
