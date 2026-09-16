@@ -35,13 +35,14 @@ one now with **Rescan all** on the page.
 
 On macOS it also watches the folder and notices at once. On a Synology it cannot: DSM allows fewer
 folder watches than a large library has folders, so the timed check is what finds new music there.
+Linux has the same limit, `fs.inotify.max_user_watches`, and the same fallback.
 
 ## Where the settings, index and log live
 
-| | On a Synology | On a Mac |
-|---|---|---|
-| Configuration | `/var/packages/kantele/var/kantele.toml` | `~/Library/Application Support/Kantele/kantele.toml` |
-| Saved index | the same folder | the same folder |
-| Log | the same folder, `kantele.log` | `~/Library/Logs/kantele.log` |
+| | On a Synology | On a Mac | On Linux |
+|---|---|---|---|
+| Configuration | `/var/packages/kantele/var/kantele.toml` | `~/Library/Application Support/Kantele/kantele.toml` | `/etc/kantele/kantele.toml` |
+| Saved index | the same folder | the same folder | `/var/lib/kantele` |
+| Log | the same folder, `kantele.log` | `~/Library/Logs/kantele.log` | `journalctl -u kantele` |
 
 Nothing is ever written inside your music folder.

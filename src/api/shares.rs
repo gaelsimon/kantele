@@ -41,7 +41,17 @@ pub struct Entry {
 #[derive(Debug)]
 pub enum Refused {
     Outside,
+    /// The folder is there and this server may not read it, which is a permission to grant.
+    Denied(String),
     Unreadable(String),
+}
+
+fn refused(path: &str, error: &std::io::Error) -> Refused {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        Refused::Denied(path.to_owned())
+    } else {
+        Refused::Unreadable(format!("{path}: {error}"))
+    }
 }
 
 /// The folders a listing may start from and may never climb above: the shares, and whatever this
@@ -96,12 +106,12 @@ pub fn listing(serving: &Roots, asked: &Asked) -> Result<Listing, Refused> {
     // Resolved against the disk first, so neither `..` nor a symlink reaches outside a share.
     let under = Path::new(&asked.under)
         .canonicalize()
-        .map_err(|error| Refused::Unreadable(format!("{}: {error}", asked.under)))?;
+        .map_err(|error| refused(&asked.under, &error))?;
     let Some(share) = shares.iter().find(|share| under.starts_with(share)) else {
         return Err(Refused::Outside);
     };
-    let mut entries = read(&under, asked.images)
-        .map_err(|error| Refused::Unreadable(format!("{}: {error}", under.display())))?;
+    let mut entries =
+        read(&under, asked.images).map_err(|error| refused(&under.to_string_lossy(), &error))?;
     entries.sort_by(|left, right| {
         (!left.folder, crate::index::fold(&left.name))
             .cmp(&(!right.folder, crate::index::fold(&right.name)))

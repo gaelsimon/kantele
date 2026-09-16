@@ -1,6 +1,6 @@
 # Kantele
 
-A UPnP/DLNA music server for the amplifier in the listening room. It serves a music folder to any
+A UPnP/DLNA music server for amplifiers and streamers. It serves a music folder to any
 control point, remembers the library between starts, and looks for new music on a timer.
 
 It is written for a NAS with two slow cores and a library of tens of thousands of files, browsed
@@ -29,15 +29,24 @@ Packages are built for each tag and attached to the release. Nothing in them is 
 
 ### Synology
 
-Take the `.spk` for your architecture from the release and install it in Package Center under
-**Manual Install**. The package is not signed, so Package Center's trust level has to allow any
-publisher.
+In Package Center, open **Settings**, then **Package Sources**, then **Add**, and give it this
+address:
+
+    https://gaelsimon.github.io/kantele/index.json
+
+Kantele then appears in Package Center, and every later version arrives there as an update. One
+package runs on every model, so there is nothing to choose. The `.spk` on the release page installs
+by hand under **Manual Install** just as well, and tells you nothing when a new version comes out.
+
+The package is not signed either way, so Package Center's trust level has to allow any publisher.
 
 Two things the installer cannot do for you:
 
 - Give the package read access to your music share. The server runs as the `kantele` package user,
-  and in Control Panel you grant that user read access on the shared folder. Without it every
-  folder comes back empty.
+  which is a system account and is not in the list of people: in Control Panel, Shared Folder, Edit,
+  Permissions, set the list to **System internal user** and `kantele` is there. Over SSH the same
+  thing is `synoshare --setuser music RO + kantele`. Without read access the folder cannot even be
+  opened in the folder chooser, and every folder comes back empty.
 - Choose the folder. The package starts with none, so open Kantele from the DSM menu, which lands
   on Settings, and pick it there.
 
@@ -52,6 +61,17 @@ It puts the binary in `~/.local/bin`, the configuration and the index in
 binary is not signed or notarised, so macOS would otherwise refuse it; the installer clears the
 quarantine flag. Open <http://localhost:8200/config> to choose a music folder. macOS asks once
 whether to let it accept incoming connections, and discovery does not work if that is refused.
+
+### Linux
+
+Take the tarball for your architecture from the release and run the installer inside it:
+
+    sudo ./install.sh
+
+It puts the binary in `/usr/local/bin`, the configuration in `/etc/kantele`, the index in
+`/var/lib/kantele`, and a systemd service that starts the server at boot. The server runs as the
+`kantele` system user, which has to be able to read your music folder. Open
+<http://localhost:8200/config> to choose it.
 
 ### From source
 
@@ -108,8 +128,14 @@ A control point browses and chooses; a renderer plays. These pairs are the ones 
 | Denon HEOS (Android) | Marantz `Model 40N` |
 | [Neos](https://github.com/gaelsimon/neos-audio) | Marantz `Model 40N` |
 | BubbleUPnP (Android) | the Android device itself |
+| Serento (macOS) | the Mac itself |
+| Fidelia (macOS) | the Mac itself |
 
-Each of them finds the server, browses it, searches it and plays from it.
+Each of them finds the server, browses it and plays from it, and the first four search it.
+
+The two Mac players read a file in opposite ways. One asks for it whole, in a single request. The
+other reads the tags at the end of the file, then moves through it in windows of a couple of
+megabytes. Both are served.
 
 If you point something at it, open an issue saying what the two ends were and what the log said.
 Every request is traced there with the user agent that sent it.

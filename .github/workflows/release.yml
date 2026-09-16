@@ -26,11 +26,40 @@ jobs:
       - run: cargo install cargo-zigbuild --locked
       # librsvg is what ImageMagick renders the icon through; without it the SVG comes out wrong.
       - run: sudo apt-get update && sudo apt-get install -y imagemagick librsvg2-bin
-      - run: tools/package-spk.sh x86_64 armv8
+      - run: tools/package-spk.sh
+      - name: One tarball per architecture, off the binaries the packages just built
+        run: |
+          for pair in x86_64:x86_64-unknown-linux-musl arm64:aarch64-unknown-linux-musl; do
+            name="${pair%%:*}"
+            target="${pair##*:}"
+            mkdir -p dist/kantele-linux
+            cp "target/$target/release/kantele" dist/kantele-linux/kantele
+            cp kantele.example.toml packaging/linux/kantele.service packaging/linux/README.md dist/kantele-linux/
+            install -m 755 packaging/linux/install.sh packaging/linux/uninstall.sh dist/kantele-linux/
+            tar -czf "dist/kantele-${GITHUB_REF_NAME}-linux-${name}.tar.gz" -C dist kantele-linux
+            rm -rf dist/kantele-linux
+          done
+      - name: The catalogue a package source serves, read off the package itself
+        run: |
+          spk="$(ls dist/kantele-*.spk)"
+          mkdir -p pages
+          cp packaging/pages/index.html pages/index.html
+          tar -xOf "$spk" PACKAGE_ICON_256.PNG > pages/kantele.png
+          python3 tools/package-index.py "$spk" \
+            --link "${{ github.server_url }}/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/$(basename "$spk")" \
+            --thumbnail "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/kantele.png" \
+            --out pages/index.json
       - uses: actions/upload-artifact@v7
         with:
           name: synology
           path: dist/*.spk
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: pages
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: dist/*.tar.gz
 
   macos:
     runs-on: macos-latest
@@ -72,11 +101,36 @@ jobs:
     steps:
       - uses: actions/download-artifact@v7
         with:
+          pattern: "{synology,macos,linux}"
           path: dist
           merge-multiple: true
       - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           body: |
-            Nothing here is signed. Synology asks for a trust level of "Any publisher" in
-            Package Center, and macOS asks for one right-click and Open on the first start.
+            A UPnP/DLNA music server for amplifiers and streamers. One static binary on
+            one port, with no runtime to install and no request to the internet. It does not
+            transcode, cast, play video, or reach a streaming service.
+
+            The `.spk` files are for a Synology, the macOS tarball carries an installer and a launch
+            agent, and the Linux tarballs carry an installer and a systemd service. What the first
+            run looks like is in [docs/first-run.md](docs/first-run.md).
+
+            Nothing here is signed. Package Center asks for a trust level of "Any publisher", and on
+            macOS the installer clears the quarantine flag itself, which is what lets a downloaded
+            binary run at all.
+
+  # The package source Package Center reads, so an installed package is offered every later version
+  # as an update. It points at the files the release above carries.
+  source:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v5

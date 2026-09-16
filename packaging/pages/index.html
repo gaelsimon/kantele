@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kantele</title>
+<meta name="description" content="A UPnP/DLNA music server for amplifiers and streamers.">
+<style>
+  :root {
+    --text: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --mono: ui-monospace, Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+    --paper: #f4f3ef;
+    --surface: #ffffff;
+    --ink: #2a2e33;
+    --ink-soft: #4b5563;
+    --muted: #6b7280;
+    --hairline: #e5e2da;
+    --edge: #c9c5bc;
+    --link: #1f4b99;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #1b1d20;
+      --surface: #24272b;
+      --ink: #e8e6e1;
+      --ink-soft: #c3c7cd;
+      --muted: #9ca3af;
+      --hairline: #34383d;
+      --edge: #44484e;
+      --link: #8ab4f8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 48px 20px 64px;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.6 var(--text);
+  }
+  main { max-width: 42rem; margin: 0 auto; }
+  h1 { font-size: 2rem; margin: 0 0 .25rem; letter-spacing: -0.01em; }
+  h2 { font-size: 1.05rem; margin: 2.5rem 0 .6rem; }
+  p { margin: 0 0 1rem; color: var(--ink-soft); }
+  .lead { font-size: 1.1rem; color: var(--ink); }
+  a { color: var(--link); }
+  code, pre { font-family: var(--mono); font-size: .9rem; }
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin: 0 0 1rem;
+    overflow-x: auto;
+  }
+  .source { border-color: var(--edge); }
+  dl { margin: 0; }
+  dt { font-weight: 600; margin-top: 1rem; }
+  dd { margin: .2rem 0 0; color: var(--ink-soft); }
+  ul { margin: 0 0 1rem; padding-left: 1.1rem; color: var(--ink-soft); }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--hairline); color: var(--muted); font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kantele</h1>
+  <p class="lead">A UPnP/DLNA music server for amplifiers and streamers. One static
+  binary on one port, with no runtime to install and no request to the internet.</p>
+
+  <h2>Synology</h2>
+  <p>In Package Center, open Settings, then Package Sources, then Add, and give it this address:</p>
+  <pre class="source">https://gaelsimon.github.io/kantele/index.json</pre>
+  <p>Kantele then appears in Package Center, and every later version arrives there as an update.
+  One package runs on every model. Nothing is signed, so the trust level has to allow any
+  publisher.</p>
+
+  <h2>macOS and Linux</h2>
+  <p>Take the archive for your machine from the
+  <a href="https://github.com/gaelsimon/kantele/releases/latest">latest release</a> and run the
+  installer inside it. On macOS it installs a launch agent, on Linux a systemd service.</p>
+
+  <h2>Then</h2>
+  <p>Open <code>http://localhost:8200/config</code>, choose a music folder, and the amplifier finds
+  the server on its own. <a href="https://github.com/gaelsimon/kantele/blob/main/docs/first-run.md">What
+  the first run looks like</a> says what to expect while the library is read.</p>
+
+  <h2>Reading</h2>
+  <dl>
+    <dt><a href="https://github.com/gaelsimon/kantele#readme">Readme</a></dt>
+    <dd>What it serves, and the devices it has been used with.</dd>
+    <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/first-run.md">First run</a></dt>
+    <dd>What happens while the library is read, and where the settings and the index live.</dd>
+    <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/settings.md">Settings</a></dt>
+    <dd>Every setting on the page, and what changing it costs.</dd>
+    <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/troubleshooting.md">Troubleshooting</a></dt>
+    <dd>No device finds it, the menus are empty, an amplifier lists other servers and not this one.</dd>
+  </dl>
+
+  <h2>What it does not do</h2>
+  <p>It does not transcode, play video, or reach a streaming service. There is no password on it,
+  so it belongs on a home network and not on the open internet. It asks nothing of the internet
+  either: no account, and no request of its own to anywhere.</p>
+
+  <footer>
+    <a href="https://github.com/gaelsimon/kantele">Source and issues on GitHub</a> · GPL-3.0
+  </footer>
+</main>
+</body>
+</html>

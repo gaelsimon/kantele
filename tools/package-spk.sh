@@ -1,10 +1,12 @@
 #!/bin/bash
-# Builds the Synology package: one .spk per architecture under dist/, from the static musl binary.
-# usage: tools/package-spk.sh [x86_64] [armv8]
+# Builds the Synology package under dist/: one .spk carrying both static musl binaries, declared
+# noarch, because a package source serves one catalogue to every model.
+# usage: tools/package-spk.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# macOS tar writes an AppleDouble ._file beside every file it stores, which would ship to every NAS.
+export COPYFILE_DISABLE=1
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)-1"
-ARCHES=("${@:-x86_64}")
 SRC=packaging/synology
 OUT=dist
 mkdir -p "$OUT"
@@ -41,35 +43,40 @@ icons() {
     "$MAGICK" -background none -density 1200 assets/icon.svg -resize "${size}x${size}" \
       -depth 8 -define png:color-type=6 -strip "$work/icons/kantele_$size.png"
   done
+  # DSM serves the desktop icons to a browser, which a file only root can read never reaches.
+  chmod 644 "$work"/icons/*.png
 }
 
-for arch in "${ARCHES[@]}"; do
+work="$(mktemp -d)"
+payload="$work/payload"
+mkdir -p "$payload/bin" "$payload/share" "$payload/ui/images"
+
+for arch in x86_64 armv8; do
   target="$(target_for "$arch")"
   echo "== $arch: building $target"
   cargo zigbuild --release --target "$target"
-  work="$(mktemp -d)"
-  payload="$work/payload"
-  mkdir -p "$payload/bin" "$payload/share" "$payload/ui/images"
-  cp "target/$target/release/kantele" "$payload/bin/kantele"
-  cp kantele.example.toml "$payload/share/kantele.example.toml"
-  cp "$SRC/ui/config" "$payload/ui/config"
-  icons "$work"
-  cp "$work"/icons/kantele_*.png "$payload/ui/images/"
-  spk="$work/spk"
-  mkdir -p "$spk/scripts" "$spk/conf"
-  tar -czf "$spk/package.tgz" -C "$payload" .
-  checksum="$(md5 -q "$spk/package.tgz" 2>/dev/null || md5sum "$spk/package.tgz" | cut -d' ' -f1)"
-  sed -e "s/@VERSION@/$VERSION/" -e "s/@ARCH@/$arch/" -e "s/@CHECKSUM@/$checksum/" "$SRC/INFO.in" > "$spk/INFO"
-  cp "$SRC/scripts/start-stop-status" "$spk/scripts/"
-  for script in preinst postinst preuninst postuninst preupgrade postupgrade; do
-    printf '#!/bin/sh\nexit 0\n' > "$spk/scripts/$script"
-  done
-  chmod 755 "$spk"/scripts/*
-  cp "$SRC/conf/privilege" "$spk/conf/privilege"
-  cp "$work/icons/kantele_72.png" "$spk/PACKAGE_ICON.PNG"
-  cp "$work/icons/kantele_256.png" "$spk/PACKAGE_ICON_256.PNG"
-  out="$OUT/kantele-$VERSION-$arch.spk"
-  tar -cf "$out" -C "$spk" INFO PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG package.tgz scripts conf
-  rm -rf "$work"
-  echo "== wrote $out ($(du -h "$out" | cut -f1))"
+  cp "target/$target/release/kantele" "$payload/bin/kantele-$arch"
 done
+
+cp kantele.example.toml "$payload/share/kantele.example.toml"
+cp "$SRC/ui/config" "$payload/ui/config"
+icons "$work"
+cp "$work"/icons/kantele_*.png "$payload/ui/images/"
+
+spk="$work/spk"
+mkdir -p "$spk/scripts" "$spk/conf"
+tar -czf "$spk/package.tgz" -C "$payload" .
+checksum="$(md5 -q "$spk/package.tgz" 2>/dev/null || md5sum "$spk/package.tgz" | cut -d' ' -f1)"
+sed -e "s/@VERSION@/$VERSION/" -e "s/@CHECKSUM@/$checksum/" "$SRC/INFO.in" > "$spk/INFO"
+cp "$SRC/scripts/start-stop-status" "$spk/scripts/"
+for script in preinst postinst preuninst postuninst preupgrade postupgrade; do
+  printf '#!/bin/sh\nexit 0\n' > "$spk/scripts/$script"
+done
+chmod 755 "$spk"/scripts/*
+cp "$SRC/conf/privilege" "$spk/conf/privilege"
+cp "$work/icons/kantele_72.png" "$spk/PACKAGE_ICON.PNG"
+cp "$work/icons/kantele_256.png" "$spk/PACKAGE_ICON_256.PNG"
+out="$OUT/kantele-$VERSION.spk"
+tar -cf "$out" -C "$spk" INFO PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG package.tgz scripts conf
+rm -rf "$work"
+echo "== wrote $out ($(du -h "$out" | cut -f1))"

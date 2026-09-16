@@ -270,6 +270,15 @@ async fn share_listing(
             "this listing answers for the shares and what is under them, and for nothing else\n",
         )
             .into_response(),
+        Err(shares::Refused::Denied(path)) => (
+            StatusCode::FORBIDDEN,
+            format!(
+                "{path}: this server may not read it. It reads as the user it runs as, which on a \
+                 Synology is the package user, given read access to a shared folder in Control \
+                 Panel.\n"
+            ),
+        )
+            .into_response(),
         Err(shares::Refused::Unreadable(why)) => {
             (StatusCode::NOT_FOUND, format!("{why}\n")).into_response()
         }

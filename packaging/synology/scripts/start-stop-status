@@ -3,7 +3,12 @@
 # folder, which DSM keeps on the volume and across upgrades.
 PKG_DEST="${SYNOPKG_PKGDEST:-/var/packages/kantele/target}"
 PKG_VAR="${SYNOPKG_PKGVAR:-/var/packages/kantele/var}"
-BIN="$PKG_DEST/bin/kantele"
+# One package carries both binaries, since a package source serves one catalogue to every model.
+case "$(uname -m)" in
+  x86_64) BIN="$PKG_DEST/bin/kantele-x86_64" ;;
+  aarch64|arm64) BIN="$PKG_DEST/bin/kantele-armv8" ;;
+  *) BIN="$PKG_DEST/bin/kantele-x86_64" ;;
+esac
 CONF="$PKG_VAR/kantele.toml"
 LOG="$PKG_VAR/kantele.log"
 PID_FILE="$PKG_VAR/kantele.pid"

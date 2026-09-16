@@ -1,0 +1,17 @@
+[Unit]
+Description=Kantele, a UPnP/DLNA music server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=kantele
+Group=kantele
+Environment=KANTELE_STATE=/var/lib/kantele
+ExecStart=/usr/local/bin/kantele --config /etc/kantele/kantele.toml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

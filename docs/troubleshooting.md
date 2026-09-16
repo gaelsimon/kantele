@@ -18,6 +18,9 @@ Discovery is a multicast exchange, and it is what home networks break.
   setting that silently drops it. It is the most common cause.
 - **macOS:** the firewall asks once whether to accept incoming connections, and refusing it produces
   exactly this.
+- **macOS, on the other side:** the control point application needs its own permission to reach the
+  local network. Until it is granted, the application behaves as though the server were not there,
+  and starts working on its own once it is.
 
 The page's **Devices on the network** section lists every address the server has heard from and how
 far each got: searching, reading its description, browsing, playing. A device that appears there and
@@ -43,7 +46,8 @@ identity with it. Start the second one on an empty state folder and it mints one
 - **On a Synology, the usual cause is permissions.** The server runs as the `kantele` package user,
   and if that user cannot read your music share, every folder is empty and nothing says so on the
   amplifier. The page does say so: the folder shows as unreadable. Grant that user read access in
-  Control Panel.
+  Control Panel, Shared Folder, Edit, Permissions, with the list set to **System internal user**,
+  which is where package accounts are and where people are not.
 - A check that is still running has not filled every menu yet. The progress strip says so.
 - `nothing playable found` appears in the log when the folder holds no audio this server reads.
 - **Music reached through a symbolic link that leaves the music folder is left out**, and the page

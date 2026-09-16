@@ -337,6 +337,43 @@ async fn the_folder_chooser_offers_the_shares_and_refuses_the_rest_of_the_disk()
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_folder_this_server_may_not_read_says_so_rather_than_looking_absent() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tree = a_library("denied");
+    let server = serving(&tree, None);
+    let served = tree.0.canonicalize().expect("the test tree is there");
+    let shut = served.join("Autechre");
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).expect("shutting it");
+
+    let answer = ask(
+        &server,
+        get_json(&format!("/api/shares?under={}", shut.display())),
+    )
+    .await;
+    let status = answer.status();
+    let said = String::from_utf8(
+        to_bytes(answer.into_body(), usize::MAX)
+            .await
+            .expect("a body")
+            .to_vec(),
+    )
+    .expect("utf-8");
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o755)).expect("opening it");
+
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a folder that is there and shut is not a folder that is missing"
+    );
+    assert!(
+        said.contains("may not read it"),
+        "and it says what to do about it: {said}"
+    );
+}
+
 #[tokio::test]
 async fn the_count_behind_a_problem_is_what_the_folder_really_holds() {
     let tree = Tree::new("problems-past-the-hundred");

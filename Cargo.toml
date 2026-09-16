@@ -3,7 +3,7 @@ name = "kantele"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
-description = "A UPnP/DLNA music server for the amplifier in the listening room"
+description = "A UPnP/DLNA music server for amplifiers and streamers"
 repository = "https://github.com/gaelsimon/kantele"
 
 [dependencies]

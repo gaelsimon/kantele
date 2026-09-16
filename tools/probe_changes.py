@@ -60,7 +60,22 @@ class Told:
             "NT": "upnp:event", "TIMEOUT": f"Second-{seconds}"})
         with urllib.request.urlopen(req, timeout=10) as r:
             self.sid = r.headers.get("SID")
+        if self.sid:
+            threading.Thread(target=self.renewing, args=(seconds,), daemon=True).start()
         return self.sid
+
+    def renewing(self, seconds):
+        """A wait for a timed check outlives the subscription, and a dropped one is told nothing."""
+        while self.sid:
+            time.sleep(max(seconds / 2, 15))
+            if not self.sid:
+                return
+            req = urllib.request.Request(self.event_url, method="SUBSCRIBE",
+                                         headers={"SID": self.sid, "TIMEOUT": f"Second-{seconds}"})
+            try:
+                urllib.request.urlopen(req, timeout=10).close()
+            except OSError:
+                self.sid = None
 
     def after(self, when, seconds):
         deadline = time.time() + seconds
@@ -72,8 +87,9 @@ class Told:
         return None
 
     def close(self):
-        if self.sid:
-            req = urllib.request.Request(self.event_url, method="UNSUBSCRIBE", headers={"SID": self.sid})
+        sid, self.sid = self.sid, None
+        if sid:
+            req = urllib.request.Request(self.event_url, method="UNSUBSCRIBE", headers={"SID": sid})
             try:
                 urllib.request.urlopen(req, timeout=5).close()
             except OSError:
@@ -150,6 +166,8 @@ def main():
     ap.add_argument("--folder", required=True, help="a folder the server is serving, written into")
     ap.add_argument("--file", required=True, help="the audio file to drop in, copied from where it is")
     ap.add_argument("--patience", type=float, default=90.0, help="how long the server may take to notice")
+    ap.add_argument("--subscription", type=float, default=300.0,
+                    help="seconds a subscription is asked for, renewed at half of it while it waits")
     ap.add_argument("--every", type=float, default=0.5,
                     help="seconds between asks, which a wait for a timed check wants longer")
     args = ap.parse_args()
@@ -158,7 +176,7 @@ def main():
     cd = resolve_control_url(desc, args.base)
     event_url = urllib.parse.urljoin(args.base + "/", "event/ContentDirectory")
     told = Told(event_url)
-    if not check("the server takes a subscription", told.subscribe() is not None):
+    if not check("the server takes a subscription", told.subscribe(args.subscription) is not None):
         summarise()
         return
 

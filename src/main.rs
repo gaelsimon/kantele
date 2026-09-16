@@ -20,7 +20,7 @@ use kantele::{config, report, state};
 const USAGE: &str = "usage: kantele [<music folder>] [options]";
 
 const HELP: &str = "\
-A UPnP/DLNA music server for the amplifier in the listening room.
+A UPnP/DLNA music server for amplifiers and streamers.
 
 The folder holds the music to serve. Without one the server still starts and serves its page, where
 the folder is chosen.

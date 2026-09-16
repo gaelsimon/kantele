@@ -26,8 +26,11 @@ server, which is a heavier change than it looks.
 Every sentence the page shows about a setting comes from the server. `config::Apply::says` is the
 only copy of the five modes; the page renders `setting.says` and keeps none of its own.
 
-`tools/package-spk.sh` builds the Synology packages. It wants `cargo-zigbuild` for the musl targets
-and ImageMagick to render the DSM icons from `assets/icon.svg`, and it runs on any platform.
+`tools/package-spk.sh` builds the Synology package, one file carrying both architectures and
+declared `noarch`, because a package source serves one catalogue to every model. It wants
+`cargo-zigbuild` for the musl targets and ImageMagick to render the DSM icons from
+`assets/icon.svg`, and it runs on any platform. `tools/package-index.py` writes the catalogue that
+package source serves, reading the package it offers rather than being told what is in it.
 
 ## Testing
 
@@ -107,7 +110,8 @@ A device nobody here owns is the one thing this project cannot test for itself. 
 
 Setting `capture_dir` writes every control exchange, one folder per device, which is what makes
 "it shows nothing" diagnosable. `tools/replay_clients.py` plays those files back against a build
-and diffs the answers.
+and diffs the answers. `captures/` holds one such recording, and its README says what a replay of
+it does and does not prove.
 
 ## Style
 

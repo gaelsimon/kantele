@@ -1,0 +1,2 @@
+# Captures are what a client sent and what it was answered, byte for byte.
+captures/** -text
