@@ -90,14 +90,12 @@ At `/config`, on the same port as the music.
 at once to needing a restart. A value the environment or the command line holds is greyed, and the
 page says which one set it.
 
-![The Library tab, showing what is served, what the last check did, and a folder of the tree per row](docs/library-page.png)
+![The Library tab, showing what is served, what the last check did, and the library walked one column per folder](docs/library-page.png)
 
-**Library** is the folder tree. Per folder it shows how many tracks and albums it holds, what is
-wrong with it, and how many tracks carry no artist, date, genre or cover art. Every count opens
-onto the files behind it.
-
-It also lists every address the server has heard from and how far each got: searching, browsing,
-playing.
+**Library** walks the music folder one column per level, folders and files together, with an
+inspector beside them. It says what a folder holds and what the tags made of it, which albums its
+files belong to, and for one file every tag it carries and where those tags put it on your players.
+Every count opens onto the files behind it.
 
 There is no password. A write changes a menu setting or starts a check of the library, and every
 device on the network can already browse and stream all of it, so the firewall is what protects the
