@@ -37,6 +37,8 @@ def main():
     entry = {
         "package": info["package"],
         "version": info["version"],
+        # Package Center hides an entry whose architecture it cannot match, and says nothing.
+        "arch": info.get("arch", "noarch"),
         "dname": info.get("displayname", info["package"]),
         "desc": info.get("description", ""),
         "price": 0,
