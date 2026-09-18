@@ -112,6 +112,9 @@ pub struct Track {
     /// Set by the flag or by a placeholder credit, never by a missing one.
     pub compilation: bool,
     pub title: String,
+    /// Whether the title is the file's own tag. A file with none is titled by its name, here and
+    /// on the amplifier.
+    pub title_tagged: bool,
     pub artists: Vec<Credit>,
     pub album_artists: Vec<Credit>,
     pub composers: Vec<Credit>,
@@ -499,6 +502,7 @@ fn track_from(
         compilation: tags.compilation
             || credits::holds_placeholder(&tags.album_artists, &tags.musicbrainz_album_artist_ids),
         title: display_title(tags, &file.path),
+        title_tagged: tagged_title(tags).is_some(),
         artists: credits::paired(&tags.artists, &tags.artist_sorts),
         // Placeholders are dropped from album artists only.
         album_artists: credits::crediting(
@@ -535,15 +539,16 @@ fn track_from(
     }
 }
 
+fn tagged_title(tags: &FileTags) -> Option<String> {
+    tags.title.clone().filter(|title| !title.trim().is_empty())
+}
+
 fn display_title(tags: &FileTags, path: &Path) -> String {
-    tags.title
-        .clone()
-        .filter(|title| !title.trim().is_empty())
-        .unwrap_or_else(|| {
-            path.file_stem()
-                .map(|stem| fold::nfc(&stem.to_string_lossy()))
-                .unwrap_or_else(|| "Untitled".to_owned())
-        })
+    tagged_title(tags).unwrap_or_else(|| {
+        path.file_stem()
+            .map(|stem| fold::nfc(&stem.to_string_lossy()))
+            .unwrap_or_else(|| "Untitled".to_owned())
+    })
 }
 
 pub fn library_name(root: &Path) -> String {
@@ -881,6 +886,19 @@ mod tests {
         );
         assert_eq!(library.tracks()[0].title, "03 - Rondo");
         assert_eq!(library.tracks()[0].rule, Rule::Strings);
+        assert!(
+            !library.tracks()[0].title_tagged,
+            "and the page can say the file carries no title of its own"
+        );
+
+        let titled = Library::build(
+            "Music".to_owned(),
+            &[scanned(
+                "Kremer/03 - Rondo.flac",
+                tags("Mozart", "Rondo", None, 3),
+            )],
+        );
+        assert!(titled.tracks()[0].title_tagged);
     }
 
     #[test]

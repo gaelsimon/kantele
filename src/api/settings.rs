@@ -1,17 +1,20 @@
 //! Reading the effective configuration, and writing the keys the page may write.
 
+use std::path::Path;
+
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
-use crate::config::{Apply, Effective, Setting};
+use crate::config::Apply;
 use crate::service::{Asked, Pass};
 
+use super::describe::{self, Effective, Setting};
 use super::{Control, Operation, Shared, answer, same_origin};
 
 pub(super) async fn configuration(State(control): State<Shared>, headers: HeaderMap) -> Response {
-    let effective = control.operation().config.effective.clone();
+    let effective = describe::effective(&control.operation().config);
     answer(&headers, &effective, || flatten_config(&effective))
 }
 
@@ -65,8 +68,8 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
                 format!("the body is not a JSON object of settings: {error}"),
             )
         })?;
-    let mode = writable(&operation.config.effective, &changes)?;
-    let path = operation.config.effective.file.clone().ok_or_else(|| {
+    let mode = writable(&describe::effective(&operation.config), &changes)?;
+    let path = operation.config.file_path().map(Path::to_path_buf).ok_or_else(|| {
         refuse(StatusCode::CONFLICT, "no configuration file was read at startup, so there is nothing to write: start with --config".to_owned())
     })?;
     let text = std::fs::read_to_string(&path).map_err(|error| {
@@ -170,7 +173,7 @@ fn writable(
 async fn applied(
     control: &Control,
     mode: Apply,
-    path: &std::path::Path,
+    path: &Path,
     settings: crate::browse::Settings,
 ) -> String {
     let file = path.display();
@@ -244,11 +247,9 @@ mod tests {
 
     #[test]
     fn every_setting_names_the_layer_it_came_from() {
-        let config = crate::config::Config::default();
-        let effective = config.effective(&crate::config::Layers {
-            file: None,
-            content_dir_on_command_line: true,
-        });
+        let resolved =
+            crate::config::Resolved::load(None, Some("/music".into())).expect("the layers resolve");
+        let effective = describe::effective(&resolved);
         let lines = flatten_config(&effective);
         assert_eq!(lines[0], ("file".to_owned(), "none".to_owned()));
         assert!(

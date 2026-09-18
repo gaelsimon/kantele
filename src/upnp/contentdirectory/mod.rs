@@ -1,5 +1,8 @@
 //! The ContentDirectory service.
 
+pub use crate::browse::root::{ALBUMS, FOLDERS, MUSIC, PLAYLISTS, RECENT, UNTAGGED};
+
+use crate::browse::root::{FOLDERS_TITLE, PLAYLISTS_TITLE, RECENT_TITLE, UNTAGGED_TITLE};
 use crate::upnp::{ObjectId, didl, search};
 
 #[derive(Clone, Debug)]
@@ -36,18 +39,8 @@ impl Fault {
     };
 }
 
-pub const MUSIC: &str = "music";
-pub const ALBUMS: &str = "albums";
 pub const ARTISTS: &str = "artists";
-pub const UNTAGGED: &str = "untagged";
-const UNTAGGED_TITLE: &str = "[untagged]";
-pub const PLAYLISTS: &str = "playlists";
-const PLAYLISTS_TITLE: &str = "Playlists";
-pub const FOLDERS: &str = "folders";
-const FOLDERS_TITLE: &str = "[folder view]";
 const TAG_VIEW_TITLE: &str = "[tag view]";
-pub const RECENT: &str = "recent";
-const RECENT_TITLE: &str = "Recently added";
 
 struct Menus {
     root: ObjectId,

@@ -96,6 +96,7 @@ export type FolderRow = {
   notes: number;
   missing: number;
   changed: boolean;
+  artwork?: string;
   says: string;
   issues: Issue[];
 };
@@ -132,6 +133,8 @@ export type Setting = {
   apply: Apply;
   /// The mode in words, sent with it so this page keeps no copy of the sentences.
   says: string;
+  /// The same mode as a badge wears it, which is a label and not a sentence.
+  tag: string;
   writable: boolean;
   choices?: Choice[];
 };
@@ -169,9 +172,78 @@ async function ask<T>(path: string, init?: RequestInit): Promise<T> {
   return JSON.parse(text) as T;
 }
 
+/// One entry of a menu level. `chosen` marks a menu the owner asked for, as against one the
+/// library gives.
+export type MenuEntry = { at: string; title: string; children: number; chosen: boolean };
+
+export type Menu = {
+  at: string;
+  kind: 'root' | 'axes' | 'values' | 'letters' | 'tracks';
+  entries: MenuEntry[];
+  tracks: number;
+};
+
+/// One place a track's tags put it in the menus.
+export type Place = { facet: string; axis: string; value: string; at: string; tracks: number };
+
+/// One row of a file's tag panel. No `value` means the file carries no such tag.
+export type TrackTag = { label: string; value?: string };
+
+/// One file of a folder, as the pane lists it before anybody opens it.
+export type FileRow = {
+  path: string;
+  title: string;
+  number?: number;
+  artwork?: string;
+  seconds: number;
+};
+
+/// One album the files of a folder belong to. `tracks` short of `of` is an album this folder holds
+/// only a part of, which is the two-disc case.
+export type FolderAlbum = {
+  id: string;
+  title: string;
+  credit?: string;
+  date?: string;
+  artwork?: string;
+  /// The folder the cover sits in, sent only where that is not the folder asked about.
+  cover_in?: string;
+  tracks: number;
+  of: number;
+  folders: string[];
+  says?: string;
+};
+
+export type FolderFiles = {
+  folder: string;
+  files: FileRow[];
+  albums: FolderAlbum[];
+  more: boolean;
+};
+
+export type TrackDetail = {
+  path: string;
+  title: string;
+  tags: TrackTag[];
+  places: Place[];
+  album?: { title: string; at: string; keyed_on_path: boolean };
+  /// What to ask `/art/` for, where the file has a cover.
+  artwork?: string;
+  format: string;
+  seconds: number;
+};
+
 export const getStatus = () => ask<Status>('/api/status');
 export const getProgress = () => ask<Progress>('/api/progress');
 export const getConfiguration = () => ask<Configuration>('/api/config');
+export const getFiles = (folder: string) =>
+  ask<FolderFiles>(`/api/files${folder ? `?folder=${encodeURIComponent(folder)}` : ''}`);
+
+export const getTrack = (path: string) =>
+  ask<TrackDetail>(`/api/track?path=${encodeURIComponent(path)}`);
+
+export const getMenu = (at = '') =>
+  ask<Menu>(`/api/menu${at ? `?at=${encodeURIComponent(at)}` : ''}`);
 
 export function getFolders(
   under: string,

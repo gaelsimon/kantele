@@ -307,16 +307,71 @@ fn changes(known: &[Ipv4Addr], now: &[Ipv4Addr]) -> (Vec<Ipv4Addr>, Vec<Ipv4Addr
     (missing(now, known), missing(known, now))
 }
 
+/// Interfaces a container runtime, a virtual machine or a VPN made. No renderer is behind one, and
+/// announcing there costs a multicast join and a salvo of advertisements on every start.
+const MADE_BY_SOFTWARE: &[&str] = &[
+    "cali",
+    "cni",
+    "docker",
+    "flannel",
+    "hassio",
+    "incusbr",
+    "lxcbr",
+    "lxdbr",
+    "nordlynx",
+    "podman",
+    "ppp",
+    "tailscale",
+    "tap",
+    "tun",
+    "utun",
+    "vboxnet",
+    "veth",
+    "virbr",
+    "vmnet",
+    "wg",
+    "zt",
+];
+
+fn made_by_software(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    if MADE_BY_SOFTWARE
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+    {
+        return true;
+    }
+    // A docker network is `br-` and twelve hex digits. A macOS bridge for virtual machines is
+    // `bridge` and three digits, where `bridge0` is the Thunderbolt one a house may really use.
+    if let Some(rest) = name.strip_prefix("br-") {
+        return rest.len() == 12 && rest.chars().all(|c| c.is_ascii_hexdigit());
+    }
+    match name.strip_prefix("bridge") {
+        Some(rest) => rest.len() == 3 && rest.chars().all(|c| c.is_ascii_digit()),
+        None => false,
+    }
+}
+
 pub fn local_addresses() -> Vec<Ipv4Addr> {
-    if_addrs::get_if_addrs()
+    let found: Vec<(String, Ipv4Addr)> = if_addrs::get_if_addrs()
         .into_iter()
         .flatten()
         .filter(|interface| !interface.is_loopback())
         .filter_map(|interface| match interface.ip() {
-            std::net::IpAddr::V4(address) => Some(address),
+            std::net::IpAddr::V4(address) => Some((interface.name, address)),
             std::net::IpAddr::V6(_) => None,
         })
-        .collect()
+        .collect();
+    let real: Vec<Ipv4Addr> = found
+        .iter()
+        .filter(|(name, _)| !made_by_software(name))
+        .map(|(_, address)| *address)
+        .collect();
+    // A host with nothing else announces where it can: inside a container, the bridge is the network.
+    if real.is_empty() {
+        return found.into_iter().map(|(_, address)| address).collect();
+    }
+    real
 }
 
 fn local_address_towards(peer: SocketAddr) -> Option<Ipv4Addr> {
@@ -413,6 +468,27 @@ mod tests {
     use super::*;
 
     const UDN: &str = "3d5d1cbe-8f2a-4d1e-9a9c-7c2f0a1b2c3d";
+
+    #[test]
+    fn the_interfaces_a_container_or_a_vpn_made_are_not_announced_on() {
+        for name in [
+            "docker0",
+            "veth3f2a1b",
+            "br-0123456789ab",
+            "bridge100",
+            "utun4",
+            "tailscale0",
+            "wg0",
+            "vmnet8",
+        ] {
+            assert!(made_by_software(name), "{name}");
+        }
+        for name in [
+            "en0", "eth0", "eth1", "ovs_eth0", "bond0", "wlan0", "bridge0", "enp3s0",
+        ] {
+            assert!(!made_by_software(name), "{name}");
+        }
+    }
 
     #[tokio::test]
     async fn a_sender_names_the_interface_its_multicast_leaves_by() {

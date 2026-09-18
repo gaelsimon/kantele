@@ -24,6 +24,13 @@ export function many(n: number, singular: string, plural = `${singular}s`): stri
   return `${count(n)} ${noun(n, singular, plural)}`;
 }
 
+/// What a file calls itself at the end of its name, which is the format an owner speaks of.
+export function extension(path: string): string {
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(dot + 1).toUpperCase() : '';
+}
+
 /// Rounded to the two largest units that are not zero.
 export function uptime(seconds: number): string {
   const days = Math.floor(seconds / 86_400);

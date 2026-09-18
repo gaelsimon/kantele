@@ -2,9 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Kept per cause; the rest are only counted.
-pub const KEPT: usize = 100;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Origin {
@@ -115,37 +112,6 @@ impl Cause {
             | Self::PlaceholderCredit => Origin::Index,
         }
     }
-
-    /// The field and its state, the way a form labels one. Never a sentence.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::UnreadableFolder => "Folder unreadable",
-            Self::UnreadableFile => "Unreadable",
-            Self::UnreadablePlaylist => "Playlist unreadable",
-            Self::UnreadableRow => "Not in the saved index",
-            Self::LinkedOutside => "Leads out of the music folder",
-            Self::MissingEntry => "Playlist link broken",
-            Self::UnpublishedPlaylist => "Playlist empty",
-            Self::RepeatedEntry => "Playlist link repeated",
-            Self::AlbumKeyedOnPath => "Album tags identical",
-            Self::TrackKeyedOnPath => "Track tags identical",
-            Self::PlaceholderCredit => "Album artist not set",
-        }
-    }
-
-    /// What the count counts.
-    pub fn subject(self, count: usize) -> &'static str {
-        let (one, many) = match self {
-            Self::UnreadableFolder => ("folder", "folders"),
-            Self::UnreadableFile | Self::UnreadableRow => ("file", "files"),
-            Self::LinkedOutside => ("link", "links"),
-            Self::UnreadablePlaylist | Self::UnpublishedPlaylist => ("playlist", "playlists"),
-            Self::MissingEntry | Self::RepeatedEntry => ("link", "links"),
-            Self::AlbumKeyedOnPath => ("album", "albums"),
-            Self::TrackKeyedOnPath | Self::PlaceholderCredit => ("track", "tracks"),
-        };
-        if count == 1 { one } else { many }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -177,12 +143,14 @@ pub struct Refusals {
 pub struct Reported {
     pub cause: Cause,
     pub origin: Origin,
-    pub says: &'static str,
     pub total: usize,
     pub shown: Vec<Refusal>,
 }
 
 impl Refusals {
+    /// Kept per cause; the rest are only counted.
+    pub const KEPT: usize = 100;
+
     pub fn refuse(&mut self, cause: Cause, subject: impl Into<String>, detail: Option<String>) {
         let subject = subject.into();
         let folder = folder_of(cause, &subject);
@@ -217,7 +185,7 @@ impl Refusals {
         }
         let kept = self.by_cause.entry(cause).or_default();
         kept.total += 1;
-        if kept.held.len() < KEPT {
+        if kept.held.len() < Self::KEPT {
             kept.held.push(Refusal { subject, detail });
         }
     }
@@ -279,7 +247,6 @@ impl Refusals {
             .map(|cause| Reported {
                 cause: *cause,
                 origin: cause.origin(),
-                says: cause.label(),
                 total: self.total_of(*cause),
                 shown: self.held(*cause).to_vec(),
             })
@@ -294,7 +261,7 @@ impl Refusals {
         for (cause, kept) in other.by_cause {
             let mine = self.by_cause.entry(cause).or_default();
             mine.total += kept.total;
-            let room = KEPT.saturating_sub(mine.held.len());
+            let room = Self::KEPT.saturating_sub(mine.held.len());
             mine.held.extend(kept.held.into_iter().take(room));
         }
         for (folder, tally) in other.by_folder {
@@ -371,11 +338,11 @@ mod tests {
             refusals.refuse(Cause::MissingEntry, "list.m3u", Some(format!("{at}")));
         }
         assert_eq!(refusals.total_of(Cause::MissingEntry), 250);
-        assert_eq!(refusals.held(Cause::MissingEntry).len(), KEPT);
+        assert_eq!(refusals.held(Cause::MissingEntry).len(), Refusals::KEPT);
         let reported = refusals.reported();
         assert_eq!(reported.len(), 1);
         assert_eq!(reported[0].total, 250);
-        assert_eq!(reported[0].shown.len(), KEPT);
+        assert_eq!(reported[0].shown.len(), Refusals::KEPT);
     }
 
     #[test]
@@ -395,7 +362,7 @@ mod tests {
         }
         left.absorb(right);
         assert_eq!(left.total_of(Cause::UnreadableFile), 160);
-        assert_eq!(left.held(Cause::UnreadableFile).len(), KEPT);
+        assert_eq!(left.held(Cause::UnreadableFile).len(), Refusals::KEPT);
     }
 
     #[test]

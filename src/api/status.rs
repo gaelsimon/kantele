@@ -5,8 +5,7 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use serde::Serialize;
 
-use crate::index::Coverage;
-use crate::index::refusals::Reported;
+use crate::index::{Cause, Coverage, Origin, Refusal, Refusals, Reported};
 use crate::service::Outcome;
 use crate::upnp::gena::Listed;
 use crate::upnp::peers::{self, Seen};
@@ -142,7 +141,37 @@ struct Failing {
 struct Refused {
     total: usize,
     walked: bool,
-    causes: Vec<Reported>,
+    causes: Vec<RefusedCause>,
+}
+
+/// One cause, with the words a reader is shown beside the count.
+#[derive(Debug, Serialize)]
+struct RefusedCause {
+    cause: Cause,
+    origin: Origin,
+    says: &'static str,
+    total: usize,
+    shown: Vec<Refusal>,
+}
+
+impl From<Reported> for RefusedCause {
+    fn from(reported: Reported) -> Self {
+        Self {
+            cause: reported.cause,
+            origin: reported.origin,
+            says: crate::report::label(reported.cause),
+            total: reported.total,
+            shown: reported.shown,
+        }
+    }
+}
+
+fn causes_of(refusals: &Refusals) -> Vec<RefusedCause> {
+    refusals
+        .reported()
+        .into_iter()
+        .map(RefusedCause::from)
+        .collect()
 }
 
 pub(super) async fn status(State(control): State<Shared>, headers: HeaderMap) -> Response {
@@ -202,7 +231,7 @@ pub(super) async fn status(State(control): State<Shared>, headers: HeaderMap) ->
         refused: Refused {
             total: refusals.total(),
             walked: last.is_some(),
-            causes: refusals.reported(),
+            causes: causes_of(&refusals),
         },
         subscribers: device.subscriptions.listed(),
         devices: device
@@ -347,7 +376,7 @@ fn pass_lines(pass: Option<&LastPass>) -> Vec<(String, String)> {
 }
 
 /// One cause: what it is, how many there were, and the ones the bound kept.
-fn cause_lines(cause: &Reported) -> Vec<(String, String)> {
+fn cause_lines(cause: &RefusedCause) -> Vec<(String, String)> {
     let name = cause.cause.as_str();
     let mut lines = vec![
         (format!("refused.{name}.total"), cause.total.to_string()),
@@ -411,8 +440,8 @@ mod tests {
     }
 
     fn a_status() -> Status {
-        let mut refusals = crate::index::refusals::Refusals::default();
-        refusals.refuse(crate::index::refusals::Cause::MissingEntry, "set.m3u", None);
+        let mut refusals = Refusals::default();
+        refusals.refuse(Cause::MissingEntry, "set.m3u", None);
         Status {
             name: "Kantele".to_owned(),
             version: "0.0.0",
@@ -458,7 +487,7 @@ mod tests {
             refused: Refused {
                 total: 1,
                 walked: true,
-                causes: refusals.reported(),
+                causes: causes_of(&refusals),
             },
             subscribers: vec![Listed {
                 sid: "uuid:one".to_owned(),

@@ -13,15 +13,18 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use serde::Serialize;
 
+pub mod describe;
+pub mod files;
 pub mod folders;
+pub mod menu;
 pub mod settings;
 pub mod shares;
 pub mod status;
+pub mod track;
 
 use crate::config::Resolved;
 use crate::index::Refusals;
-use crate::index::scan::Scope;
-use crate::service::{Asked, Live, Pass, Passes};
+use crate::service::{Asked, Live, Pass, Passes, Scope};
 use crate::upnp::device::Device;
 
 /// What this process is running as, which nothing in the index knows.
@@ -96,6 +99,9 @@ pub fn router(control: Shared) -> Router {
             get(settings::configuration).put(settings::write_configuration),
         )
         .route("/api/folders", get(folder_tree))
+        .route("/api/files", get(folder_files))
+        .route("/api/menu", get(menu_level))
+        .route("/api/track", get(track_detail))
         .route("/api/problems", get(problem_files))
         .route("/api/shares", get(share_listing))
         .route("/api/rescan", post(rescan))
@@ -123,6 +129,54 @@ async fn progress(State(control): State<Shared>, headers: HeaderMap) -> Response
         }
         lines
     })
+}
+
+async fn menu_level(
+    State(control): State<Shared>,
+    headers: HeaderMap,
+    Query(asked): Query<menu::Asked>,
+) -> Response {
+    let served = control.device.served();
+    let Some(level) = menu::level(&served, &asked) else {
+        return (
+            StatusCode::NOT_FOUND,
+            format!("{} is no menu of this library\n", asked.at),
+        )
+            .into_response();
+    };
+    answer(&headers, &level, || menu::lines(&level))
+}
+
+async fn folder_files(
+    State(control): State<Shared>,
+    headers: HeaderMap,
+    Query(asked): Query<files::Asked>,
+) -> Response {
+    let served = control.device.served();
+    let Some(listing) = files::listing(&served, &asked) else {
+        return (
+            StatusCode::NOT_FOUND,
+            format!("{} is no folder of this library\n", asked.folder),
+        )
+            .into_response();
+    };
+    answer(&headers, &listing, || files::lines(&listing))
+}
+
+async fn track_detail(
+    State(control): State<Shared>,
+    headers: HeaderMap,
+    Query(asked): Query<track::Asked>,
+) -> Response {
+    let served = control.device.served();
+    let Some(found) = track::found(&served, &asked) else {
+        return (
+            StatusCode::NOT_FOUND,
+            format!("{} is no track of this library\n", asked.path),
+        )
+            .into_response();
+    };
+    answer(&headers, &found, || track::lines(&found))
 }
 
 async fn folder_tree(
@@ -201,7 +255,7 @@ async fn problem_files(
     let label = crate::index::Cause::ALL
         .iter()
         .find(|cause| cause.as_str() == asked.cause)
-        .map_or("No cover art", |cause| cause.label());
+        .map_or("No cover art", |cause| crate::report::label(*cause));
     let answered = ProblemFiles {
         folder: asked.folder,
         cause: asked.cause,

@@ -15,6 +15,9 @@
   --warn-paper: #fdf6e7;
   --warn-edge: #e0c889;
   --warn-ink: #6b4a12;
+  --good: #2e7d4f;
+  --good-paper: #e9f4ec;
+  --link-paper: #eaf0fa;
 
   --text: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
     sans-serif;
@@ -44,7 +47,8 @@ button {
   cursor: pointer;
 }
 
-input {
+input,
+select {
   font: inherit;
   color: inherit;
 }
@@ -119,6 +123,81 @@ a:hover {
   color: var(--faint);
   cursor: default;
   text-decoration: none;
+}
+
+/* The heading of a pane, and the crumb over it. */
+.heading {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
+.crumb {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.sect {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Square whether there is an image or not: an empty one says "no cover art" better than a word. */
+.cover {
+  width: 120px;
+  aspect-ratio: 1;
+  border: 1px solid var(--hairline);
+  background: var(--row);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.cover.none {
+  font-size: 12px;
+}
+.cover.small {
+  width: 56px;
+}
+.cover.small.none {
+  font-size: 10px;
+}
+
+/* What a change costs, in the server's words: one badge per section, or one tag per field. */
+.cost {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border: 1px solid var(--hairline);
+  color: var(--muted);
+  background: var(--row);
+  white-space: nowrap;
+}
+.cost.now {
+  color: var(--good);
+  border-color: var(--good);
+  background: var(--good-paper);
+}
+.cost.reread {
+  color: var(--link);
+  border-color: var(--link);
+  background: var(--link-paper);
+}
+.cost.restart {
+  color: var(--warn);
+  border-color: var(--warn-edge);
+  background: var(--warn-paper);
 }
 
 @media (max-width: 720px) {

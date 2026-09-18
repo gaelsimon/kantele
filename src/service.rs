@@ -11,11 +11,13 @@ use tokio::sync::mpsc;
 
 use crate::browse;
 use crate::index::refusals::{Cause, Refusals};
-use crate::index::scan::Scope;
 use crate::index::scan::Underway;
 use crate::index::store::Cache;
 use crate::index::{Library, Roots, Scan, ScanOptions, Store, scan, sweep, watch};
 use crate::upnp::device::Device;
+
+/// The folders a pass covered, which is what a report of it hands on.
+pub use crate::index::scan::Scope;
 
 /// Folders a sweep may hand to a scoped pass; past that the whole tree is cheaper to walk again.
 const MANY_FOLDERS: usize = 64;

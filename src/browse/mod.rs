@@ -7,12 +7,14 @@ use crate::index::{Library, Track, fold};
 
 pub use axes::{Axes, Entry};
 pub use folders::{
-    Folders, Subfolder, folder, folder_from_id, folder_id, folder_name, folder_size, tracks_in,
+    Folders, Subfolder, albums_of, folder, folder_from_id, folder_id, folder_name, folder_size,
+    tracks_in,
 };
 pub use view::{Served, View};
 
 mod axes;
 mod folders;
+pub mod root;
 mod view;
 
 use folders::scoped;
@@ -233,7 +235,7 @@ fn frequency(hertz: u32) -> String {
 }
 
 /// The name a listener knows a format by.
-fn format_name(mime: &'static str) -> &'static str {
+pub fn format_name(mime: &'static str) -> &'static str {
     match mime {
         "audio/x-flac" => "FLAC",
         "audio/mpeg" => "MP3",
@@ -627,7 +629,10 @@ pub fn menu<'a>(library: &'a Library, view: &'a View, position: &Position) -> Op
             ),
         });
     }
-    if !albums_exceed(library, &selected, view.settings.album_threshold) {
+    // The root keeps the menus the owner chose, whatever the library holds: the threshold spares a
+    // selection narrowed by hand from one menu too many, and a first sight of the library is not one.
+    let narrowed = !position.chosen.is_empty();
+    if narrowed && !albums_exceed(library, &selected, view.settings.album_threshold) {
         return Some(Menu::Tracks(selected));
     }
     let offered: Vec<(Facet, Position, usize)> = view
@@ -644,6 +649,41 @@ pub fn menu<'a>(library: &'a Library, view: &'a View, position: &Position) -> Op
         return Some(Menu::Tracks(selected));
     }
     Some(Menu::Facets(offered))
+}
+
+/// One place the menus put a track: an axis, a value it carries, and the position that lists it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Place {
+    pub facet: Facet,
+    pub axis: &'static str,
+    pub value: String,
+    /// What a device browses to reach the value.
+    pub at: String,
+    /// How many tracks of the library carry it.
+    pub tracks: usize,
+}
+
+/// Where the menus the owner chose put one track. An axis it carries no value on is left out,
+/// which is what a menu it cannot be found under looks like from here.
+pub fn places(view: &View, track: usize) -> Vec<Place> {
+    let root = Position::default();
+    view.settings
+        .axes
+        .iter()
+        .flat_map(|facet| {
+            view.axes()
+                .of_track(*facet, track)
+                .into_iter()
+                .map(|value| Place {
+                    facet: *facet,
+                    axis: facet.title(),
+                    value: value.display.to_owned(),
+                    at: root.chose(*facet, value.digest).id(),
+                    tracks: value.tracks,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// Whether a listing offers the way into its letter index, and how many letters it holds.
@@ -859,6 +899,21 @@ mod tests {
     }
 
     #[test]
+    fn the_root_offers_the_menus_chosen_and_leaves_out_an_axis_with_one_value() {
+        let library = library();
+        let entries = root::entries(&library, &eager_view(&library));
+        let titles: Vec<&str> = entries.iter().map(|entry| entry.title.as_str()).collect();
+        assert_eq!(titles.first().copied(), Some("4 albums"));
+        assert!(titles.contains(&"Genre"), "{titles:?}");
+        assert!(titles.contains(&"Artist"), "{titles:?}");
+        assert!(
+            !titles.contains(&"Quality"),
+            "every file is 16 bit 44.1 kHz, so Quality narrows nothing: {titles:?}"
+        );
+        assert_eq!(titles.last().copied(), Some("[folder view]"));
+    }
+
+    #[test]
     fn the_root_position_is_the_bare_prefix() {
         let root = Position::default();
         assert_eq!(root.id(), "f");
@@ -1046,12 +1101,26 @@ mod tests {
     }
 
     #[test]
-    fn the_album_threshold_ends_the_menus_early() {
+    fn the_album_threshold_ends_the_menus_early_but_never_at_the_root() {
         let library = library();
-        assert!(matches!(
-            menu(&library, &View::build(&library), &Position::default()),
-            Some(Menu::Tracks(_))
-        ));
+        let view = View::build(&library);
+        assert!(
+            matches!(
+                menu(&library, &view, &Position::default()),
+                Some(Menu::Facets(_))
+            ),
+            "the menus an owner chose are what a device meets first, whatever the library holds"
+        );
+        let narrowed = Position {
+            scope: None,
+            chosen: vec![(Facet::Genre, digest("Latin"))],
+            listing: None,
+            grouped: None,
+        };
+        assert!(
+            matches!(menu(&library, &view, &narrowed), Some(Menu::Tracks(_))),
+            "and a selection narrowed by hand is spared one menu too many"
+        );
     }
 
     #[test]

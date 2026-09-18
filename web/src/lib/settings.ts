@@ -1,69 +1,126 @@
 import type { Setting } from './api';
 
-export type Kind = 'text' | 'number' | 'path' | 'paths' | 'words' | 'chips' | 'choice' | 'read';
-export type Shape = { kind: Kind; unit?: string; note?: string; images?: boolean };
+export type Kind =
+  | 'text'
+  | 'number'
+  | 'paths'
+  | 'words'
+  | 'chips'
+  | 'choice'
+  | 'image'
+  | 'folder'
+  | 'read';
 
-export type Block = { title: string; side: number; note?: string; settings: Setting[] };
+/// How a key is edited, and the words beside the control that make the value read as a sentence.
+export type Shape = { kind: Kind; before?: string; after?: string; note?: string };
 
-/// How each key is edited. The server says what a setting is and what a change costs; this says
-/// what the control looks like, which is the page's business.
-const shapes: Record<string, Shape> = {
-  content_dir: { kind: 'paths', note: 'shared folders only, and none inside another' },
-  'scan.exclude': { kind: 'words', note: 'names and paths never walked, separated by commas' },
-  'scan.threads': { kind: 'number', note: 'beyond a handful a NAS goes slower' },
-  'scan.sweep_minutes': { kind: 'number', unit: 'min', note: 'zero never looks on a timer' },
-  friendly_name: { kind: 'text' },
-  http_port: { kind: 'number' },
-  icon: { kind: 'path', images: true },
-  state_dir: { kind: 'path' },
-  capture_dir: { kind: 'path', note: 'every control exchange is written there' },
-  'menus.album_threshold': { kind: 'number' },
-  'menus.alpha_group': { kind: 'number', note: 'zero turns the A-Z index off' },
-  'menus.recent': { kind: 'number', unit: 'files', note: 'zero offers no recently added menu' },
-  'menus.axes': { kind: 'chips' },
-  'menus.sort_ignore': { kind: 'words', note: "The, Les, L' and the like" },
-  'scan.cover_art': {
-    kind: 'choice',
-    note: 'the other one is still used where this one is missing',
-  },
+export type Section = {
+  title: string;
+  /// Every field carries its own cost tag, because the section mixes costs.
+  each: boolean;
+  note?: string;
+  settings: Setting[];
 };
 
-/// The blocks the mockup groups by, in its order and its columns.
-const blocks: { title: string; side: number; note?: string; keys: string[] }[] = [
-  { title: 'Folders', side: 0, keys: ['content_dir', 'scan.exclude'] },
-  { title: 'Scanning', side: 0, keys: ['scan.threads', 'scan.sweep_minutes'] },
+/// The server says what a setting is and what a change costs; this says what the control looks
+/// like, which is the page's business.
+const shapes: Record<string, Shape> = {
+  content_dir: {
+    kind: 'paths',
+    note: 'Use only shared folders. Do not put one folder in another folder. The server does not write in these folders.',
+  },
+  'scan.exclude': {
+    kind: 'words',
+    note: 'The server does not scan these names or paths. Separate the entries with commas. The server does not scan @eaDir and #recycle.',
+  },
+  friendly_name: { kind: 'text' },
+  'menus.axes': {
+    kind: 'chips',
+    note: 'Drag a menu to change the sequence. The grey entries come from the library. You cannot change them.',
+  },
+  'menus.recent': {
+    kind: 'number',
+    before: 'the last',
+    after: 'files',
+    note: 'If the value is 0, the server does not make a Recently added menu.',
+  },
+  'menus.album_threshold': {
+    kind: 'number',
+    before: 'up to',
+    note: 'If a selection has more albums than this number, the menu divides it again. If not, the menu shows the tracks.',
+  },
+  'menus.alpha_group': {
+    kind: 'number',
+    before: 'on lists of',
+    after: 'or more',
+    note: 'If the value is 0, the server does not make an A to Z index.',
+  },
+  'scan.sweep_minutes': {
+    kind: 'number',
+    after: 'min',
+    note: 'The server reads only the folders that changed. If the value is 0, the server does not scan on a timer.',
+  },
+  'scan.threads': { kind: 'number', note: 'A high value makes a NAS slower.' },
+  'scan.cover_art': {
+    kind: 'choice',
+    note: 'If this image is not available, the server uses the other image.',
+  },
+  'menus.sort_ignore': {
+    kind: 'words',
+    note: "Examples: The, Les, L'. Separate the words with commas.",
+  },
+  http_port: { kind: 'number' },
+  icon: { kind: 'image' },
+  capture_dir: { kind: 'folder', note: 'The server writes each control exchange to this folder.' },
+  state_dir: { kind: 'read' },
+  clients: { kind: 'read' },
+  'log level': { kind: 'read' },
+};
+
+export const YOUR_MUSIC = 'Your music';
+export const PLAYERS = 'Menu on your players';
+export const ADVANCED = 'Advanced options';
+
+/// The three sections, in the order a first start needs them. The last takes every key the first
+/// two do not name, so a server that grows a key does not lose it here in silence.
+const sections: { title: string; each: boolean; note?: string; keys: string[] }[] = [
+  { title: YOUR_MUSIC, each: false, keys: ['content_dir', 'scan.exclude'] },
   {
-    title: 'Network',
-    side: 0,
-    keys: ['friendly_name', 'http_port', 'icon', 'state_dir', 'capture_dir'],
-    note: "restart from DSM's Package Center for these to take effect",
+    title: PLAYERS,
+    each: false,
+    keys: ['friendly_name', 'menus.axes', 'menus.recent', 'menus.album_threshold', 'menus.alpha_group'],
   },
   {
-    title: 'Menus',
-    side: 1,
-    keys: ['menus.album_threshold', 'menus.alpha_group', 'menus.recent', 'menus.axes'],
+    title: ADVANCED,
+    each: true,
+    keys: [
+      'scan.sweep_minutes',
+      'scan.threads',
+      'scan.cover_art',
+      'menus.sort_ignore',
+      'http_port',
+      'icon',
+      'capture_dir',
+      'state_dir',
+      'clients',
+      'log level',
+    ],
+    note: 'To apply a setting with the restart tag, open the DSM Package Center and restart the server. To change the device profiles and the log level, edit kantele.toml.',
   },
-  { title: 'Names', side: 1, keys: ['menus.sort_ignore'] },
-  { title: 'Cover art', side: 1, keys: ['scan.cover_art'] },
-  { title: 'In the file', side: 1, keys: ['clients', 'log level'] },
 ];
 
-const REST = 'Other settings';
-
-/// A setting no block above names is still shown, so a server that grows a key does not lose it
-/// here in silence.
-export function arrange(settings: Setting[]): Block[] {
-  const named = new Set(blocks.flatMap((block) => block.keys));
-  const grouped = blocks
-    .map(({ keys, ...block }) => ({
-      ...block,
-      settings: keys
+export function arrange(settings: Setting[]): Section[] {
+  const named = new Set(sections.flatMap((section) => section.keys));
+  const rest = settings.filter((setting) => !named.has(setting.key));
+  return sections.map(({ keys, ...section }) => ({
+    ...section,
+    settings: [
+      ...keys
         .map((key) => settings.find((setting) => setting.key === key))
         .filter((setting): setting is Setting => setting !== undefined),
-    }))
-    .filter((block) => block.settings.length > 0);
-  const rest = settings.filter((setting) => !named.has(setting.key));
-  return rest.length > 0 ? [...grouped, { title: REST, side: 1, settings: rest }] : grouped;
+      ...(section.title === ADVANCED ? rest : []),
+    ],
+  }));
 }
 
 export function shapeOf(setting: Setting): Shape {

@@ -30,7 +30,7 @@ impl ContentDir {
         }
     }
 
-    fn display(&self) -> String {
+    pub(crate) fn display(&self) -> String {
         self.paths()
             .iter()
             .map(|path| path.display().to_string())
@@ -307,14 +307,6 @@ pub fn store_path(state_dir: &Path) -> PathBuf {
     state_dir.join("index.sqlite")
 }
 
-/// A list as a page shows it, with `none` for an empty one.
-fn listed(values: &[String]) -> String {
-    match values.is_empty() {
-        true => "none".to_owned(),
-        false => values.join(", "),
-    }
-}
-
 fn env_path(name: &str) -> Option<PathBuf> {
     let value = std::env::var_os(name)?;
     (!value.is_empty()).then(|| PathBuf::from(value))
@@ -381,347 +373,16 @@ impl Apply {
             Self::Restart => "restart",
         }
     }
-
-    /// What a page shows beside the field.
-    pub fn says(self) -> &'static str {
-        match self {
-            Self::Never => "not written from this page",
-            Self::Immediate => "applies at once",
-            Self::NextPass => "applies at the next check",
-            Self::Reread => "reads the library again",
-            Self::Restart => "needs a restart",
-        }
-    }
-}
-
-/// One value a setting may take, where the set of them is closed.
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct Choice {
-    pub value: String,
-    pub label: &'static str,
-}
-
-/// One setting in force.
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct Setting {
-    /// The key as a file writes it.
-    pub key: &'static str,
-    /// What a page shows beside the value. A label.
-    pub label: &'static str,
-    pub value: String,
-    /// The value in the shape the file writes it. The rendering in `value` is for a reader and
-    /// cannot be written back.
-    pub as_written: serde_json::Value,
-    pub source: Source,
-    pub apply: Apply,
-    /// The mode in words.
-    pub says: &'static str,
-    /// Whether the page may write it now, which the layer holding the value decides.
-    pub writable: bool,
-    /// Every value this setting may take, where they are countable; empty where they are not.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub choices: Vec<Choice>,
-}
-
-/// Every setting in force, with the file that was read, if one was.
-#[derive(Clone, Debug, Default, serde::Serialize)]
-pub struct Effective {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file: Option<PathBuf>,
-    pub settings: Vec<Setting>,
-}
-
-/// What was read before the environment and the command line had their say.
-pub struct Layers<'a> {
-    /// The file that was read and what it said.
-    pub file: Option<(&'a Path, &'a Config)>,
-    /// Whether the folder to serve was named as an argument, which outranks both other layers.
-    pub content_dir_on_command_line: bool,
-}
-
-impl Config {
-    /// Where each value in force came from, per key.
-    pub fn effective(&self, layers: &Layers<'_>) -> Effective {
-        let from_file = |named: bool| -> Option<Source> {
-            let (path, _) = layers.file?;
-            named.then(|| Source::File {
-                path: path.to_path_buf(),
-            })
-        };
-        let said = |pick: fn(&Config) -> bool| -> bool {
-            layers.file.map(|(_, file)| pick(file)).unwrap_or(false)
-        };
-        let from_env = |variable: &'static str| -> Option<Source> {
-            env_path(variable).map(|_| Source::Environment { variable })
-        };
-        let layered = |env: Option<Source>, named: bool| -> Source {
-            env.or_else(|| from_file(named)).unwrap_or(Source::Default)
-        };
-
-        let mut settings = Vec::new();
-        let mut add = |key, label, value: String, as_written: serde_json::Value, source, apply| {
-            // A value the environment or an argument holds is not the file's to change.
-            let writable =
-                apply != Apply::Never && matches!(source, Source::File { .. } | Source::Default);
-            settings.push(Setting {
-                key,
-                label,
-                value,
-                as_written,
-                source,
-                apply,
-                says: apply.says(),
-                writable,
-                choices: choices_for(key),
-            })
-        };
-        let menus = self.menu_settings();
-        let scan = self.scan_options();
-
-        add(
-            "content_dir",
-            "Music folder",
-            self.content_dir
-                .as_ref()
-                .map(ContentDir::display)
-                .unwrap_or_default(),
-            written(&self.content_dir),
-            if layers.content_dir_on_command_line {
-                Source::CommandLine
-            } else {
-                layered(None, said(|file| file.content_dir.is_some()))
-            },
-            Apply::Reread,
-        );
-        add(
-            "friendly_name",
-            "Server name",
-            self.friendly_name(),
-            written(&self.friendly_name()),
-            layered(
-                std::env::var("KANTELE_NAME")
-                    .ok()
-                    .map(|_| Source::Environment {
-                        variable: "KANTELE_NAME",
-                    }),
-                said(|file| file.friendly_name.is_some()),
-            ),
-            Apply::Restart,
-        );
-        add(
-            "http_port",
-            "Port",
-            self.http_port.unwrap_or(DEFAULT_PORT).to_string(),
-            written(&self.http_port.unwrap_or(DEFAULT_PORT)),
-            layered(
-                std::env::var("KANTELE_PORT")
-                    .ok()
-                    .map(|_| Source::Environment {
-                        variable: "KANTELE_PORT",
-                    }),
-                said(|file| file.http_port.is_some()),
-            ),
-            Apply::Restart,
-        );
-        add(
-            "state_dir",
-            "Index folder",
-            self.state_dir().display().to_string(),
-            written(&self.state_dir()),
-            layered(
-                from_env("KANTELE_STATE"),
-                said(|file| file.state_dir.is_some()),
-            ),
-            Apply::Restart,
-        );
-        add(
-            "capture_dir",
-            "Capture folder",
-            self.capture_dir
-                .as_ref()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "off".to_owned()),
-            written(&self.capture_dir),
-            layered(
-                from_env("KANTELE_CAPTURE"),
-                said(|file| file.capture_dir.is_some()),
-            ),
-            Apply::Restart,
-        );
-        add(
-            "icon",
-            "Icon",
-            self.icon
-                .as_ref()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "built in".to_owned()),
-            written(&self.icon),
-            layered(None, said(|file| file.icon.is_some())),
-            Apply::Restart,
-        );
-        add(
-            "scan.threads",
-            "Files read at once",
-            scan.threads.to_string(),
-            written(&scan.threads),
-            layered(None, said(|file| file.scan.threads.is_some())),
-            Apply::NextPass,
-        );
-        add(
-            "scan.sweep_minutes",
-            "Checks for changes",
-            scan.sweep
-                .map(|every| (every.as_secs() / 60).to_string())
-                .unwrap_or_else(|| "off".to_owned()),
-            // Zero is how the file says never, and the page needs a number to show either way.
-            written(&scan.sweep.map_or(0, |every| every.as_secs() / 60)),
-            layered(None, said(|file| file.scan.sweep_minutes.is_some())),
-            Apply::NextPass,
-        );
-        add(
-            "scan.exclude",
-            "Left out of the library",
-            listed(&self.scan.exclude),
-            written(&self.scan.exclude),
-            layered(None, said(|file| !file.scan.exclude.is_empty())),
-            Apply::Reread,
-        );
-        add(
-            "scan.cover_art",
-            "Cover art",
-            match scan.cover_art {
-                crate::index::artwork::Prefer::Folder => "the folder's image".to_owned(),
-                crate::index::artwork::Prefer::Embedded => "the one in the file".to_owned(),
-            },
-            written(&scan.cover_art),
-            layered(None, said(|file| file.scan.cover_art.is_some())),
-            Apply::Reread,
-        );
-        add(
-            "menus.album_threshold",
-            "Show albums directly up to",
-            menus.album_threshold.to_string(),
-            written(&menus.album_threshold),
-            layered(None, said(|file| file.menus.album_threshold.is_some())),
-            Apply::Immediate,
-        );
-        add(
-            "menus.alpha_group",
-            "A-Z index on lists of at least",
-            menus
-                .alpha_group
-                .map(|least| least.to_string())
-                .unwrap_or_else(|| "off".to_owned()),
-            written(&menus.alpha_group.unwrap_or(0)),
-            layered(None, said(|file| file.menus.alpha_group.is_some())),
-            Apply::Immediate,
-        );
-        add(
-            "menus.recent",
-            "Recently added reaches back over",
-            menus
-                .recent
-                .map(|most| format!("{most} files"))
-                .unwrap_or_else(|| "off".to_owned()),
-            written(&menus.recent.unwrap_or(0)),
-            layered(None, said(|file| file.menus.recent.is_some())),
-            Apply::Immediate,
-        );
-        add(
-            "menus.axes",
-            "Menus, in order",
-            menus
-                .axes
-                .iter()
-                .map(|axis| axis.title())
-                .collect::<Vec<_>>()
-                .join(", "),
-            written(&menus.axes),
-            layered(None, said(|file| file.menus.axes.is_some())),
-            Apply::Immediate,
-        );
-        add(
-            "menus.sort_ignore",
-            "Ignored when sorting",
-            listed(&menus.sort_ignore),
-            written(&menus.sort_ignore),
-            layered(None, said(|file| file.menus.sort_ignore.is_some())),
-            // The words order the albums and the artists inside the library, which only a pass
-            // builds; the axes alone would follow a change at once.
-            Apply::Reread,
-        );
-        add(
-            "clients",
-            "Device profiles",
-            match self.clients.len() {
-                0 => "none".to_owned(),
-                count => count.to_string(),
-            },
-            written(&self.clients),
-            layered(None, said(|file| !file.clients.is_empty())),
-            Apply::Never,
-        );
-        add(
-            "log level",
-            "Log level",
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "kantele=info".to_owned()),
-            serde_json::Value::Null,
-            std::env::var("RUST_LOG")
-                .ok()
-                .map(|_| Source::Environment {
-                    variable: "RUST_LOG",
-                })
-                .unwrap_or(Source::Default),
-            Apply::Never,
-        );
-
-        Effective {
-            file: layers.file.map(|(path, _)| path.to_path_buf()),
-            settings,
-        }
-    }
-}
-
-/// Every value a key may take, where the set is closed.
-fn choices_for(key: &str) -> Vec<Choice> {
-    let named = |value: &crate::index::artwork::Prefer, label| Choice {
-        value: written(value).as_str().unwrap_or_default().to_owned(),
-        label,
-    };
-    match key {
-        "scan.cover_art" => vec![
-            named(&crate::index::artwork::Prefer::Folder, "The folder's image"),
-            named(
-                &crate::index::artwork::Prefer::Embedded,
-                "The one in the file",
-            ),
-        ],
-        // The value is the name the file writes, not the letter an object identifier carries.
-        "menus.axes" => crate::browse::FACETS
-            .iter()
-            .filter_map(|facet| {
-                Some(Choice {
-                    value: serde_json::to_value(facet).ok()?.as_str()?.to_owned(),
-                    label: facet.title(),
-                })
-            })
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-/// A value as JSON, or nothing where it cannot be rendered, which nothing here can fail at.
-fn written<T: Serialize>(value: &T) -> serde_json::Value {
-    serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
 }
 
 /// The file, the environment and the command line, resolved in that order.
 #[derive(Clone, Debug, Default)]
 pub struct Resolved {
     pub config: Config,
-    pub effective: Effective,
+    /// The file that was read and what it said, before the other two layers had their say.
+    pub file: Option<(PathBuf, Config)>,
     /// The folder the command line named, which outranks the file on every load.
-    command_line_folder: Option<PathBuf>,
+    pub command_line_folder: Option<PathBuf>,
 }
 
 impl Resolved {
@@ -734,25 +395,68 @@ impl Resolved {
         if let Some(folder) = &command_line_folder {
             config.content_dir = Some(ContentDir::One(folder.clone()));
         }
-        let effective = config.effective(&Layers {
-            file: file.zip(read.as_ref()),
-            content_dir_on_command_line: command_line_folder.is_some(),
-        });
         Ok(Self {
             config,
-            effective,
+            file: file.map(Path::to_path_buf).zip(read),
             command_line_folder,
         })
+    }
+
+    /// The file that was read, if one was.
+    pub fn file_path(&self) -> Option<&Path> {
+        self.file.as_ref().map(|(path, _)| path.as_path())
     }
 
     /// The same layers read again, after the file changed.
     pub fn reload(&self) -> Result<Self> {
         let file = self
-            .effective
-            .file
-            .as_deref()
+            .file_path()
             .context("no configuration file was read at startup")?;
         Self::load(Some(file), self.command_line_folder.clone())
+    }
+
+    /// Which layer holds the value in force for a key, or nothing for a key this server has not.
+    pub fn source_of(&self, key: &str) -> Option<Source> {
+        let file = |named: fn(&Config) -> bool| -> Option<Source> {
+            let (path, read) = self.file.as_ref()?;
+            named(read).then(|| Source::File { path: path.clone() })
+        };
+        let set = |variable: &'static str| -> Option<Source> {
+            std::env::var(variable)
+                .ok()
+                .map(|_| Source::Environment { variable })
+        };
+        let set_path = |variable: &'static str| -> Option<Source> {
+            env_path(variable).map(|_| Source::Environment { variable })
+        };
+        let layered = match key {
+            "content_dir" if self.command_line_folder.is_some() => Some(Source::CommandLine),
+            "content_dir" => file(|read| read.content_dir.is_some()),
+            "friendly_name" => {
+                set("KANTELE_NAME").or_else(|| file(|read| read.friendly_name.is_some()))
+            }
+            "http_port" => set("KANTELE_PORT").or_else(|| file(|read| read.http_port.is_some())),
+            "state_dir" => {
+                set_path("KANTELE_STATE").or_else(|| file(|read| read.state_dir.is_some()))
+            }
+            "capture_dir" => {
+                set_path("KANTELE_CAPTURE").or_else(|| file(|read| read.capture_dir.is_some()))
+            }
+            "icon" => file(|read| read.icon.is_some()),
+            "scan.threads" => file(|read| read.scan.threads.is_some()),
+            "scan.sweep_minutes" => file(|read| read.scan.sweep_minutes.is_some()),
+            "scan.exclude" => file(|read| !read.scan.exclude.is_empty()),
+            "scan.cover_art" => file(|read| read.scan.cover_art.is_some()),
+            "menus.album_threshold" => file(|read| read.menus.album_threshold.is_some()),
+            "menus.alpha_group" => file(|read| read.menus.alpha_group.is_some()),
+            "menus.recent" => file(|read| read.menus.recent.is_some()),
+            "menus.axes" => file(|read| read.menus.axes.is_some()),
+            "menus.sort_ignore" => file(|read| read.menus.sort_ignore.is_some()),
+            "clients" => file(|read| !read.clients.is_empty()),
+            "log level" => set("RUST_LOG"),
+            _ => return None,
+        };
+        Some(layered.unwrap_or(Source::Default))
     }
 }
 
@@ -971,32 +675,39 @@ mod tests {
     }
 
     #[test]
-    fn a_setting_with_a_closed_set_of_values_carries_them_so_the_page_holds_no_copy() {
+    fn the_preferred_cover_is_read_from_the_file() {
         let config = Config::parse("[scan]\ncover_art = \"embedded\"\n").expect("it parses");
         assert_eq!(
             config.scan_options().cover_art,
             crate::index::artwork::Prefer::Embedded
         );
+    }
 
-        let effective = config.effective(&Layers {
-            file: None,
-            content_dir_on_command_line: false,
-        });
-        let setting = effective
-            .settings
-            .iter()
-            .find(|setting| setting.key == "scan.cover_art")
-            .expect("the page is offered it");
-        assert_eq!(setting.apply, Apply::Reread, "the store holds the choice");
-        assert_eq!(setting.value, "the one in the file");
-        assert_eq!(setting.as_written, serde_json::json!("embedded"));
+    #[test]
+    fn the_layer_holding_a_value_is_named_and_the_command_line_outranks_the_file() {
+        let read = Config::parse("content_dir = \"/music\"\n[menus]\nalbum_threshold = 24\n")
+            .expect("it parses");
+        let path = PathBuf::from("/etc/kantele.toml");
+        let mut resolved = Resolved {
+            config: read.clone(),
+            file: Some((path.clone(), read)),
+            command_line_folder: None,
+        };
         assert_eq!(
-            setting
-                .choices
-                .iter()
-                .map(|choice| choice.value.as_str())
-                .collect::<Vec<_>>(),
-            vec!["folder", "embedded"]
+            resolved.source_of("menus.album_threshold"),
+            Some(Source::File { path: path.clone() })
+        );
+        assert_eq!(resolved.source_of("menus.recent"), Some(Source::Default));
+        assert_eq!(
+            resolved.source_of("content_dir"),
+            Some(Source::File { path })
+        );
+        resolved.command_line_folder = Some(PathBuf::from("/elsewhere"));
+        assert_eq!(resolved.source_of("content_dir"), Some(Source::CommandLine));
+        assert_eq!(
+            resolved.source_of("nonsense"),
+            None,
+            "a key this server has not"
         );
     }
 

@@ -1,21 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import type { Apply } from './api';
-import { badgeFor, dearest } from './apply';
+import { costClass, dearest, shared } from './apply';
 
 /// The server sends the mode and the sentence together, so a test that invents one invents both.
 const SAYS: Record<Apply, string> = {
-  never: 'not written from this page',
-  immediate: 'applies at once',
-  'next-pass': 'applies at the next check',
-  reread: 'reads the library again',
-  restart: 'needs a restart',
+  never: 'You cannot change this setting on this page.',
+  immediate: 'This change applies now.',
+  'next-pass': 'This change applies at the next check.',
+  reread: 'The server reads the library again.',
+  restart: 'You must restart the server.',
 };
 
 const of = (...apply: Apply[]) =>
-  apply.map((one) => ({ apply: one, says: SAYS[one] ?? 'not written from this page' }));
+  apply.map((one) => ({ apply: one, says: SAYS[one] ?? '', tag: one }));
 
-describe('what a block of settings costs', () => {
-  it('is nothing where the block is empty', () => {
+describe('what a save of some settings costs', () => {
+  it('is nothing where nothing changed', () => {
     expect(dearest([])).toBeUndefined();
   });
 
@@ -23,11 +23,8 @@ describe('what a block of settings costs', () => {
     expect(dearest(of('immediate'))?.apply).toBe('immediate');
   });
 
-  it('is the dearest, not the first', () => {
-    expect(dearest(of('immediate', 'restart'))?.apply).toBe('restart');
-  });
-
   it('is the dearest, whichever end it sits at', () => {
+    expect(dearest(of('immediate', 'restart'))?.apply).toBe('restart');
     expect(dearest(of('restart', 'immediate'))?.apply).toBe('restart');
   });
 
@@ -38,28 +35,46 @@ describe('what a block of settings costs', () => {
     expect(dearest(of('reread', 'restart'))?.apply).toBe('restart');
   });
 
-  it('does not let a cheap first key speak for a dear second', () => {
-    expect(badgeFor(of('immediate', 'reread'))).toBe('reads the library again');
+  it('holds a mode it has never heard of to be the dearest', () => {
+    const unknown = { apply: 'something-new' as Apply, says: 'something new', tag: 'new' };
+    expect(dearest([...of('restart'), unknown])).toBe(unknown);
+    expect(dearest([unknown, ...of('immediate')])).toBe(unknown);
+  });
+
+  it('speaks in the words the server sent', () => {
+    expect(dearest(of('immediate', 'reread'))?.says).toBe('The server reads the library again.');
+    expect(dearest([{ apply: 'something-new' as Apply, says: 'something new', tag: 'new' }])?.says).toBe(
+      'something new',
+    );
   });
 });
 
-describe('the words beside a block', () => {
-  it('are the ones the server sent for the dearest key', () => {
-    expect(badgeFor(of('immediate'))).toBe('applies at once');
-    expect(badgeFor(of('restart'))).toBe('needs a restart');
+describe('what a section says beside its title', () => {
+  it('is nothing for a section holding nothing', () => {
+    expect(shared([])).toBeUndefined();
   });
 
-  it('say so where nothing on this page can write the key', () => {
-    expect(badgeFor(of('never'))).toBe('not written from this page');
+  it('is the one cost where every key agrees', () => {
+    expect(shared(of('reread', 'reread'))?.says).toBe('The server reads the library again.');
   });
 
-  it('are nothing at all for a block holding nothing', () => {
-    expect(badgeFor([])).toBe('');
-  });
-
-  it('survive a mode this page has never heard of', () => {
-    expect(badgeFor([{ apply: 'something-new' as Apply, says: 'something new' }])).toBe(
-      'something new',
+  it('is the cost most keys share, so one dear key does not speak for four cheap ones', () => {
+    expect(shared(of('restart', 'immediate', 'immediate', 'immediate', 'immediate'))?.apply).toBe(
+      'immediate',
     );
+  });
+
+  it('is the dearest on a tie', () => {
+    expect(shared(of('immediate', 'restart'))?.apply).toBe('restart');
+  });
+});
+
+describe('the colour of a cost', () => {
+  it('marks the three the eye should tell apart and leaves the rest plain', () => {
+    expect(costClass('immediate')).toBe('now');
+    expect(costClass('reread')).toBe('reread');
+    expect(costClass('restart')).toBe('restart');
+    expect(costClass('next-pass')).toBe('');
+    expect(costClass('never')).toBe('');
   });
 });

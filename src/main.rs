@@ -15,7 +15,7 @@ use kantele::upnp::client::Profiles;
 use kantele::upnp::description::DeviceIdentity;
 use kantele::upnp::icon::Icon;
 use kantele::upnp::{capture, ssdp};
-use kantele::{config, report, state};
+use kantele::{config, mdns, report, state};
 
 const USAGE: &str = "usage: kantele [<music folder>] [options]";
 
@@ -221,7 +221,7 @@ async fn main() -> Result<()> {
         }
     };
     if library.is_empty() && !roots.is_empty() {
-        tracing::warn!("nothing playable found: the amplifier will show an empty folder");
+        tracing::warn!("nothing playable found: a player will show an empty folder");
     }
     if let Some(path) = &arguments.album_list {
         report::write_album_list(&library, path)
@@ -345,6 +345,24 @@ async fn serve(
         }
     });
 
+    // The page is easier to reach by name than by address, and a network answering no mDNS costs
+    // the server nothing.
+    let announced = match mdns::Announced::new(
+        &server.device.identity.friendly_name,
+        &hostname(),
+        bound.port(),
+        &ssdp::local_addresses(),
+    ) {
+        Ok(announced) => {
+            tracing::info!(name = announced.fullname(), "the page is announced on mdns");
+            Some(announced)
+        }
+        Err(error) => {
+            tracing::warn!(%error, "the page is not announced on mdns");
+            None
+        }
+    };
+
     let (stop_ssdp, ssdp_stopped) = tokio::sync::oneshot::channel();
     let advertiser = ssdp::Advertiser::new(udn, bound.port(), server.device.peers.clone(), boot_id);
     let discovery = tokio::spawn(async move {
@@ -371,6 +389,9 @@ async fn serve(
         () = drained_or_left(left) => {}
     }
 
+    if let Some(announced) = announced {
+        announced.withdraw();
+    }
     let _ = tokio::time::timeout(Duration::from_secs(2), discovery).await;
     Ok(())
 }
@@ -565,8 +586,8 @@ mod tests {
             named.config.content_dirs(),
             [PathBuf::from("/from/the/file")]
         );
-        assert_eq!(named.effective.file.as_deref(), Some(file.as_path()));
-        assert_eq!(source_of(&named.effective, "content_dir").as_str(), "file");
+        assert_eq!(named.file_path(), Some(file.as_path()));
+        assert_eq!(source_of(&named, "content_dir").as_str(), "file");
 
         let overridden = configure(
             &parse(&[
@@ -583,15 +604,15 @@ mod tests {
             [PathBuf::from("/from/the/command/line")]
         );
         assert_eq!(
-            source_of(&overridden.effective, "content_dir").as_str(),
+            source_of(&overridden, "content_dir").as_str(),
             "command line",
             "and the answer says which layer won"
         );
         let _ = std::fs::remove_file(&file);
     }
 
-    fn source_of(effective: &kantele::config::Effective, key: &str) -> kantele::config::Source {
-        effective
+    fn source_of(resolved: &Resolved, key: &str) -> kantele::config::Source {
+        kantele::api::describe::effective(resolved)
             .settings
             .iter()
             .find(|setting| setting.key == key)
@@ -601,10 +622,8 @@ mod tests {
 
     #[test]
     fn a_value_nobody_set_says_it_came_from_this_server() {
-        let said = configure(&parse(&["/music"]).expect("it parses"), None)
-            .expect("no file")
-            .effective;
-        assert_eq!(said.file, None);
+        let said = configure(&parse(&["/music"]).expect("it parses"), None).expect("no file");
+        assert_eq!(said.file_path(), None);
         assert_eq!(source_of(&said, "scan.threads").as_str(), "default");
         assert_eq!(source_of(&said, "content_dir").as_str(), "command line");
     }

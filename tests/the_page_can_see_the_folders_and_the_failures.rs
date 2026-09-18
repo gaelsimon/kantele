@@ -118,7 +118,7 @@ async fn the_tree_is_read_one_level_at_a_time_with_what_each_folder_holds() {
         .collect();
     assert_eq!(
         listed,
-        ["Playlist link broken", "Playlist empty", "No cover art"],
+        ["Broken playlist link", "Empty playlist", "No cover art"],
         "a cover nobody has is not a refusal, and a listener still misses it"
     );
 
@@ -400,4 +400,167 @@ async fn the_count_behind_a_problem_is_what_the_folder_really_holds() {
         100,
         "and names the hundred it kept"
     );
+}
+
+#[tokio::test]
+async fn the_root_menu_is_the_one_the_server_builds_rather_than_a_copy_of_the_rule() {
+    let tree = a_library("root-menu");
+    let server = serving(&tree, None);
+
+    let root = json(&server, "/api/menu").await;
+    assert_eq!(root["at"], "f");
+    assert_eq!(root["kind"], "root");
+    let entries = root["entries"].as_array().expect("a list of entries");
+    let titled = |title: &str| {
+        entries
+            .iter()
+            .find(|entry| entry["title"] == title)
+            .cloned()
+    };
+
+    assert!(
+        titled("4 items").is_some(),
+        "every item leads: {entries:#?}"
+    );
+    assert!(
+        titled("[folder view]").is_some(),
+        "and the folder view closes"
+    );
+    for entry in entries {
+        assert!(
+            entry["at"].as_str().is_some_and(|at| !at.is_empty()),
+            "every entry says what to browse: {entry:#?}"
+        );
+        assert!(
+            entry["children"]
+                .as_u64()
+                .is_some_and(|children| children > 1)
+                || entry["chosen"] == false,
+            "an axis offering one value is no menu: {entry:#?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_position_nothing_names_is_no_menu() {
+    let tree = a_library("no-menu");
+    let server = serving(&tree, None);
+
+    let response = ask(&server, get_json("/api/menu?at=not-a-position")).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_file_says_what_its_tags_are_and_where_they_put_it_in_the_menus() {
+    let tree = a_library("track-detail");
+    let server = serving(&tree, None);
+
+    let top = json(&server, "/api/folders").await;
+    assert!(top["here"]["tracks"].as_u64().is_some_and(|n| n > 0));
+
+    let path = "Autechre/01.wav";
+    let found = json(&server, &format!("/api/track?path={path}")).await;
+    assert_eq!(found["path"], path);
+    let labels: Vec<String> = found["tags"]
+        .as_array()
+        .expect("the tag rows")
+        .iter()
+        .map(|tag| tag["label"].as_str().expect("a label").to_owned())
+        .collect();
+    assert_eq!(
+        labels.first().map(String::as_str),
+        Some("Title"),
+        "{labels:?}"
+    );
+    assert!(labels.contains(&"Artist".to_owned()), "{labels:?}");
+    assert!(labels.contains(&"Cover art".to_owned()), "{labels:?}");
+    // The fixture writes bare wavs, so every tag row is there and every one of them is empty.
+    for tag in found["tags"].as_array().expect("the tag rows") {
+        assert!(
+            tag.get("value").is_none(),
+            "an untagged file carries no value: {tag:#?}"
+        );
+    }
+    assert!(
+        found["format"]
+            .as_str()
+            .is_some_and(|said| said.contains("WAV")),
+        "{found:#?}"
+    );
+    for place in found["places"].as_array().expect("the places") {
+        assert!(
+            place["at"].as_str().is_some_and(|at| at.starts_with("f-")),
+            "a place names the position that lists it: {place:#?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_path_the_library_does_not_hold_is_no_track() {
+    let tree = a_library("no-track");
+    let server = serving(&tree, None);
+
+    let response = ask(&server, get_json("/api/track?path=nowhere.flac")).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_cover_beside_the_files_is_reachable_and_one_that_is_absent_says_nothing() {
+    let tree = a_library("cover-beside");
+    let server = serving(&tree, None);
+
+    // The fixture writes a cover.jpg beside this album and none beside the other.
+    let with = json(
+        &server,
+        "/api/track?path=Blue%20Note/Sierra%20Maestra/01.wav",
+    )
+    .await;
+    let at = with["artwork"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a cover in the folder is offered: {with:#?}"));
+    let cover = ask(&server, get_json(&format!("/art/{at}"))).await;
+    assert_eq!(cover.status(), StatusCode::OK, "and the wire serves it");
+
+    let without = json(&server, "/api/track?path=Autechre/01.wav").await;
+    assert!(
+        without.get("artwork").is_none(),
+        "a file with no cover offers none: {without:#?}"
+    );
+}
+
+#[tokio::test]
+async fn a_folder_lists_what_is_directly_in_it_and_a_row_offers_a_cover() {
+    let tree = a_library("folder-files");
+    let server = serving(&tree, None);
+
+    let files = json(&server, "/api/files?folder=Blue%20Note/Sierra%20Maestra").await;
+    let listed = files["files"].as_array().expect("the files here");
+    assert_eq!(listed.len(), 2, "the two tracks of that album: {listed:#?}");
+    assert!(listed.iter().all(|file| file["path"].as_str().is_some()));
+    assert_eq!(files["more"], false);
+
+    // What the files belong to comes with them, because a folder tree cannot show it. These
+    // fixtures carry no tags, so nothing names an album and the list is empty rather than absent.
+    assert_eq!(
+        files["albums"].as_array().expect("the albums here").len(),
+        0
+    );
+
+    // A folder holding only folders has none of its own.
+    let top = json(&server, "/api/files?folder=Blue%20Note").await;
+    assert_eq!(top["files"].as_array().expect("a list").len(), 0);
+    assert_eq!(top["albums"].as_array().expect("a list").len(), 0);
+
+    // The tree's own rows carry the cover, so a listing draws one without asking per row.
+    let rows = json(&server, "/api/folders?under=Blue%20Note").await;
+    let named = rows["folders"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .find(|row| row["name"] == "Sierra Maestra")
+        .expect("the album folder");
+    assert!(named["artwork"].as_str().is_some(), "{named:#?}");
+
+    let missing = ask(&server, get_json("/api/files?folder=nowhere")).await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }

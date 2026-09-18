@@ -25,6 +25,7 @@ fn track(n: u32, title: &str, millis: u64, size: u64) -> Track {
         rule: Rule::Strings,
         album_id: None,
         album_inherited: false,
+        title_tagged: true,
         compilation: false,
         path: PathBuf::from(format!("/music/{n:02} - {title}.flac")),
         relative: format!("{n:02} - {title}.flac"),

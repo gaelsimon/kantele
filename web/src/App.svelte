@@ -15,7 +15,7 @@
   let progress = $state<Progress | null>(null);
   let configuration = $state<Configuration | null>(null);
   let unreachable = $state<string | null>(null);
-  let tab = $state<'library' | 'settings'>('library');
+  let tab = $state<'library' | 'settings'>('settings');
 
   const running = $derived(progress !== null && progress.phase !== 'idle');
   const failing = $derived(status?.failing);
@@ -40,9 +40,6 @@
   async function readConfiguration() {
     try {
       configuration = await getConfiguration();
-      const folder = configuration.settings.find((setting) => setting.key === 'content_dir');
-      // A first start, where the only useful thing to do is choose a folder.
-      if (folder && !folder.value) tab = 'settings';
     } catch {
       configuration = null;
     }
@@ -104,8 +101,8 @@
     <span class="dim version">{status?.version ?? ''}</span>
   </div>
   <nav>
-    <button class:here={tab === 'library'} onclick={() => (tab = 'library')}>Library</button>
     <button class:here={tab === 'settings'} onclick={() => (tab = 'settings')}>Settings</button>
+    <button class:here={tab === 'library'} onclick={() => (tab = 'library')}>Library</button>
   </nav>
   <div class="dim up">{status ? `up ${uptime(status.uptime_seconds)}` : ''}</div>
 </header>
@@ -136,10 +133,10 @@
 {/if}
 
 <main>
-  {#if tab === 'library'}
-    <Library {status} {configuration} onrescanned={readStatus} />
+  {#if tab === 'settings'}
+    <Settings {configuration} {status} onsaved={readConfiguration} />
   {:else}
-    <Settings {configuration} onsaved={readConfiguration} />
+    <Library {status} {configuration} onrescanned={readStatus} />
   {/if}
 </main>
 

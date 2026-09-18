@@ -389,6 +389,7 @@ mod tests {
             rule: crate::index::Rule::Strings,
             album_id: None,
             album_inherited: false,
+            title_tagged: true,
             compilation: false,
             path: PathBuf::from("/music/01.flac"),
             relative: "01 - Juana Peña.flac".to_owned(),

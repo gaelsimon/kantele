@@ -4,6 +4,7 @@ pub mod api;
 pub mod browse;
 pub mod config;
 pub mod index;
+pub mod mdns;
 pub mod object;
 pub mod report;
 pub mod server;

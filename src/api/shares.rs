@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::index::Roots;
 
-/// Entries one answer carries. A share holding more is read a folder at a time.
-const MOST: usize = 500;
+/// Entries one answer carries. High, because the chooser has no search to narrow a listing with
+/// and a music volume holds a couple of thousand album folders side by side.
+const MOST: usize = 2000;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct Asked {
@@ -57,10 +58,8 @@ fn refused(path: &str, error: &std::io::Error) -> Refused {
 /// The folders a listing may start from and may never climb above: the shares, and whatever this
 /// server is already serving.
 pub fn shares(serving: &Roots) -> Vec<PathBuf> {
-    let mut found: Vec<PathBuf> = volumes();
-    if found.is_empty() {
-        found.extend(std::env::var_os("HOME").map(PathBuf::from));
-    }
+    let mut found: Vec<PathBuf> = mounted();
+    found.extend(std::env::var_os("HOME").map(PathBuf::from));
     // Resolved, because every path asked for is, and a share that is not would match none of them.
     for root in serving.paths() {
         let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
@@ -70,6 +69,29 @@ pub fn shares(serving: &Roots) -> Vec<PathBuf> {
     }
     found.sort();
     found.dedup();
+    found
+}
+
+/// The volumes of the box, and the folders each platform mounts a disk under, which is where music
+/// that is not in the home folder lives. The boot volume is left out: it is the whole filesystem
+/// under another name, and this listing is not a way to read the filesystem.
+fn mounted() -> Vec<PathBuf> {
+    let mut found = volumes();
+    for under in ["/Volumes", "/mnt", "/media"] {
+        let Ok(entries) = std::fs::read_dir(under) else {
+            continue;
+        };
+        found.extend(
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.is_dir())
+                .filter(|path| {
+                    path.canonicalize()
+                        .is_ok_and(|resolved| resolved != Path::new("/"))
+                }),
+        );
+    }
     found
 }
 
@@ -139,11 +161,17 @@ fn read(under: &Path, images: bool) -> std::io::Result<Vec<Entry>> {
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if crate::index::scan::is_skipped(name) {
+        if crate::index::is_skipped(name) {
             continue;
         }
-        let folder = entry.file_type().is_ok_and(|kind| kind.is_dir()) || path.is_dir();
-        if folder || (images && crate::index::scan::is_image(name)) {
+        // The kind comes with the directory entry; asking the path costs a stat each time, so it
+        // is kept for the links, whose target is what counts.
+        let folder = match entry.file_type() {
+            Ok(kind) if kind.is_symlink() => path.is_dir(),
+            Ok(kind) => kind.is_dir(),
+            Err(_) => path.is_dir(),
+        };
+        if folder || (images && crate::index::is_image(name)) {
             entries.push(named(&path, folder));
         }
     }
@@ -165,6 +193,22 @@ fn named(path: &Path, folder: bool) -> Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_home_folder_is_offered_beside_whatever_is_mounted() {
+        let offered = shares(&Roots::one("/srv/music"));
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        if let Some(home) = home {
+            assert!(
+                offered.contains(&home),
+                "the home folder is where music is: {offered:?}"
+            );
+        }
+        assert!(
+            !offered.iter().any(|share| share == Path::new("/")),
+            "the whole disk is never a share: {offered:?}"
+        );
+    }
 
     #[test]
     fn a_share_is_a_volume_and_nothing_else_at_the_top_of_the_disk() {

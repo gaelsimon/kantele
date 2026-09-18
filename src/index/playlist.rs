@@ -728,6 +728,7 @@ mod tests {
             relative: relative.to_owned(),
             album_id: None,
             album_inherited: false,
+            title_tagged: true,
             compilation: false,
             title: relative.to_owned(),
             artists: Vec::new(),

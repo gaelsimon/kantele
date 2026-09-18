@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Setting } from './api';
+  import { costClass } from './apply';
   import type { Shape } from './settings';
   import Picker from './Picker.svelte';
 
@@ -8,31 +9,38 @@
     shape,
     value,
     changed,
+    tagged,
     onchange,
   }: {
     setting: Setting;
     shape: Shape;
     value: unknown;
     changed: boolean;
+    /// Whether the field carries its own cost tag, because the section's badge does not speak for it.
+    tagged: boolean;
     onchange: (value: unknown) => void;
   } = $props();
 
   let picking = $state<number | null>(null);
+  let dragging = $state<number | null>(null);
 
-  const held = $derived(!setting.writable);
+  const held = $derived(!setting.writable || shape.kind === 'read');
   const paths = $derived(Array.isArray(value) ? (value as string[]) : value ? [String(value)] : []);
   const words = $derived(Array.isArray(value) ? (value as string[]).join(', ') : '');
   const chosen = $derived(Array.isArray(value) ? (value as string[]) : []);
+  const path = $derived(typeof value === 'string' ? value : '');
 
-  /// Where a value nobody can change from here comes from.
+  /// Which layer holds a value nobody can change from here.
   const from = $derived.by(() => {
     switch (setting.source.layer) {
       case 'environment':
         return `set by ${setting.source.variable}`;
       case 'command-line':
         return 'named on the command line';
+      case 'file':
+        return 'from the settings file';
       default:
-        return setting.says;
+        return 'the default';
     }
   });
 
@@ -43,22 +51,43 @@
       .filter(Boolean);
   }
 
-  function replace(at: number, path: string) {
+  function replace(at: number, chosenPath: string) {
     const next = [...paths];
-    next[at] = path;
+    next[at] = chosenPath;
+    onchange(next);
+  }
+
+  function labelOf(code: string) {
+    return setting.choices?.find((one) => one.value === code)?.label ?? code;
+  }
+
+  function moved(fromAt: number, toAt: number) {
+    if (fromAt === toAt) return;
+    const next = [...chosen];
+    next.splice(toAt, 0, ...next.splice(fromAt, 1));
     onchange(next);
   }
 </script>
 
 <div class="field" class:changed>
-  <span class="label" class:mark={changed}>{setting.label}</span>
+  <span class="label" class:mark={changed}>
+    {setting.label}
+    {#if tagged && setting.apply !== 'never'}
+      <span class="cost {costClass(setting.apply)}" title={setting.says}>{setting.tag}</span>
+    {/if}
+  </span>
 
   <div class="control">
-    {#if held || shape.kind === 'read'}
-      <div class="held mono">{setting.value || '—'}</div>
-      <div class="dim note">{from}</div>
+    {#if held}
+      <div class="held">
+        <span class="val" class:mono={shape.kind === 'read' && setting.key !== 'clients'}
+          >{setting.value || '—'}</span
+        >
+        <span class="dim from">{from}</span>
+      </div>
     {:else if shape.kind === 'number'}
       <div class="row">
+        {#if shape.before}<span class="dim word">{shape.before}</span>{/if}
         <input
           class="box num"
           type="number"
@@ -66,11 +95,11 @@
           value={typeof value === 'number' ? value : 0}
           oninput={(event) => onchange(Number(event.currentTarget.value))}
         />
-        {#if shape.unit}<span class="dim unit">{shape.unit}</span>{/if}
+        {#if shape.after}<span class="dim word">{shape.after}</span>{/if}
       </div>
     {:else if shape.kind === 'text'}
       <input
-        class="box"
+        class="box short"
         type="text"
         value={typeof value === 'string' ? value : ''}
         oninput={(event) => onchange(event.currentTarget.value)}
@@ -93,53 +122,54 @@
         placeholder="none"
         oninput={(event) => onchange(asWords(event.currentTarget.value))}
       />
-    {:else if shape.kind === 'path'}
-      <div class="row">
-        <input
-          class="box mono"
-          type="text"
-          value={typeof value === 'string' ? value : ''}
-          placeholder="none"
-          oninput={(event) => onchange(event.currentTarget.value || null)}
-        />
+    {:else if shape.kind === 'image' || shape.kind === 'folder'}
+      <div class="held">
+        <span class="val" class:mono={path !== ''}>
+          {path || (shape.kind === 'image' ? 'Built in' : 'Off')}
+        </span>
         <button class="quiet" onclick={() => (picking = picking === 0 ? null : 0)}>
-          {picking === 0 ? 'Close' : 'Choose'}
+          {#if picking === 0}Close{:else if shape.kind === 'image'}Select an image{:else}Select a folder{/if}
         </button>
+        {#if path}
+          <button class="quiet" onclick={() => onchange(null)}>
+            {shape.kind === 'image' ? 'Use the built-in icon' : 'Turn off'}
+          </button>
+        {/if}
       </div>
       {#if picking === 0}
         <Picker
-          images={shape.images ?? false}
-          start={typeof value === 'string' ? value : ''}
-          onchoose={(path) => {
-            onchange(path);
+          title={setting.label}
+          images={shape.kind === 'image'}
+          start={path}
+          onchoose={(chosenPath) => {
+            onchange(chosenPath);
             picking = null;
           }}
           oncancel={() => (picking = null)}
         />
       {/if}
     {:else if shape.kind === 'paths'}
-      {#each paths as path, at (at)}
+      {#each paths as one, at (at)}
         <div class="row">
           <input
             class="box mono"
             type="text"
-            value={path}
+            value={one}
             oninput={(event) => replace(at, event.currentTarget.value)}
           />
           <button class="quiet" onclick={() => (picking = picking === at ? null : at)}>
-            {picking === at ? 'Close' : 'Choose'}
+            {picking === at ? 'Close' : 'Change'}
           </button>
-          <button
-            class="quiet"
-            disabled={paths.length < 2}
-            onclick={() => onchange(paths.filter((_, one) => one !== at))}
-          >
-            Remove
-          </button>
+          {#if paths.length > 1}
+            <button class="quiet" onclick={() => onchange(paths.filter((_, other) => other !== at))}>
+              Remove
+            </button>
+          {/if}
         </div>
         {#if picking === at}
           <Picker
-            start={path}
+            title={setting.label}
+            start={one}
             onchoose={(chosenPath) => {
               replace(at, chosenPath);
               picking = null;
@@ -148,24 +178,48 @@
           />
         {/if}
       {/each}
-      <button class="button small" onclick={() => onchange([...paths, ''])}>Add folder</button>
+      <button
+        class="quiet add"
+        onclick={() => {
+          onchange([...paths, '']);
+          picking = paths.length;
+        }}
+      >
+        Add a folder
+      </button>
     {:else if shape.kind === 'chips'}
-      <div class="chips">
+      <div class="chips" role="list">
         {#each chosen as code, at (code)}
-          {@const choice = setting.choices?.find((one) => one.value === code)}
-          <span class="chip">
+          <span
+            class="chip"
+            class:lifted={dragging === at}
+            role="listitem"
+            draggable="true"
+            ondragstart={(event) => {
+              dragging = at;
+              event.dataTransfer?.setData('text/plain', code);
+            }}
+            ondragover={(event) => event.preventDefault()}
+            ondrop={(event) => {
+              event.preventDefault();
+              if (dragging !== null) moved(dragging, at);
+              dragging = null;
+            }}
+            ondragend={() => (dragging = null)}
+          >
+            <span class="grip" aria-hidden="true">⋮⋮</span>
             <button
               class="move"
               disabled={at === 0}
               title="Earlier"
-              onclick={() => {
-                const next = [...chosen];
-                const moved = next.splice(at, 1);
-                onchange([...next.slice(0, at - 1), ...moved, ...next.slice(at - 1)]);
-              }}>←</button
+              onclick={() => moved(at, at - 1)}>←</button
             >
-            {choice?.label ?? code}
-            <button class="move" title="Remove" onclick={() => onchange(chosen.filter((one) => one !== code))}>×</button>
+            {labelOf(code)}
+            <button
+              class="move"
+              title="Remove"
+              onclick={() => onchange(chosen.filter((one) => one !== code))}>×</button
+            >
           </span>
         {/each}
         {#each setting.choices ?? [] as choice (choice.value)}
@@ -178,7 +232,7 @@
       </div>
     {/if}
 
-    {#if shape.note && !held && shape.kind !== 'read'}
+    {#if shape.note && !held}
       <div class="dim note">{shape.note}</div>
     {/if}
   </div>
@@ -187,20 +241,29 @@
 <style>
   .field {
     display: grid;
-    grid-template-columns: 150px minmax(0, 1fr);
+    grid-template-columns: 200px minmax(0, 1fr);
     gap: 6px 14px;
     align-items: baseline;
-    padding: 7px 0;
+    padding: 8px 0;
     font-size: 14px;
   }
 
   .label {
     color: var(--ink-soft);
     overflow-wrap: anywhere;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
   }
 
   .label.mark {
     color: var(--link);
+  }
+
+  .label .cost {
+    font-size: 10px;
+    padding: 1px 5px;
   }
 
   .control {
@@ -218,6 +281,11 @@
     margin-top: 6px;
   }
 
+  .word {
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
   .box {
     height: 34px;
     border: 1px solid var(--faint);
@@ -228,8 +296,13 @@
     min-width: 0;
   }
 
+  .box.short {
+    width: 240px;
+    max-width: 100%;
+  }
+
   .box.num {
-    width: 100px;
+    width: 88px;
     text-align: right;
   }
 
@@ -245,21 +318,23 @@
     border-left-width: 3px;
   }
 
-  /* It grows: a path is as long as it is, and a fixed height would run it over the line below. */
   .held {
-    min-height: 34px;
-    border: 1px solid var(--hairline);
     display: flex;
-    align-items: center;
-    padding: 6px 10px;
+    gap: 10px;
+    align-items: baseline;
+    flex-wrap: wrap;
     font-size: 13px;
-    line-height: 1.4;
-    color: var(--faint);
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  .held .val {
+    color: var(--ink-soft);
     overflow-wrap: anywhere;
   }
 
-  .unit {
-    font-size: 13px;
+  .from {
+    font-size: 12px;
   }
 
   .note {
@@ -267,10 +342,7 @@
     margin-top: 4px;
   }
 
-  .button.small {
-    height: 32px;
-    padding: 0 14px;
-    font-size: 13px;
+  .quiet.add {
     margin-top: 8px;
   }
 
@@ -288,11 +360,23 @@
     border: 1px solid var(--faint);
     font-size: 13px;
     background: var(--surface);
+    cursor: grab;
+  }
+
+  .chip.lifted {
+    opacity: 0.5;
+  }
+
+  .chip .grip {
+    color: var(--faint);
+    font-size: 11px;
+    letter-spacing: -1px;
   }
 
   .chip.add {
     border-style: dashed;
     color: var(--muted);
+    cursor: pointer;
   }
 
   .chip.add:hover {
@@ -321,8 +405,10 @@
       grid-template-columns: minmax(0, 1fr);
     }
 
-    .box {
+    .box,
+    .box.short {
       height: 44px;
+      width: 100%;
     }
 
     .box.num {

@@ -23,8 +23,9 @@ server, which is a heavier change than it looks.
 - The hero carries the claim the server is making: serving, indexing, or serving with something
   missing.
 
-Every sentence the page shows about a setting comes from the server. `config::Apply::says` is the
-only copy of the five modes; the page renders `setting.says` and keeps none of its own.
+Every sentence the page shows about a setting comes from the server. `api::describe::says` is the
+only copy of the five modes, and it sits in the API because the words a reader sees are not the
+core's business; the page renders `setting.says` and keeps none of its own.
 
 `tools/package-spk.sh` builds the Synology package, one file carrying both architectures and
 declared `noarch`, because a package source serves one catalogue to every model. It wants

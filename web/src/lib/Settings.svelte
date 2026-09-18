@@ -1,27 +1,79 @@
 <script lang="ts">
-  import { writeConfiguration, type Configuration, type Setting } from './api';
-  import { badgeFor } from './apply';
-  import { arrange, shapeOf } from './settings';
+  import {
+    getMenu,
+    writeConfiguration,
+    type Configuration,
+    type Menu,
+    type Setting,
+    type Status,
+  } from './api';
+  import { costClass, dearest, shared } from './apply';
+  import { PLAYERS, arrange, shapeOf, type Section } from './settings';
   import Field from './Field.svelte';
+  import Screen from './Screen.svelte';
 
   let {
     configuration,
+    status,
     onsaved,
-  }: { configuration: Configuration | null; onsaved: () => void } = $props();
+  }: { configuration: Configuration | null; status: Status | null; onsaved: () => void } =
+    $props();
 
   let draft = $state<Record<string, unknown>>({});
   let said = $state('');
   let failed = $state('');
   let saving = $state(false);
+  let root = $state<Menu | null>(null);
 
   const settings = $derived(configuration?.settings ?? []);
+  const sections = $derived(arrange(settings));
   const unsaved = $derived(Object.keys(draft));
-
-  const shown = $derived(arrange(settings));
+  const pending = $derived(settings.filter((setting) => setting.key in draft));
+  const cost = $derived(dearest(pending)?.says ?? '');
+  // A first start, where the only useful thing to do is choose a folder.
+  const folderless = $derived(
+    configuration !== null && !settings.find((setting) => setting.key === 'content_dir')?.value,
+  );
 
   function valueOf(setting: Setting): unknown {
     return setting.key in draft ? draft[setting.key] : setting.as_written;
   }
+
+  /// The value in force or in the draft for a key, or nothing where the server has no such key.
+  function current(key: string): unknown {
+    const setting = settings.find((one) => one.key === key);
+    return setting ? valueOf(setting) : undefined;
+  }
+
+  const screenName = $derived(String(current('friendly_name') ?? ''));
+  const screenAxes = $derived.by(() => {
+    const axes = settings.find((one) => one.key === 'menus.axes');
+    const codes = current('menus.axes');
+    if (!Array.isArray(codes)) return [];
+    return (codes as string[]).map(
+      (code) => axes?.choices?.find((choice) => choice.value === code)?.label ?? code,
+    );
+  });
+  const screenRecent = $derived(Number(current('menus.recent') ?? 0));
+  /// The axes the server was asked for and did not offer, because they narrow nothing. An axis
+  /// added since is drawn, since nobody has asked the server about it yet.
+  const hiddenAxes = $derived.by(() => {
+    if (!root) return [];
+    const axes = settings.find((one) => one.key === 'menus.axes');
+    const asked = Array.isArray(axes?.as_written) ? (axes.as_written as string[]) : [];
+    const offered = new Set(
+      root.entries.filter((entry) => entry.chosen).map((entry) => entry.title),
+    );
+    return asked
+      .map((code) => axes?.choices?.find((choice) => choice.value === code)?.label ?? code)
+      .filter((label) => !offered.has(label));
+  });
+  const holds = $derived({
+    albums: status?.library.albums ?? 0,
+    tracks: status?.library.tracks ?? 0,
+    untagged: status?.library.untagged ?? 0,
+    playlists: status?.library.playlists ?? 0,
+  });
 
   function edit(setting: Setting, value: unknown) {
     const { [setting.key]: _dropped, ...rest } = draft;
@@ -34,6 +86,20 @@
     failed = '';
   }
 
+  /// The root a player meets now, which says which axes narrow nothing. A failure leaves it
+  /// unknown, and every axis is drawn.
+  async function readRoot() {
+    try {
+      root = await getMenu();
+    } catch {
+      root = null;
+    }
+  }
+
+  $effect(() => {
+    if (configuration) void readRoot();
+  });
+
   async function save() {
     saving = true;
     try {
@@ -42,6 +108,7 @@
       failed = '';
       draft = {};
       onsaved();
+      void readRoot();
     } catch (error) {
       failed = error instanceof Error ? error.message : String(error);
     } finally {
@@ -50,141 +117,176 @@
   }
 </script>
 
-<div class="top">
-  <div class="title">Settings</div>
-  <div class="dim aside">
+{#snippet fields(section: Section)}
+  {@const badge = section.each ? undefined : shared(section.settings)}
+  {#each section.settings as setting (setting.key)}
+    <Field
+      {setting}
+      shape={shapeOf(setting)}
+      value={valueOf(setting)}
+      changed={setting.key in draft}
+      tagged={section.each || (badge !== undefined && setting.apply !== badge.apply)}
+      onchange={(value) => edit(setting, value)}
+    />
+  {/each}
+{/snippet}
+
+<div class="flat">
+  {#if folderless}
+    <div class="first">Select the folder that has your music. Then click Save.</div>
+  {/if}
+  {#if failed}
+    <div class="problem line">{failed}</div>
+  {:else if said}
+    <div class="dim line">{said}</div>
+  {/if}
+
+  {#each sections as section (section.title)}
+    {@const badge = section.each ? undefined : shared(section.settings)}
+    <section class="card sect">
+      <div class="bhead">
+        <div class="stitle">{section.title}</div>
+        {#if badge}
+          <span class="cost {costClass(badge.apply)}" title={badge.says}>{badge.tag}</span>
+        {:else if section.each}
+          <span class="dim each">each tag shows the effect of a change</span>
+        {/if}
+      </div>
+      {#if section.title === PLAYERS}
+        <div class="expose">
+          <div>{@render fields(section)}</div>
+          <aside class="amp">
+            <div class="cap">Preview</div>
+            <Screen
+              name={screenName}
+              axes={screenAxes}
+              recent={screenRecent}
+              {holds}
+              hidden={hiddenAxes}
+            />
+          </aside>
+        </div>
+      {:else}
+        {@render fields(section)}
+      {/if}
+      {#if section.note}
+        <div class="dim foot">{section.note}</div>
+      {/if}
+    </section>
+  {/each}
+
+  <div class="dim file">
     {#if configuration?.file}
-      Saved to {configuration.file}. Greyed values come from the environment or the command line.
-    {:else}
-      This server was started without a settings file, so nothing here can be written. Start it with
+      Settings file: <span class="mono">{configuration.file}</span>
+    {:else if configuration}
+      This server was started without a settings file, so nothing here can be saved. Start it with
       <span class="mono">--config</span>.
     {/if}
   </div>
 </div>
 
-<div class="columns">
-  {#each [0, 1] as side (side)}
-    <div class="column">
-      {#each shown.filter((block) => block.side === side) as block (block.title)}
-        <section class="card block">
-          <div class="head">
-            <div class="cap">{block.title}</div>
-            <div class="dim badge">{badgeFor(block.settings)}</div>
-          </div>
-          {#each block.settings as setting (setting.key)}
-            <Field
-              {setting}
-              shape={shapeOf(setting)}
-              value={valueOf(setting)}
-              changed={setting.key in draft}
-              onchange={(value) => edit(setting, value)}
-            />
-          {/each}
-          {#if block.note}
-            <div class="dim foot">{block.note}</div>
-          {/if}
-        </section>
-      {/each}
-    </div>
-  {/each}
-</div>
-
-<div class="save">
-  <button class="button strong" disabled={unsaved.length === 0 || saving} onclick={save}>
-    {saving ? 'Saving' : 'Save'}
-  </button>
-  <button class="button" disabled={unsaved.length === 0 || saving} onclick={() => (draft = {})}>
-    Discard
-  </button>
-  {#if unsaved.length > 0}
+{#if unsaved.length > 0}
+  <div class="savebar">
+    <button class="button strong" disabled={saving} onclick={save}>
+      {saving ? 'Saving' : 'Save'}
+    </button>
+    <button class="button" disabled={saving} onclick={() => (draft = {})}>Discard</button>
     <span class="count">
-      {unsaved.length === 1 ? 'one unsaved change' : `${unsaved.length} unsaved changes`}
+      {unsaved.length === 1 ? '1 change not saved' : `${unsaved.length} changes not saved`}
     </span>
-  {/if}
-  {#if failed}<span class="problem">{failed}</span>{:else if said}<span class="dim">{said}</span>{/if}
-</div>
+    <span class="dim what">{cost}</span>
+  </div>
+{/if}
 
 <style>
-  .top {
+  .flat {
     display: flex;
-    justify-content: space-between;
-    align-items: baseline;
+    flex-direction: column;
     gap: 24px;
-    margin-bottom: 24px;
-    flex-wrap: wrap;
+    max-width: 980px;
+    margin: 0 auto;
+    padding-bottom: 72px;
   }
 
-  .title {
+  .first {
+    font-size: 16px;
+    padding: 0 4px;
+  }
+
+  .line {
+    font-size: 13px;
+    padding: 0 4px;
+  }
+
+  .sect {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .bhead {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 10px;
+  }
+
+  .stitle {
     font-size: 16px;
     font-weight: 600;
   }
 
-  .aside {
-    font-size: 13px;
-    overflow-wrap: anywhere;
+  .each {
+    font-size: 12px;
   }
 
-  .columns {
+  .expose {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 24px;
+    grid-template-columns: minmax(0, 1fr) 240px;
+    gap: 20px;
     align-items: start;
   }
 
-  .column {
+  .amp {
     display: flex;
     flex-direction: column;
-    gap: 24px;
-    min-width: 0;
-  }
-
-  .block {
-    display: flex;
-    flex-direction: column;
-    padding: 22px 26px;
-  }
-
-  .head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 16px;
-    margin-bottom: 6px;
-  }
-
-  .badge {
-    font-size: 12px;
+    gap: 10px;
   }
 
   .foot {
     font-size: 12px;
-    margin-top: 10px;
+    margin-top: 12px;
   }
 
-  .save {
+  .file {
+    font-size: 13px;
+    padding: 0 4px;
+    overflow-wrap: anywhere;
+  }
+
+  .savebar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--edge);
+    padding: 12px 56px;
     display: flex;
     align-items: center;
     gap: 14px;
-    margin-top: 24px;
     flex-wrap: wrap;
+    box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.06);
   }
 
   .button.strong {
-    height: 40px;
-    padding: 0 22px;
     background: var(--ink);
     color: var(--surface);
     border-color: var(--ink);
   }
 
   .button.strong:hover:not(:disabled) {
-    background: #1f2226;
-  }
-
-  .button.strong:disabled {
-    background: var(--hairline);
-    border-color: var(--hairline);
-    color: var(--faint);
+    background: var(--ink-soft);
   }
 
   .count {
@@ -192,30 +294,25 @@
     color: var(--link);
   }
 
-  .problem,
-  .save .dim {
+  .what {
     font-size: 13px;
   }
 
   @media (max-width: 720px) {
-    .columns {
+    .flat {
+      gap: 16px;
+      padding-bottom: 110px;
+    }
+
+    .expose {
       grid-template-columns: minmax(0, 1fr);
-      gap: 16px;
     }
 
-    .column {
-      gap: 16px;
+    .savebar {
+      padding: 12px 20px;
     }
 
-    .save {
-      position: sticky;
-      bottom: 0;
-      background: var(--paper);
-      padding: 12px 0;
-      margin-top: 16px;
-    }
-
-    .save .button {
+    .savebar .button {
       height: 44px;
     }
   }

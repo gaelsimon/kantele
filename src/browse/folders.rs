@@ -1,9 +1,10 @@
 //! The folder view, kept beside the tag view because tagging fails.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::View;
-use crate::index::{Track, fold};
+use crate::index::{Album, Library, Track, fold};
+use crate::object::ObjectId;
 
 use super::digest_of;
 
@@ -172,6 +173,19 @@ pub fn tracks_in(view: &View, path: &str) -> Vec<usize> {
     view.folders().at(path).map_or_else(Vec::new, |node| {
         node.tracks.iter().map(|at| *at as usize).collect()
     })
+}
+
+/// The albums a set of tracks belongs to, in the order the tracks name them. A folder is not an
+/// album, so what one holds is asked of the library rather than read off the tree.
+pub fn albums_of<'a>(library: &'a Library, tracks: &[usize]) -> Vec<&'a Album> {
+    let mut seen: HashSet<&ObjectId> = HashSet::new();
+    tracks
+        .iter()
+        .filter_map(|at| library.tracks().get(*at))
+        .filter_map(|track| track.album_id.as_ref())
+        .filter(|id| seen.insert(id))
+        .filter_map(|id| library.album(id))
+        .collect()
 }
 
 /// What a folder holds, counted without building the listing a menu does not show.

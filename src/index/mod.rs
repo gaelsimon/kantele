@@ -16,15 +16,16 @@ pub mod store;
 pub mod sweep;
 pub mod watch;
 
-pub use artwork::Artwork;
+pub use artwork::{Artwork, Prefer, Source};
 pub use coverage::{Coverage, Missing};
 pub use fold::fold;
 pub use identity::{IDENTITY_VERSION, Rule};
 pub use library::{Album, Artist, Disc, Library, Run, Scan, Track};
 pub use playlist::Playlist;
-pub use refusals::{Cause, Refusal, Refusals};
+pub use refusals::{Cause, Origin, Refusal, Refusals, Reported, Tally};
 pub use roots::Roots;
 pub use scan::{Fingerprint, Found, ScanOptions, Scanned, Stopping, Walked};
+pub(crate) use scan::{is_image, is_skipped};
 pub use searchable::Searchables;
 pub use store::Store;
 pub use watch::Watcher;

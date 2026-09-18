@@ -150,57 +150,28 @@ fn root_children<'a>(
     view: &'a View,
     menus: &'a Menus,
 ) -> Vec<didl::Child<'a>> {
-    let mut children = Vec::new();
-
-    if !library.albums().is_empty() {
-        children.push(didl::Child::Container(didl::ContainerSpec::menu(
-            menus.albums.clone(),
-            menus.root.clone(),
-            counted(library.albums().len(), "album"),
-            library.albums().len(),
-        )));
-    }
-    children.push(didl::Child::Container(music_spec(library, menus)));
-
-    let root = browse::Position::default();
-    if let Some(menu) = browse::menu(library, view, &root)
-        && matches!(menu, browse::Menu::Facets(_))
-    {
-        children.extend(
-            facet_children(library, view, menus, &root, &menus.root, menu, Window::ALL).into_all(),
-        );
-    }
-
-    let untagged = browse::untagged(library, view);
-    if !untagged.is_empty() {
-        children.push(didl::Child::Container(didl::ContainerSpec::menu(
-            menus.untagged.clone(),
-            menus.root.clone(),
-            UNTAGGED_TITLE,
-            untagged.len(),
-        )));
-    }
-    if !library.playlists().is_empty() {
-        children.push(didl::Child::Container(playlists_spec(library, menus)));
-    }
-    if !view.recent().is_empty() {
-        children.push(didl::Child::Container(didl::ContainerSpec::menu(
-            menus.recent.clone(),
-            menus.root.clone(),
-            RECENT_TITLE,
-            view.recent().len(),
-        )));
-    }
-    let (folders, loose) = browse::folder_size(view, "");
-    if folders + loose > 0 {
-        children.push(didl::Child::Container(didl::ContainerSpec::menu(
-            menus.folders.clone(),
-            menus.root.clone(),
-            FOLDERS_TITLE,
-            folders + loose,
-        )));
-    }
-    children
+    browse::root::entries(library, view)
+        .into_iter()
+        .map(|entry| {
+            let id = match &entry.opens {
+                browse::root::Opens::Albums => menus.albums.clone(),
+                browse::root::Opens::Music => menus.music.clone(),
+                browse::root::Opens::Axis(_, at) => {
+                    ObjectId::new(at.id()).expect("a position identifier is inside the alphabet")
+                }
+                browse::root::Opens::Untagged => menus.untagged.clone(),
+                browse::root::Opens::Playlists => menus.playlists.clone(),
+                browse::root::Opens::Recent => menus.recent.clone(),
+                browse::root::Opens::Folders => menus.folders.clone(),
+            };
+            didl::Child::Container(didl::ContainerSpec::menu(
+                id,
+                menus.root.clone(),
+                entry.title,
+                entry.children,
+            ))
+        })
+        .collect()
 }
 
 fn folder_children<'a>(
@@ -265,11 +236,6 @@ fn recent_children<'a>(
                 .map(|track| didl::Child::Item(track, &menus.recent)),
         })
         .collect()
-}
-
-fn counted(count: usize, noun: &str) -> String {
-    let plural = if count == 1 { "" } else { "s" };
-    format!("{count} {noun}{plural}")
 }
 
 fn facet_children<'a>(
@@ -507,7 +473,7 @@ fn music_spec<'a>(library: &'a Library, menus: &'a Menus) -> didl::ContainerSpec
         ..didl::ContainerSpec::menu(
             menus.music.clone(),
             menus.root.clone(),
-            counted(library.len(), "item"),
+            browse::root::counted(library.len(), "item"),
             library.len(),
         )
     }

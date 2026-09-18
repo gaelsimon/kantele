@@ -85,6 +85,21 @@ impl Axes {
             .is_some_and(|axis| !axis.of(track).is_empty())
     }
 
+    /// The values one track carries on an axis, each with how many tracks of the whole library
+    /// carry it.
+    pub(super) fn of_track(&self, facet: Facet, track: usize) -> Vec<Entry<'_>> {
+        let Some(axis) = self.axis(facet) else {
+            return Vec::new();
+        };
+        axis.of(track)
+            .iter()
+            .filter_map(|id| {
+                let at = *id as usize;
+                Some(axis.values.get(at)?.entry(*axis.totals.get(at)? as usize))
+            })
+            .collect()
+    }
+
     /// The distinct values of one axis inside a selection, already in the order they are shown.
     pub(super) fn distinct(&self, facet: Facet, selected: &[usize]) -> Vec<Entry<'_>> {
         let Some(axis) = self.axis(facet) else {

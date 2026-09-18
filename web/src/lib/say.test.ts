@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ago, listed, many, noun, tagName, took, uptime } from './say';
+import { ago, extension, listed, many, noun, tagName, took, uptime } from './say';
 
 describe('a count and the noun beside it', () => {
   it('is singular where there is one', () => {
@@ -126,5 +126,17 @@ describe('the tags a listener misses', () => {
       'genre',
       'track-number',
     ]);
+  });
+});
+
+describe('a file name', () => {
+  it('says the format at its end', () => {
+    expect(extension('Blue Note/Sierra/01 - Dundunbanza.flac')).toBe('FLAC');
+    expect(extension('01.mp3')).toBe('MP3');
+  });
+
+  it('says nothing where the name carries no end', () => {
+    expect(extension('Blue Note/Sierra/cover')).toBe('');
+    expect(extension('.hidden')).toBe('');
   });
 });

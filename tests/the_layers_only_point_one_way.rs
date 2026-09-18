@@ -1,4 +1,4 @@
-//! The index layer must not name the browse layer.
+//! The index layer must not name the browse layer, and the server must not name the page's API.
 
 use std::path::Path;
 
@@ -69,5 +69,57 @@ fn the_browse_layer_is_allowed_to_name_the_index() {
             .iter()
             .any(|(_, body)| body.contains("crate::index")),
         "the direction this asserts would be vacuous if nothing pointed that way"
+    );
+}
+
+/// The API is a client of the server. `server.rs` is where the wire router and the page router
+/// meet, and `main.rs` hands it what a start knows; nothing else may reach for it.
+#[test]
+fn only_the_assembled_server_names_the_api() {
+    let sources = sources("src");
+    let offenders: Vec<&String> = sources
+        .iter()
+        .filter(|(path, _)| !path.starts_with("src/api/"))
+        .filter(|(path, _)| path != "src/server.rs" && path != "src/main.rs")
+        .filter(|(_, body)| body.contains("crate::api"))
+        .map(|(path, _)| path)
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "the API reads the server and not the other way round; these name it: {offenders:?}"
+    );
+    assert!(
+        sources
+            .iter()
+            .any(|(path, body)| path == "src/server.rs" && body.contains("crate::api")),
+        "the direction this asserts would be vacuous if the server did not mount the API"
+    );
+}
+
+/// The API reads the index at its root, where what the index publishes is chosen; a submodule is
+/// how the index is built, and the page has no business there.
+#[test]
+fn the_api_never_reaches_into_the_index() {
+    let listing = std::fs::read_to_string("src/index/mod.rs").expect("the index's module file");
+    let modules: Vec<&str> = listing
+        .lines()
+        .filter_map(|line| line.strip_prefix("pub mod ")?.strip_suffix(';'))
+        .collect();
+    assert!(
+        !modules.is_empty(),
+        "the index has no submodules to keep out of"
+    );
+    let offenders: Vec<String> = sources("src/api")
+        .into_iter()
+        .filter(|(_, body)| {
+            modules
+                .iter()
+                .any(|module| body.contains(&format!("crate::index::{module}::")))
+        })
+        .map(|(path, _)| path)
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "these name how the index is built rather than what it publishes: {offenders:?}"
     );
 }

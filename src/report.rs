@@ -1,8 +1,120 @@
-//! What the index made of a real library, in plain text.
+//! What the index made of a library, in words for a reader.
 
 use std::path::Path;
 
-use crate::index::{Album, IDENTITY_VERSION, Library, Rule};
+use crate::index::artwork::Source;
+use crate::index::credits::Credit;
+use crate::index::{Album, Cause, IDENTITY_VERSION, Library, Rule, Track, fold};
+
+/// A refusal cause as a form labels a field: the field and its state, never a sentence.
+pub fn label(cause: Cause) -> &'static str {
+    match cause {
+        Cause::UnreadableFolder => "Unreadable folder",
+        Cause::UnreadableFile => "Unreadable file",
+        Cause::UnreadablePlaylist => "Unreadable playlist",
+        Cause::UnreadableRow => "Not in the saved index",
+        Cause::LinkedOutside => "Link out of the music folder",
+        Cause::MissingEntry => "Broken playlist link",
+        Cause::UnpublishedPlaylist => "Empty playlist",
+        Cause::RepeatedEntry => "Repeated playlist link",
+        Cause::AlbumKeyedOnPath => "Identical album tags",
+        Cause::TrackKeyedOnPath => "Identical track tags",
+        Cause::PlaceholderCredit => "No album artist",
+    }
+}
+
+/// What a folder holds: `9,434 tracks, 812 albums`. What is wrong with it is listed apart.
+pub fn holds(tracks: usize, albums: usize, folders: usize) -> String {
+    match (tracks, folders) {
+        (0, 0) => "Empty".to_owned(),
+        (0, _) => "No music".to_owned(),
+        (1, _) => held_in("1 track", albums),
+        (tracks, _) => held_in(&format!("{} tracks", grouped(tracks)), albums),
+    }
+}
+
+fn held_in(held: &str, albums: usize) -> String {
+    match albums {
+        0 => format!("{held}, no album"),
+        1 => format!("{held}, 1 album"),
+        albums => format!("{held}, {} albums", grouped(albums)),
+    }
+}
+
+/// Digits a reader can take in at a glance.
+fn grouped(n: usize) -> String {
+    let digits = n.to_string();
+    let mut written = String::with_capacity(digits.len() + digits.len() / 3);
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at).is_multiple_of(3) {
+            written.push(',');
+        }
+        written.push(digit);
+    }
+    written
+}
+
+/// What a folder does not show about an album some of whose tracks are in it: which disc it is,
+/// or how much of the album is elsewhere. Nothing where the folder holds all of it.
+pub fn album_part(
+    here: usize,
+    of: usize,
+    folders: usize,
+    disc: Option<(u32, u32)>,
+) -> Option<String> {
+    if here >= of {
+        return None;
+    }
+    Some(match disc {
+        Some((number, discs)) => format!("Disc {number} of {discs}, {here} of {of} tracks"),
+        None => format!("{here} of {of} tracks, in {folders} folders"),
+    })
+}
+
+/// Why a folder an owner takes for one album shows as two. Leaves only: the counts beside it
+/// cover everything below, and this clause covers the folder's own tracks.
+pub fn split_by(albums: &[&Album], own_tracks: usize, subfolders: usize) -> Option<&'static str> {
+    if subfolders > 0 || albums.len() < 2 || albums.len() * 2 > own_tracks {
+        return None;
+    }
+    let first = fold(&albums[0].title);
+    if albums.iter().any(|album| fold(&album.title) != first) {
+        return Some("Album titles differ");
+    }
+    // Tracks are grouped by folder and title, so one folder under one title splits on nothing else.
+    Some("Release ids differ")
+}
+
+/// Everybody credited, in the order the tags name them. Nothing where nobody is.
+pub fn credited(credits: &[Credit]) -> Option<String> {
+    let joined = credits
+        .iter()
+        .map(|credit| credit.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    (!joined.is_empty()).then_some(joined)
+}
+
+/// Where the cover a listener sees came from, or nothing where there is none.
+pub fn cover_from(track: &Track) -> Option<&'static str> {
+    Some(match track.artwork.as_ref()?.source {
+        Source::Embedded { .. } => "in the file",
+        Source::File(_) => "in the folder",
+    })
+}
+
+/// What a refusal count counts.
+pub fn subject(cause: Cause, count: usize) -> &'static str {
+    let (one, many) = match cause {
+        Cause::UnreadableFolder => ("folder", "folders"),
+        Cause::UnreadableFile | Cause::UnreadableRow => ("file", "files"),
+        Cause::LinkedOutside | Cause::MissingEntry | Cause::RepeatedEntry => ("link", "links"),
+        Cause::UnreadablePlaylist | Cause::UnpublishedPlaylist => ("playlist", "playlists"),
+        Cause::AlbumKeyedOnPath => ("album", "albums"),
+        Cause::TrackKeyedOnPath | Cause::PlaceholderCredit => ("track", "tracks"),
+    };
+    if count == 1 { one } else { many }
+}
 
 /// Every album as one tab-separated line: track count, first credit, title.
 pub fn write_album_list(library: &Library, path: &Path) -> std::io::Result<()> {
@@ -229,6 +341,42 @@ mod tests {
             "Music".to_owned(),
             &[file("Dundunbanza", "Sierra Maestra", "01.flac")],
         ));
+    }
+
+    #[test]
+    fn a_folder_says_what_it_holds_and_nothing_about_what_is_wrong() {
+        assert_eq!(holds(0, 0, 0), "Empty");
+        assert_eq!(holds(0, 0, 2), "No music");
+        assert_eq!(holds(1, 1, 0), "1 track, 1 album");
+        assert_eq!(holds(24, 2, 0), "24 tracks, 2 albums");
+        assert_eq!(holds(12, 0, 0), "12 tracks, no album");
+        assert_eq!(
+            holds(9434, 812, 0),
+            "9,434 tracks, 812 albums",
+            "a number a reader takes in at a glance"
+        );
+    }
+
+    #[test]
+    fn an_album_a_folder_holds_all_of_says_nothing_about_where_it_is() {
+        assert_eq!(album_part(12, 12, 1, None), None);
+        assert_eq!(
+            album_part(12, 24, 2, Some((2, 2))).as_deref(),
+            Some("Disc 2 of 2, 12 of 24 tracks"),
+            "the disc is what an owner sees on the shelf"
+        );
+        assert_eq!(
+            album_part(1, 9, 3, None).as_deref(),
+            Some("1 of 9 tracks, in 3 folders"),
+            "and where no disc numbers them, the folders it is spread over"
+        );
+    }
+
+    #[test]
+    fn a_count_of_one_is_said_in_the_singular() {
+        assert_eq!(subject(Cause::UnreadableFile, 1), "file");
+        assert_eq!(subject(Cause::UnreadableFile, 2), "files");
+        assert_eq!(subject(Cause::MissingEntry, 0), "links");
     }
 
     #[test]

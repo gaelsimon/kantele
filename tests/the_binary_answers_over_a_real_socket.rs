@@ -1,4 +1,7 @@
 //! The built binary, started on a folder and asked over a socket what a device and the page ask.
+//! A stop here is SIGTERM, the way a service manager asks, and Windows has no equivalent to send a
+//! child, so the whole file is a Unix one.
+#![cfg(unix)]
 
 use std::io::{Read, Write};
 use std::net::TcpStream;

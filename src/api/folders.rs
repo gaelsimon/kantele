@@ -1,13 +1,12 @@
 //! The music folder as a tree, with what the server made of each folder.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::browse::Served;
-use crate::index::refusals::{KEPT, Tally};
-use crate::index::scan::Scope;
-use crate::index::{Album, Missing, Refusals};
+use crate::index::{Missing, Refusals, Tally};
+use crate::service::Scope;
 
 /// Rows one answer carries. A library of thousands of folders is read a level at a time.
 const MOST: usize = 500;
@@ -53,6 +52,10 @@ pub struct Row {
     pub missing: usize,
     /// Whether the last pass read this folder again.
     pub changed: bool,
+    /// What to ask `/art/` for: the first track below it that carries a cover, which in a folder
+    /// holding one album is that album's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artwork: Option<String>,
     /// What the folder holds. What is wrong with it is in `issues`, one entry each.
     pub says: String,
     pub issues: Vec<Issue>,
@@ -160,24 +163,19 @@ impl Counting<'_> {
 
     fn row(&self, path: &str) -> Row {
         let view = &self.served.view;
+        let library = &self.served.library;
         let below = view.folders().tracks_below(path);
-        let albums: HashSet<&crate::object::ObjectId> = below
-            .iter()
-            .filter_map(|at| self.served.library.tracks().get(*at))
-            .filter_map(|track| track.album_id.as_ref())
-            .collect();
+        let albums = crate::browse::albums_of(library, &below);
         let missing = self
             .missing
             .map_or(0, |wanted| self.lacking(&below, wanted));
         let here = crate::browse::tracks_in(view, path);
-        let own: Vec<&crate::index::Album> = here
+        let own = crate::browse::albums_of(library, &here);
+        let artwork = below
             .iter()
-            .filter_map(|at| self.served.library.tracks().get(*at))
-            .filter_map(|track| track.album_id.as_ref())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .filter_map(|id| self.served.library.album(id))
-            .collect();
+            .filter_map(|at| library.tracks().get(*at))
+            .find(|track| track.artwork.is_some())
+            .map(|track| track.id.as_str().to_owned());
         let (folders, _) = crate::browse::folder_size(view, path);
         let empty = Tally::new();
         let problems = self.problems.get(path).unwrap_or(&empty);
@@ -195,37 +193,21 @@ impl Counting<'_> {
             folders,
             tracks,
             albums: albums.len(),
+            artwork,
             problems: counted(true),
             notes: counted(false),
             missing,
             changed: self
                 .walked
                 .is_some_and(|scope| scope.covers(std::path::Path::new(path))),
-            says: holds(tracks, albums.len(), folders),
+            says: crate::report::holds(tracks, albums.len(), folders),
             issues: issues_of(
                 problems,
-                split_by(&own, here.len(), folders),
+                crate::report::split_by(&own, here.len(), folders),
                 self.lacking(&below, Missing::Artwork),
             ),
         }
     }
-}
-
-/// Why a folder an owner takes for one album shows as two. Leaves only: the counts beside it
-/// cover everything below, and this clause covers the folder's own tracks.
-fn split_by(albums: &[&Album], own_tracks: usize, subfolders: usize) -> Option<&'static str> {
-    if subfolders > 0 || albums.len() < 2 || albums.len() * 2 > own_tracks {
-        return None;
-    }
-    let first = crate::index::fold(&albums[0].title);
-    if albums
-        .iter()
-        .any(|album| crate::index::fold(&album.title) != first)
-    {
-        return Some("Album titles differ");
-    }
-    // Tracks are grouped by folder and title, so one folder under one title splits on nothing else.
-    Some("Release ids differ")
 }
 
 /// What fell in each folder counting everything below it, by cause.
@@ -248,37 +230,6 @@ fn problems_below(refusals: &Refusals) -> HashMap<&str, Tally> {
     below
 }
 
-/// Digits a reader can take in at a glance.
-fn grouped(n: usize) -> String {
-    let digits = n.to_string();
-    let mut written = String::with_capacity(digits.len() + digits.len() / 3);
-    for (at, digit) in digits.chars().enumerate() {
-        if at > 0 && (digits.len() - at).is_multiple_of(3) {
-            written.push(',');
-        }
-        written.push(digit);
-    }
-    written
-}
-
-fn held_in(held: &str, albums: usize) -> String {
-    match albums {
-        0 => format!("{held}, no album"),
-        1 => format!("{held}, 1 album"),
-        albums => format!("{held}, {} albums", grouped(albums)),
-    }
-}
-
-/// What a folder holds: `9,434 tracks, 812 albums`. What is wrong with it is listed apart.
-fn holds(tracks: usize, albums: usize, folders: usize) -> String {
-    match (tracks, folders) {
-        (0, 0) => "Empty".to_owned(),
-        (0, _) => "No music".to_owned(),
-        (1, _) => held_in("1 track", albums),
-        (tracks, _) => held_in(&format!("{} tracks", grouped(tracks)), albums),
-    }
-}
-
 /// Neither is a refusal: nothing is declined for having no cover, and both halves of a split
 /// album are served.
 pub const NO_ARTWORK: &str = "no-artwork";
@@ -290,9 +241,9 @@ fn issues_of(problems: &Tally, split: Option<&'static str>, no_artwork: usize) -
         .iter()
         .map(|(cause, count)| Issue {
             cause: cause.as_str().to_owned(),
-            label: cause.label(),
+            label: crate::report::label(*cause),
             count: *count,
-            subject: cause.subject(*count),
+            subject: crate::report::subject(*cause, *count),
             problem: cause.is_problem(),
             opens: cause.names_a_path(),
         })
@@ -341,7 +292,7 @@ pub fn tracks_lacking_artwork(
     let mut shown = Vec::new();
     for track in lacking {
         total += 1;
-        if shown.len() < KEPT {
+        if shown.len() < Refusals::KEPT {
             shown.push(crate::index::Refusal {
                 subject: track.relative.clone(),
                 detail: None,
@@ -552,7 +503,7 @@ mod tests {
 
     #[test]
     fn the_tracks_lacking_a_cover_are_counted_past_the_hundred_that_are_named() {
-        let files: Vec<Scanned> = (0..KEPT + 50)
+        let files: Vec<Scanned> = (0..Refusals::KEPT + 50)
             .map(|at| track(&format!("Bare/{at:04}.flac"), "Album"))
             .collect();
         let served = Served::new(
@@ -560,8 +511,16 @@ mod tests {
             crate::browse::Settings::default(),
         );
         let (shown, total) = tracks_lacking_artwork(&served, "Bare");
-        assert_eq!(total, KEPT + 50, "the page says how many carry no cover");
-        assert_eq!(shown.len(), KEPT, "and names the hundred it keeps");
+        assert_eq!(
+            total,
+            Refusals::KEPT + 50,
+            "the page says how many carry no cover"
+        );
+        assert_eq!(
+            shown.len(),
+            Refusals::KEPT,
+            "and names the hundred it keeps"
+        );
     }
 
     fn rows(served: &Served, refusals: &Refusals, under: &str) -> Vec<Row> {
@@ -612,7 +571,7 @@ mod tests {
             .expect("listed");
         assert_eq!(label.problems, 1);
         assert_eq!(label.says, "3 tracks, 2 albums");
-        assert_eq!(label.issues[0].label, "Unreadable");
+        assert_eq!(label.issues[0].label, "Unreadable file");
     }
 
     fn refused(causes: &[(Cause, usize)]) -> Tally {
@@ -620,19 +579,8 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_says_what_it_holds_and_nothing_about_what_is_wrong() {
-        let clean = Tally::new();
-        assert_eq!(holds(0, 0, 0), "Empty");
-        assert_eq!(holds(0, 0, 2), "No music");
-        assert_eq!(holds(1, 1, 0), "1 track, 1 album");
-        assert_eq!(holds(24, 2, 0), "24 tracks, 2 albums");
-        assert_eq!(holds(12, 0, 0), "12 tracks, no album");
-        assert_eq!(
-            holds(9434, 812, 0),
-            "9,434 tracks, 812 albums",
-            "a number a reader takes in at a glance"
-        );
-        assert!(issues_of(&clean, None, 0).is_empty());
+    fn a_folder_with_nothing_wrong_with_it_lists_nothing() {
+        assert!(issues_of(&Tally::new(), None, 0).is_empty());
     }
 
     /// A row names every trouble a folder has, not only the worst.
@@ -654,9 +602,9 @@ mod tests {
         assert_eq!(
             listed,
             vec![
-                ("Playlist link broken", 177),
-                ("Unreadable", 6),
-                ("Album artist not set", 2192),
+                ("Broken playlist link", 177),
+                ("Unreadable file", 6),
+                ("No album artist", 2192),
             ],
             "faults before what the tags decided, and the largest of each first"
         );

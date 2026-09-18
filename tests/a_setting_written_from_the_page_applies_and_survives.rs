@@ -92,11 +92,7 @@ async fn a_setting_is_written_with_the_comments_kept_and_applied_at_once() {
         device.system_update_id() != before,
         "the menus changed, so every client is told to look again"
     );
-    let source = server
-        .control
-        .operation()
-        .config
-        .effective
+    let source = kantele::api::describe::effective(&server.control.operation().config)
         .settings
         .iter()
         .find(|setting| setting.key == "menus.album_threshold")
