@@ -42,38 +42,55 @@ fn attempt(state_dir: &Path) -> Result<Option<StateLock>> {
     std::fs::create_dir_all(state_dir)
         .with_context(|| format!("creating {}", state_dir.display()))?;
     let path = state_dir.join(LOCK);
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(&path)
-        .with_context(|| format!("opening {}", path.display()))?;
-    if take(&file).with_context(|| format!("locking {}", path.display()))? {
-        Ok(Some(StateLock { _file: file, path }))
-    } else {
-        Ok(None)
+    match held(&path).with_context(|| format!("locking {}", path.display()))? {
+        Some(file) => Ok(Some(StateLock { _file: file, path })),
+        None => Ok(None),
     }
 }
 
+fn opened() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true).truncate(false);
+    options
+}
+
 #[cfg(unix)]
-fn take(file: &File) -> std::io::Result<bool> {
+fn held(path: &Path) -> std::io::Result<Option<File>> {
     use std::os::unix::io::AsRawFd;
 
+    let file = opened().open(path)?;
     // The lock belongs to the open file description, so a second open in this same process is
     // refused exactly as another process would be.
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-        return Ok(true);
+        return Ok(Some(file));
     }
     let error = std::io::Error::last_os_error();
     match error.raw_os_error() {
-        Some(code) if code == libc::EWOULDBLOCK => Ok(false),
+        Some(code) if code == libc::EWOULDBLOCK => Ok(None),
         _ => Err(error),
     }
 }
 
-#[cfg(not(unix))]
-fn take(_file: &File) -> std::io::Result<bool> {
+/// Windows has no advisory lock to take once the file is open: the exclusion is the open itself,
+/// granting no sharing right to anybody else, and the next asker is told the file is in use.
+#[cfg(windows)]
+fn held(path: &Path) -> std::io::Result<Option<File>> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const SHARING_VIOLATION: i32 = 32;
+    const LOCK_VIOLATION: i32 = 33;
+
+    match opened().share_mode(0).open(path) {
+        Ok(file) => Ok(Some(file)),
+        Err(error) => match error.raw_os_error() {
+            Some(SHARING_VIOLATION | LOCK_VIOLATION) => Ok(None),
+            _ => Err(error),
+        },
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn held(_path: &Path) -> std::io::Result<Option<File>> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "no file locking on this platform",

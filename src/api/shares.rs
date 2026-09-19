@@ -244,10 +244,11 @@ mod tests {
         );
         assert!(listed.is_ok(), "a folder under the share reads");
 
+        // The folder holding the share: outside it on every platform, and it is certainly there.
         let refused = listing(
             &serving,
             &Asked {
-                under: "/etc".to_owned(),
+                under: std::env::temp_dir().display().to_string(),
                 images: false,
             },
         );
