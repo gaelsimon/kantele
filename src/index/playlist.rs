@@ -471,11 +471,18 @@ mod tests {
         )
     }
 
+    /// The entries as paths, spelt with a forward slash whatever the platform separator is, so
+    /// one expectation reads for both.
     fn targets(playlist: &Contents) -> Vec<String> {
         playlist
             .entries
             .iter()
-            .map(|entry| entry.target.to_string_lossy().into_owned())
+            .map(|entry| {
+                entry
+                    .target
+                    .to_string_lossy()
+                    .replace(std::path::MAIN_SEPARATOR, "/")
+            })
             .collect()
     }
 
@@ -632,6 +639,8 @@ mod tests {
     }
 
     #[test]
+    // Windows forbids a backslash in a file name, so the case this rule answers cannot arise there.
+    #[cfg(unix)]
     fn a_backslash_the_disk_holds_in_a_name_is_not_read_as_a_separator() {
         let tree = Tree::new("backslash", &["Album/AC\\DC - Jailbreak.flac"]);
         let playlist = parse_m3u(
