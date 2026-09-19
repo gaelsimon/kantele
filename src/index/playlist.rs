@@ -435,9 +435,12 @@ fn hex_pair(bytes: &[u8], at: usize) -> Option<u8> {
 }
 
 fn normalise(folder: &Path, text: &str) -> Option<PathBuf> {
+    // A backslash is a separator only where the platform says so: a Unix folder may hold one in
+    // its name, and the walk would have spelt it as part of the name.
+    let separators: &[char] = if cfg!(windows) { &['/', '\\'] } else { &['/'] };
     let mut parts: Vec<&str> = folder
         .to_str()?
-        .split('/')
+        .split(separators)
         .filter(|part| !part.is_empty())
         .collect();
     for part in text.split('/') {
@@ -450,7 +453,9 @@ fn normalise(folder: &Path, text: &str) -> Option<PathBuf> {
             name => parts.push(name),
         }
     }
-    (!parts.is_empty()).then(|| PathBuf::from(parts.join("/")))
+    // Joined the way the platform spells a path: the entries are matched to the tracks as text,
+    // and a track walked on Windows carries backslashes.
+    (!parts.is_empty()).then(|| PathBuf::from(parts.join(std::path::MAIN_SEPARATOR_STR)))
 }
 
 #[cfg(test)]
