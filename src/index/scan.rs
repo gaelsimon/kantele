@@ -661,7 +661,7 @@ fn why(error: &anyhow::Error) -> String {
 }
 
 pub(crate) fn relative_to(roots: &Roots, path: &Path) -> String {
-    roots.relative_or_self(path).to_string_lossy().into_owned()
+    crate::index::fold::path(&roots.relative_or_self(path))
 }
 
 fn is_folder(entry: &std::fs::DirEntry, path: &Path) -> bool {

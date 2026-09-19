@@ -93,10 +93,7 @@ fn one(roots: &Roots, found: &Found, cache: &Cache) -> Result<Scanned, (String, 
             Ok(contents) => contents,
             Err(error) => {
                 tracing::warn!(path = %found.path.display(), %error, "skipping playlist");
-                return Err((
-                    relative.to_string_lossy().into_owned(),
-                    format!("{error:#}"),
-                ));
+                return Err((fold::path(&relative), format!("{error:#}")));
             }
         },
     };
@@ -136,9 +133,7 @@ pub fn resolve_all(playlists: &[Scanned], tracks: &[Track]) -> Resolved {
     let mut refusals = Refusals::default();
     let mut unresolved = 0usize;
     for found in playlists {
-        let Some(relative) = found.relative.to_str() else {
-            continue;
-        };
+        let relative = &fold::path(&found.relative);
         let mut members: Vec<usize> = Vec::with_capacity(found.contents.entries.len());
         let mut held: HashSet<usize> = HashSet::with_capacity(found.contents.entries.len());
         for entry in &found.contents.entries {

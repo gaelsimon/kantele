@@ -329,7 +329,9 @@ async fn the_folder_chooser_offers_the_shares_and_refuses_the_rest_of_the_disk()
         "and the chooser is offered folders"
     );
 
-    let elsewhere = ask(&server, get_json("/api/shares?under=/etc")).await;
+    // A folder that is there and is outside every share, on either platform.
+    let outside = if cfg!(windows) { "C:/Windows" } else { "/etc" };
+    let elsewhere = ask(&server, get_json(&format!("/api/shares?under={outside}"))).await;
     assert_eq!(
         elsewhere.status(),
         StatusCode::FORBIDDEN,
