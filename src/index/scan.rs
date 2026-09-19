@@ -254,7 +254,7 @@ impl Exclusions {
         if self.patterns.is_empty() {
             return false;
         }
-        let path = relative.to_string_lossy().to_lowercase();
+        let path = crate::index::fold::path(relative).to_lowercase();
         let path = path.trim_matches('/');
         self.patterns
             .iter()
@@ -762,7 +762,7 @@ pub fn read(
         for file in denied {
             refusals.refuse(
                 Cause::UnreadableFile,
-                file.relative.to_string_lossy().into_owned(),
+                crate::index::fold::path(&file.relative),
                 Some(file.why.clone()),
             );
             refused.push(file);
