@@ -453,9 +453,8 @@ fn normalise(folder: &Path, text: &str) -> Option<PathBuf> {
             name => parts.push(name),
         }
     }
-    // Joined the way the platform spells a path: the entries are matched to the tracks as text,
-    // and a track walked on Windows carries backslashes.
-    (!parts.is_empty()).then(|| PathBuf::from(parts.join(std::path::MAIN_SEPARATOR_STR)))
+    // Joined the way the index spells a relative path, which is what the entry is matched against.
+    (!parts.is_empty()).then(|| PathBuf::from(parts.join("/")))
 }
 
 #[cfg(test)]
@@ -471,18 +470,11 @@ mod tests {
         )
     }
 
-    /// The entries as paths, spelt with a forward slash whatever the platform separator is, so
-    /// one expectation reads for both.
     fn targets(playlist: &Contents) -> Vec<String> {
         playlist
             .entries
             .iter()
-            .map(|entry| {
-                entry
-                    .target
-                    .to_string_lossy()
-                    .replace(std::path::MAIN_SEPARATOR, "/")
-            })
+            .map(|entry| entry.target.to_string_lossy().into_owned())
             .collect()
     }
 

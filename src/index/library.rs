@@ -496,7 +496,7 @@ fn track_from(
     Track {
         id: identity.id,
         rule: identity.rule,
-        relative: fold::nfc(&file.relative.to_string_lossy()),
+        relative: fold::path(&file.relative),
         album_id: release.map(|release| release.id.clone()),
         album_inherited: placement.inherited,
         compilation: tags.compilation

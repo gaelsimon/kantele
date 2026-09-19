@@ -11,6 +11,17 @@ pub fn nfc(value: &str) -> String {
     }
 }
 
+/// A relative path as the index spells one: composed, and separated by forward slashes whatever
+/// the platform walked it with. This string is matched, stored and published as text, so one
+/// spelling has to serve; it becomes a path again only to open a file, and Windows takes either.
+pub fn path(value: &std::path::Path) -> String {
+    let text = nfc(&value.to_string_lossy());
+    match std::path::MAIN_SEPARATOR {
+        '/' => text,
+        other => text.replace(other, "/"),
+    }
+}
+
 pub fn fold(value: &str) -> String {
     let lowered = value.to_lowercase();
     let stripped: String = lowered
