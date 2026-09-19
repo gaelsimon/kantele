@@ -39,29 +39,24 @@ def main():
         "version": info["version"],
         # Package Center hides an entry whose architecture it cannot match, and says nothing.
         "arch": info.get("arch", "noarch"),
+        # The oldest DSM the package installs on, which Package Center compares its build against.
+        "firmware": info.get("os_min_ver", ""),
         "dname": info.get("displayname", info["package"]),
         "desc": info.get("description", ""),
-        "price": 0,
-        "download_count": 0,
-        "recent_download_count": 0,
         "link": args.link,
         "size": len(raw),
         "md5": hashlib.md5(raw).hexdigest(),
         "maintainer": info.get("maintainer", ""),
         "distributor": info.get("distributor", ""),
-        "thirdparty": True,
-        "category": 0,
-        "subcategory": 0,
-        "type": 0,
         "start": True,
         # No wizard to answer, so Package Center may install, start and upgrade without stopping.
         "qinst": True,
         "qstart": True,
         "qupgrade": True,
         "beta": False,
-        "depsers": "",
-        "deppkgs": "",
-        "conflictpkgs": "",
+        "download_count": 0,
+        "recent_download_count": 0,
+        "snapshot": [],
     }
     if args.thumbnail:
         entry["thumbnail"] = [args.thumbnail]

@@ -102,7 +102,7 @@ sort_ignore = ["The"]
 # # An empty profile claims none, where a renderer refuses the one that is true.
 # dlna_profile = ""
 
-# A PNG or a JPEG published instead of the icon this server ships, which is Google's Material
-# `library_music` glyph. The type and the size are read from the file's bytes rather than its name,
+# A PNG or a JPEG published instead of the icon this server ships.
+# The type and the size are read from the file's bytes rather than its name,
 # and a file that is not an image is refused with a log line rather than served as one.
 # icon = "/volume1/music/.kantele/icon.png"

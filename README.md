@@ -126,14 +126,12 @@ A control point browses and chooses; a renderer plays. These pairs are the ones 
 | Denon HEOS (Android) | Marantz `Model 40N` |
 | [Neos](https://github.com/gaelsimon/neos-audio) | Marantz `Model 40N` |
 | BubbleUPnP (Android) | the Android device itself |
-| Serento (macOS) | the Mac itself |
-| Fidelia (macOS) | the Mac itself |
 
-Each of them finds the server, browses it and plays from it, and the first four search it.
+Each of them finds the server, browses it, searches it and plays from it.
 
-The two Mac players read a file in opposite ways. One asks for it whole, in a single request. The
-other reads the tags at the end of the file, then moves through it in windows of a couple of
-megabytes. Both are served.
+Players read a file in two opposite ways. One asks for it whole, in a single request. Another reads
+the tags at the end of the file, then moves through it in windows of a couple of megabytes. Both
+are served.
 
 If you point something at it, open an issue saying what the two ends were and what the log said.
 Every request is traced there with the user agent that sent it.
