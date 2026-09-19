@@ -34,6 +34,21 @@ fn scanned(tree: &Tree) -> Library {
     Library::scan_with(&tree.0, &ScanOptions::default()).expect("scanning the test tree")
 }
 
+/// What the walk made of the tree, for an assertion that has to say why it is not there.
+fn found(library: &Library) -> String {
+    let tracks: Vec<String> = library
+        .tracks()
+        .iter()
+        .map(|track| track.path.display().to_string())
+        .collect();
+    let playlists: Vec<&str> = library
+        .playlists()
+        .iter()
+        .map(|playlist| playlist.title.as_str())
+        .collect();
+    format!("tracks {tracks:?}, playlists {playlists:?}")
+}
+
 fn ask(library: &Library, id: &str, flag: BrowseFlag) -> String {
     browse(
         &serving(library),
@@ -71,7 +86,7 @@ fn a_playlist_becomes_a_container_the_root_offers() {
     let tree = crate_of_selections("playlist-root");
     let library = scanned(&tree);
 
-    assert_eq!(library.playlists().len(), 1);
+    assert_eq!(library.playlists().len(), 1, "{}", found(&library));
     assert_eq!(library.playlists()[0].title, "Party");
 
     let root = ask(&library, ObjectId::ROOT, BrowseFlag::DirectChildren);
