@@ -18,6 +18,11 @@ const MAX_AGE: Duration = Duration::from_secs(1800);
 
 const LOOK_AGAIN: Duration = Duration::from_secs(15);
 
+/// A switch that snoops IGMP with no querier behind it prunes the group a few minutes after the
+/// last membership report, and from then on no search reaches this server though it is running
+/// and announcing. Well under the 260 seconds the standard gives a membership.
+const REJOIN: Duration = Duration::from_secs(120);
+
 const SALVO: Duration = Duration::from_secs(1);
 
 fn notification_types(udn: &str) -> Vec<(String, String)> {
@@ -86,6 +91,7 @@ impl Advertiser {
     ) -> anyhow::Result<()> {
         let mut known: Vec<Ipv4Addr> = Vec::new();
         let mut refreshed = tokio::time::Instant::now();
+        let mut rejoined = tokio::time::Instant::now();
         loop {
             let (fresh, gone) = changes(&known, &local_addresses());
             if !gone.is_empty() {
@@ -115,6 +121,10 @@ impl Advertiser {
             if refreshed.elapsed() >= self.spread(MAX_AGE / 2, 3) {
                 self.alive(&known).await;
                 refreshed = tokio::time::Instant::now();
+            }
+            if rejoined.elapsed() >= REJOIN {
+                rejoin(listener, &known);
+                rejoined = tokio::time::Instant::now();
             }
             tokio::time::sleep(LOOK_AGAIN).await;
         }
@@ -274,6 +284,18 @@ fn bind_listener() -> io::Result<UdpSocket> {
 
 fn join_group(listener: &UdpSocket, interface: Ipv4Addr) -> io::Result<()> {
     listener.join_multicast_v4(MULTICAST, interface)
+}
+
+/// Leaves the group and joins it again, which is what makes the kernel report the membership
+/// afresh. A leave the kernel refuses is one this socket was not holding, and the join answers
+/// for it.
+fn rejoin(listener: &UdpSocket, interfaces: &[Ipv4Addr]) {
+    for address in interfaces {
+        let _ = listener.leave_multicast_v4(MULTICAST, *address);
+        if let Err(error) = join_group(listener, *address) {
+            tracing::warn!(%address, %error, "could not rejoin the multicast group here");
+        }
+    }
 }
 
 async fn send_from(interface: Ipv4Addr, message: &str) {
@@ -496,6 +518,28 @@ mod tests {
         assert_eq!(
             socket.local_addr().expect("bound").ip(),
             std::net::IpAddr::V4(Ipv4Addr::LOCALHOST)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rejoin_leaves_the_membership_held_whether_or_not_it_was_held_before() {
+        let Some(&interface) = local_addresses().first() else {
+            // A machine announcing on nothing has no group to hold.
+            return;
+        };
+        let listener = bind_listener().expect("a listener on 1900");
+
+        rejoin(&listener, &[interface]);
+        assert!(
+            join_group(&listener, interface).is_err(),
+            "a rejoin of a group nobody had joined still ends holding it"
+        );
+
+        rejoin(&listener, &[interface]);
+        assert!(
+            join_group(&listener, interface).is_err(),
+            "and a rejoin of one already held leaves it held, which is what keeps a snooping \
+             switch forwarding searches to this server"
         );
     }
 
