@@ -216,12 +216,9 @@ async fn content_directory_control(
             Ok(request) => {
                 let base = base_url(&headers);
                 let to = didl::To::new(&base, device.clients.resolve(&headers));
-                match contentdirectory::browse(
-                    &device.served(),
-                    &request,
-                    to,
-                    device.system_update_id(),
-                ) {
+                let published = device.published();
+                match contentdirectory::browse(&published.served, &request, to, published.update_id)
+                {
                     Ok(response) => {
                         tracing::info!(
                             object = %request.object_id,
@@ -240,12 +237,9 @@ async fn content_directory_control(
             Ok(request) => {
                 let base = base_url(&headers);
                 let to = didl::To::new(&base, device.clients.resolve(&headers));
-                match contentdirectory::search(
-                    &device.served(),
-                    &request,
-                    to,
-                    device.system_update_id(),
-                ) {
+                let published = device.published();
+                match contentdirectory::search(&published.served, &request, to, published.update_id)
+                {
                     Ok(response) => {
                         tracing::info!(
                             container = %request.container_id,

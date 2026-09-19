@@ -651,6 +651,7 @@ pub async fn keep_fresh(
     reread: bool,
 ) {
     let mut settings = indexing.now();
+    let mut bumps = device.bumps();
     let mut watcher = watching(&settings).await;
 
     let mut store = store;
@@ -680,6 +681,11 @@ pub async fn keep_fresh(
             }
             // A written setting, which the next pass has to run under rather than the old one.
             () = indexing.changed() => None,
+            // Whatever moved it, a rescan here or a setting written from the page.
+            Ok(()) = bumps.changed() => {
+                remembering(&mut store, *bumps.borrow_and_update());
+                continue;
+            }
         };
         let fresh = indexing.now();
         if fresh.roots != settings.roots {
@@ -885,7 +891,7 @@ async fn rebuild(
     if began {
         passes.end();
     }
-    let (mut store, indexed) = match scanned {
+    let (store, indexed) = match scanned {
         Ok((returned, indexed)) => (returned, indexed),
         Err(error) => {
             tracing::error!(%error, "the rescan did not finish");
@@ -913,20 +919,24 @@ async fn rebuild(
             if let Some(why) = keeping(&served.library, fresh.complete, device) {
                 fresh.pass.outcome = Outcome::Kept { why };
             } else {
+                // The loop persists the number: this task is the only one holding the store,
+                // and the settings page moves it too.
                 let id = device.publish(served).await;
-                // Persisted on every bump, or a restart resumes low and hands a client a value
-                // it holds.
-                if let Some(store) = store.as_mut()
-                    && let Err(error) = store.remember_update_id(id)
-                {
-                    tracing::warn!(%error, "the update id was not persisted: a restart may repeat it");
-                }
                 tracing::info!(system_update_id = id, "{done}");
             }
         }
     }
     passes.record(fresh.pass);
     store
+}
+
+/// Keeps the update id, or a restart resumes below one a client holds and hands it a stale cache.
+fn remembering(store: &mut Option<Store>, id: u32) {
+    if let Some(store) = store.as_mut()
+        && let Err(error) = store.remember_update_id(id)
+    {
+        tracing::warn!(%error, "the update id was not persisted: a restart may repeat it");
+    }
 }
 
 /// The pass to run, widened to the whole tree where the last pass left the store behind it.
@@ -1125,6 +1135,44 @@ mod tests {
         assert!(
             next_boot_id(&mut None) > 0,
             "a server with no store still announces one"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_setting_written_from_the_page_leaves_the_update_id_where_a_restart_finds_it() {
+        let dir = std::env::temp_dir().join(format!("kantele-update-id-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("index.sqlite");
+        let device = Arc::new(device(one_track()));
+        tokio::spawn(keep_fresh(
+            device.clone(),
+            Arc::new(Passes::default()),
+            Arc::new(Live::new(Indexing::default())),
+            Some(Store::open(&path).expect("a store")),
+            false,
+            false,
+        ));
+
+        // Nothing rescanned: the page alone moved it, and the page has no store to write to.
+        let applied = device
+            .apply_settings(crate::browse::Settings::default())
+            .await;
+        let mut held = None;
+        for _ in 0..200 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            held = Store::open(&path)
+                .expect("a second look at the same file")
+                .resumed_update_id()
+                .expect("the meta table");
+            if held == Some(applied) {
+                break;
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            held,
+            Some(applied),
+            "a client was told {applied} and a restart would resume below it"
         );
     }
 
