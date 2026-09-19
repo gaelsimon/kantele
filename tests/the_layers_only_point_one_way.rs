@@ -10,7 +10,10 @@ fn sources(dir: &str) -> Vec<(String, String)> {
                 walk(&path, into);
             } else if path.extension().is_some_and(|kind| kind == "rs") {
                 into.push((
-                    path.display().to_string(),
+                    // Named with forward slashes, so one expectation reads on every platform.
+                    path.display()
+                        .to_string()
+                        .replace(std::path::MAIN_SEPARATOR, "/"),
                     std::fs::read_to_string(&path).expect("reading a source file"),
                 ));
             }
