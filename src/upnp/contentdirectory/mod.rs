@@ -121,7 +121,7 @@ pub fn search(
         search_space(library, view, menus, &request.container_id).ok_or(Fault::NO_SUCH_OBJECT)?;
     let window = Window::new(request.starting_index, request.requested_count);
     let matched = match space {
-        Space::Whole(kinds) => indexed_matches(library, menus, kinds, &criteria, window),
+        Space::Whole(kinds) => indexed_matches(library, view, menus, kinds, &criteria, window),
         Space::Children(children) => Listing::All(
             children
                 .into_iter()
@@ -966,6 +966,75 @@ mod tests {
             1,
         )
         .expect("the container exists and the criteria parse")
+    }
+
+    /// The shipped fixture carries no genre, and a genre search needs some.
+    fn genred() -> Library {
+        use crate::index::Scanned;
+        use crate::tags::{AudioProperties, FileTags};
+        use std::path::{Path, PathBuf};
+
+        let file = |relative: &str, title: &str, genre: &str| Scanned {
+            path: Path::new("/music").join(relative),
+            relative: PathBuf::from(relative),
+            tags: FileTags {
+                title: Some(title.to_owned()),
+                album: Some("Dundunbanza".to_owned()),
+                album_artists: vec!["Sierra Maestra".to_owned()],
+                artists: vec!["Sierra Maestra".to_owned()],
+                genres: vec![genre.to_owned()],
+                track_number: Some(1),
+                ..FileTags::default()
+            },
+            properties: AudioProperties::default(),
+            size: 27,
+            artwork: None,
+        };
+        Library::build(
+            "Music".to_owned(),
+            &[
+                file("a/01.flac", "Juana Pena", "Son"),
+                file("a/02.flac", "Dundunbanza", "Son"),
+                file("b/01.flac", "Rougher Dub", "Reggae"),
+            ],
+        )
+    }
+
+    #[test]
+    fn a_folder_is_published_as_a_folder_rather_than_as_a_menu() {
+        let served = serving(library());
+        for id in [ObjectId::ROOT, FOLDERS] {
+            let listing = ask(&served, id, BrowseFlag::DirectChildren);
+            assert!(
+                listing.result.contains(didl::FOLDER),
+                "a control point tells a folder from a menu by the class, and both incumbents \
+                 mark theirs: browsing {id} gave {}",
+                listing.result
+            );
+        }
+        let itself = ask(&served, FOLDERS, BrowseFlag::Metadata);
+        assert!(itself.result.contains(didl::FOLDER), "{}", itself.result);
+    }
+
+    #[test]
+    fn the_search_an_amplifier_sends_for_its_own_genre_menu_finds_them() {
+        let served = serving(genred());
+        let found = look_for(
+            &served,
+            ObjectId::ROOT,
+            r#"upnp:class derivedfrom "object.container.genre.musicGenre""#,
+        );
+        assert_eq!(
+            found.total_matches, 2,
+            "a control point that builds its own genre list off a search gets nothing otherwise, \
+             which is what the HEOS app does"
+        );
+        assert!(found.result.contains("object.container.genre.musicGenre"));
+        assert!(found.result.contains("Son") && found.result.contains("Reggae"));
+        assert!(
+            !found.result.contains("A-Z"),
+            "the letter index is not a genre"
+        );
     }
 
     #[test]

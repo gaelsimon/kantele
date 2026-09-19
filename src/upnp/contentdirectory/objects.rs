@@ -164,12 +164,11 @@ fn root_children<'a>(
                 browse::root::Opens::Recent => menus.recent.clone(),
                 browse::root::Opens::Folders => menus.folders.clone(),
             };
-            didl::Child::Container(didl::ContainerSpec::menu(
-                id,
-                menus.root.clone(),
-                entry.title,
-                entry.children,
-            ))
+            let spec = match entry.opens {
+                browse::root::Opens::Folders => didl::ContainerSpec::folder,
+                _ => didl::ContainerSpec::menu,
+            };
+            didl::Child::Container(spec(id, menus.root.clone(), entry.title, entry.children))
         })
         .collect()
 }
@@ -185,7 +184,7 @@ fn folder_children<'a>(
     let mut children: Vec<didl::Child<'a>> = folders
         .iter()
         .map(|child| {
-            didl::Child::Container(didl::ContainerSpec::menu(
+            didl::Child::Container(didl::ContainerSpec::folder(
                 ObjectId::new(browse::folder_id(&child.path))
                     .expect("a digest behind an ascii prefix"),
                 here.clone(),
@@ -378,7 +377,7 @@ pub(super) fn metadata<'a>(
         )),
         Named::Folders => {
             let (folders, loose) = browse::folder_size(view, "");
-            menu(didl::ContainerSpec::menu(
+            menu(didl::ContainerSpec::folder(
                 menus.folders.clone(),
                 menus.root.clone(),
                 FOLDERS_TITLE,
@@ -388,7 +387,7 @@ pub(super) fn metadata<'a>(
         Named::Folder(path) => {
             let here = folder_object(&path)?;
             let (below, inside) = browse::folder_size(view, &path);
-            menu(didl::ContainerSpec::menu(
+            menu(didl::ContainerSpec::folder(
                 here,
                 menus.folders.clone(),
                 browse::folder_name(&path).to_owned(),

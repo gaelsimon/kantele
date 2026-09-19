@@ -56,6 +56,7 @@ pub struct ContainerSpec<'a> {
 
 pub const MENU: &str = "object.container";
 pub const GENRE: &str = "object.container.genre.musicGenre";
+pub const FOLDER: &str = "object.container.storageFolder";
 
 impl<'a> ContainerSpec<'a> {
     pub fn menu(id: ObjectId, parent: ObjectId, title: impl Into<String>, children: usize) -> Self {
@@ -71,6 +72,20 @@ impl<'a> ContainerSpec<'a> {
             date: None,
             artists: &[],
             credited: false,
+        }
+    }
+
+    /// A container standing for a directory. A control point reads the class to tell a folder
+    /// from a menu, and both incumbents mark theirs.
+    pub fn folder(
+        id: ObjectId,
+        parent: ObjectId,
+        title: impl Into<String>,
+        children: usize,
+    ) -> Self {
+        Self {
+            class: FOLDER,
+            ..Self::menu(id, parent, title, children)
         }
     }
 }

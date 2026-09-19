@@ -1,12 +1,13 @@
 ---
 source: tests/wire_snapshots.rs
-expression: "readable(&browse(&indexed(), ObjectId::ROOT,\ncontentdirectory::BrowseFlag::DirectChildren, 10))"
+assertion_line: 167
+expression: "readable(&browse(&serving(), ObjectId::ROOT,\ncontentdirectory::BrowseFlag::DirectChildren, 10))"
 ---
 <?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
 <s:Body>
 <u:BrowseResponse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
-<Result>&lt;DIDL-Lite xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/&quot; xmlns:dc=&quot;http://purl.org/dc/elements/1.1/&quot; xmlns:upnp=&quot;urn:schemas-upnp-org:metadata-1-0/upnp/&quot; xmlns:dlna=&quot;urn:schemas-dlna-org:metadata-1-0/&quot;&gt;&lt;container id=&quot;albums&quot; parentID=&quot;0&quot; restricted=&quot;1&quot; searchable=&quot;1&quot; childCount=&quot;1&quot;&gt;&lt;dc:title&gt;1 album&lt;/dc:title&gt;&lt;upnp:class&gt;object.container&lt;/upnp:class&gt;&lt;/container&gt;&lt;container id=&quot;music&quot; parentID=&quot;0&quot; restricted=&quot;1&quot; searchable=&quot;1&quot; childCount=&quot;3&quot;&gt;&lt;dc:title&gt;3 items&lt;/dc:title&gt;&lt;upnp:class&gt;object.container&lt;/upnp:class&gt;&lt;/container&gt;&lt;container id=&quot;folders&quot; parentID=&quot;0&quot; restricted=&quot;1&quot; searchable=&quot;1&quot; childCount=&quot;2&quot;&gt;&lt;dc:title&gt;[folder view]&lt;/dc:title&gt;&lt;upnp:class&gt;object.container&lt;/upnp:class&gt;&lt;/container&gt;&lt;/DIDL-Lite&gt;</Result>
+<Result>&lt;DIDL-Lite xmlns=&quot;urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/&quot; xmlns:dc=&quot;http://purl.org/dc/elements/1.1/&quot; xmlns:upnp=&quot;urn:schemas-upnp-org:metadata-1-0/upnp/&quot; xmlns:dlna=&quot;urn:schemas-dlna-org:metadata-1-0/&quot;&gt;&lt;container id=&quot;albums&quot; parentID=&quot;0&quot; restricted=&quot;1&quot; searchable=&quot;1&quot; childCount=&quot;1&quot;&gt;&lt;dc:title&gt;1 album&lt;/dc:title&gt;&lt;upnp:class&gt;object.container&lt;/upnp:class&gt;&lt;/container&gt;&lt;container id=&quot;music&quot; parentID=&quot;0&quot; restricted=&quot;1&quot; searchable=&quot;1&quot; childCount=&quot;3&quot;&gt;&lt;dc:title&gt;3 items&lt;/dc:title&gt;&lt;upnp:class&gt;object.container&lt;/upnp:class&gt;&lt;/container&gt;&lt;container id=&quot;folders&quot; parentID=&quot;0&quot; restricted=&quot;1&quot; searchable=&quot;1&quot; childCount=&quot;2&quot;&gt;&lt;dc:title&gt;[folder view]&lt;/dc:title&gt;&lt;upnp:class&gt;object.container.storageFolder&lt;/upnp:class&gt;&lt;/container&gt;&lt;/DIDL-Lite&gt;</Result>
 <NumberReturned>3</NumberReturned>
 <TotalMatches>3</TotalMatches>
 <UpdateID>1</UpdateID>

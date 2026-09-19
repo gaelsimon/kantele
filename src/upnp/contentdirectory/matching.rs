@@ -15,6 +15,9 @@ pub(super) enum Kind {
     Artists,
     Tracks,
     Playlists,
+    /// The values of the Genre axis, which a control point looks for by class rather than by
+    /// walking the menus. The HEOS app builds its own Genres list this way.
+    Genres,
 }
 
 pub(super) enum Space<'a> {
@@ -34,6 +37,7 @@ pub(super) fn search_space<'a>(
             Kind::Artists,
             Kind::Tracks,
             Kind::Playlists,
+            Kind::Genres,
         ])),
         ALBUMS => Some(Space::Whole(&[Kind::Albums])),
         ARTISTS => Some(Space::Whole(&[Kind::Artists])),
@@ -46,6 +50,7 @@ pub(super) fn search_space<'a>(
 
 pub(super) fn indexed_matches<'a>(
     library: &'a Library,
+    view: &'a View,
     menus: &'a Menus,
     kinds: &[Kind],
     criteria: &search::Criteria,
@@ -84,9 +89,36 @@ pub(super) fn indexed_matches<'a>(
                     }
                 }
             }
+            Kind::Genres => {
+                for genre in genres(library, view, menus) {
+                    if criteria.matches(&folded(&genre)) {
+                        matched.keep(|| genre);
+                    }
+                }
+            }
         }
     }
     matched.listing()
+}
+
+/// The genre containers as the menus offer them, so a search and a browse name the same objects.
+/// Nothing where the owner left the axis out: what the menus do not hold, a search does not find.
+fn genres<'a>(library: &'a Library, view: &'a View, menus: &'a Menus) -> Vec<didl::Child<'a>> {
+    let listing = crate::browse::root::entries(library, view)
+        .into_iter()
+        .find_map(|entry| match entry.opens {
+            crate::browse::root::Opens::Axis(crate::browse::Facet::Genre, at) => Some(at),
+            _ => None,
+        })
+        .and_then(|at| children(library, view, menus, &at.id(), Window::ALL));
+    let Some(listing) = listing else {
+        return Vec::new();
+    };
+    listing
+        .into_all()
+        .into_iter()
+        .filter(|child| matches!(child, didl::Child::Container(spec) if spec.class == didl::GENRE))
+        .collect()
 }
 
 struct Matched<'a> {
