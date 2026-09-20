@@ -77,7 +77,7 @@ pub(super) fn children<'a>(
             artist_child(&library.artists()[at], &menus.artists)
         }),
         Named::Music => flat(library.tracks().len(), &|at| {
-            didl::Child::Item(&library.tracks()[at], &menus.music)
+            didl::Child::item(&library.tracks()[at], &menus.music)
         }),
         Named::Untagged => all(items_at(
             library,
@@ -87,11 +87,11 @@ pub(super) fn children<'a>(
         Named::Playlists => flat(library.playlists().len(), &|at| {
             playlist_child(&library.playlists()[at], &menus.playlists)
         }),
-        Named::Folders => all(folder_children(library, view, menus, "", &menus.folders)),
+        Named::Folders => all(folder_children(library, view, "", &menus.folders)),
         Named::Recent => all(recent_children(library, view, menus)),
         Named::Folder(path) => {
             let here = folder_object(&path)?;
-            all(folder_children(library, view, menus, &path, &here))
+            all(folder_children(library, view, &path, &here))
         }
         Named::Position(position) => {
             let here = position_object(&position)?;
@@ -117,7 +117,7 @@ fn minted_children<'a>(library: &'a Library, object: &ObjectId) -> Option<Vec<di
         return Some(
             library
                 .playlist_tracks(playlist)
-                .map(|track| didl::Child::Item(track, &playlist.id))
+                .map(|track| didl::Child::item(track, &playlist.id))
                 .collect(),
         );
     }
@@ -133,7 +133,7 @@ fn items_at<'a>(
     selected
         .iter()
         .filter_map(|at| library.tracks().get(*at))
-        .map(|track| didl::Child::Item(track, parent))
+        .map(|track| didl::Child::item(track, parent))
         .collect()
 }
 
@@ -176,7 +176,6 @@ fn root_children<'a>(
 fn folder_children<'a>(
     library: &'a Library,
     view: &'a View,
-    menus: &'a Menus,
     path: &str,
     here: &ObjectId,
 ) -> Vec<didl::Child<'a>> {
@@ -211,7 +210,7 @@ fn folder_children<'a>(
         tracks
             .into_iter()
             .filter_map(|at| library.tracks().get(at))
-            .map(|track| didl::Child::Item(track, &menus.music)),
+            .map(|track| didl::Child::item_under(track, here.clone())),
     );
     children
 }
@@ -232,7 +231,7 @@ fn recent_children<'a>(
             browse::Recent::Track(at) => library
                 .tracks()
                 .get(at)
-                .map(|track| didl::Child::Item(track, &menus.recent)),
+                .map(|track| didl::Child::item(track, &menus.recent)),
         })
         .collect()
 }
@@ -331,7 +330,7 @@ fn artist_children<'a>(library: &'a Library, artist: &'a Artist) -> Vec<didl::Ch
         .tracks
         .iter()
         .filter_map(|at| library.tracks().get(*at))
-        .map(|track| didl::Child::Item(track, &artist.id));
+        .map(|track| didl::Child::item(track, &artist.id));
     albums.chain(tracks).collect()
 }
 
@@ -431,7 +430,7 @@ pub(super) fn metadata<'a>(
                 return minted_metadata(library, menus, &object);
             }
             let track = library.get(&object)?;
-            Some(didl::Child::Item(
+            Some(didl::Child::item(
                 track,
                 track_parent(library, menus, track),
             ))

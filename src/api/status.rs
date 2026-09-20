@@ -30,6 +30,9 @@ struct Status {
     #[serde(skip_serializing_if = "Option::is_none")]
     failing: Option<Failing>,
     refused: Refused,
+    /// Background tasks that stopped while the server went on answering.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    stopped: Vec<&'static str>,
     subscribers: Vec<Listed>,
     /// Every address seen on the network, the most recently active first.
     devices: Vec<DeviceSeen>,
@@ -233,6 +236,7 @@ pub(super) async fn status(State(control): State<Shared>, headers: HeaderMap) ->
             walked: last.is_some(),
             causes: causes_of(&refusals),
         },
+        stopped: control.tasks.gone(),
         subscribers: device.subscriptions.listed(),
         devices: device
             .peers
@@ -256,6 +260,9 @@ fn flatten_status(status: &Status) -> Vec<(String, String)> {
             "failing.since".to_owned(),
             format!("{}\t{}", failing.since, failing.why),
         ));
+    }
+    for task in &status.stopped {
+        lines.push(("stopped".to_owned(), (*task).to_owned()));
     }
     lines.push(("refused.total".to_owned(), status.refused.total.to_string()));
     lines.push((
@@ -466,6 +473,7 @@ mod tests {
                 open: true,
             },
             memory_bytes: Some(1),
+            stopped: Vec::new(),
             last_pass: Some(LastPass {
                 ended: 1,
                 seconds: 1.0,

@@ -45,6 +45,10 @@ struct Running {
 
 impl Running {
     fn start(tree: &Tree, state: &Scratch, arguments: &[&str]) -> Self {
+        Self::start_on(&tree.0, state, arguments)
+    }
+
+    fn start_on(folder: &std::path::Path, state: &Scratch, arguments: &[&str]) -> Self {
         let state = &state.0;
         std::fs::create_dir_all(state).expect("creating the state folder");
         let nth = STARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -52,7 +56,7 @@ impl Running {
         let file = std::fs::File::create(&log).expect("creating the log");
         let also = file.try_clone().expect("the same log twice");
         let child = Command::new(env!("CARGO_BIN_EXE_kantele"))
-            .arg(&tree.0)
+            .arg(folder)
             .args(arguments)
             .env("KANTELE_STATE", state)
             .env("KANTELE_PORT", "0")
@@ -114,7 +118,7 @@ impl Running {
     }
 
     fn said(&self) -> String {
-        plain(&std::fs::read_to_string(&self.log).unwrap_or_default())
+        std::fs::read_to_string(&self.log).unwrap_or_default()
     }
 
     /// A stop asked for the way a service manager asks, and how long the process took to go.
@@ -145,19 +149,25 @@ impl Drop for Running {
     }
 }
 
-/// The log is coloured even into a file, and a colour code sits between a field and its `=`.
-fn plain(log: &str) -> String {
-    let mut out = String::with_capacity(log.len());
-    let mut rest = log;
-    while let Some(at) = rest.find('\u{1b}') {
-        out.push_str(&rest[..at]);
-        match rest[at..].find('m') {
-            Some(end) => rest = &rest[at + end + 1..],
-            None => return out,
-        }
-    }
-    out.push_str(rest);
-    out
+/// The binary run to its end on one folder, and the log it wrote, byte for byte.
+fn ran(tree: &Tree, state: &Scratch, arguments: &[&str], port: &str) -> String {
+    let log = state.0.join("ran.log");
+    let file = std::fs::File::create(&log).expect("creating the log");
+    let also = file.try_clone().expect("the same log twice");
+    let status = Command::new(env!("CARGO_BIN_EXE_kantele"))
+        .arg(&tree.0)
+        .args(arguments)
+        .env("KANTELE_STATE", &state.0)
+        .env("KANTELE_PORT", port)
+        .env("RUST_LOG", "kantele=info")
+        .stdin(Stdio::null())
+        .stdout(file)
+        .stderr(also)
+        .status()
+        .expect("the built binary runs");
+    let said = std::fs::read_to_string(&log).expect("the log");
+    assert!(status.success(), "{status}\n{said}");
+    said
 }
 
 fn bound_port(log: &str) -> Option<u16> {
@@ -417,4 +427,56 @@ fn what_the_first_start_wrote_down_is_what_the_second_start_serves() {
     );
 
     second.stop();
+}
+
+#[test]
+fn the_log_a_service_manager_collects_carries_no_colour() {
+    let tree = library("e2e-colour");
+    let state = Scratch::new("e2e-colour");
+    let said = ran(&tree, &state, &["--report"], "0");
+    assert!(
+        !said.is_empty(),
+        "nothing was logged, so nothing was checked"
+    );
+    assert!(
+        !said.contains('\u{1b}'),
+        "escape codes in a log file are in the way of every reader of it:\n{said}"
+    );
+}
+
+#[test]
+fn a_port_the_environment_names_badly_is_said_to_be_ignored() {
+    let tree = library("e2e-port");
+    let state = Scratch::new("e2e-port");
+    let said = ran(&tree, &state, &["--report"], "82OO");
+    assert!(
+        said.contains("KANTELE_PORT is not a port number"),
+        "a port nobody is listening on is not a silence: {said}"
+    );
+}
+
+#[test]
+fn a_music_folder_that_is_not_mounted_yet_does_not_stop_the_server_starting() {
+    let tree = library("e2e-absent");
+    let state = Scratch::new("e2e-absent");
+    let absent = tree.0.join("not-mounted-yet");
+
+    // Under launchd with KeepAlive, a start that exits here is a restart loop.
+    let server = Running::start_on(&absent, &state, &[]);
+    let status = ask(
+        server.port,
+        "GET",
+        "/api/status",
+        &[("Accept", "application/json")],
+        b"",
+    );
+    assert_eq!(status.status, 200);
+    let json: serde_json::Value = serde_json::from_slice(&status.body).expect("json");
+    assert_eq!(json["library"]["tracks"], 0);
+    assert!(
+        server.said().contains("not there"),
+        "and it says which folder it could not read:\n{}",
+        server.said()
+    );
+    server.stop();
 }

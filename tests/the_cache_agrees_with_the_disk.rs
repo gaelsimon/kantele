@@ -193,11 +193,12 @@ fn the_rows_of_another_library_are_not_served_as_this_one() {
 
 /// The index a start builds from the store; `Library::build` alone would drop the playlists.
 fn from_the_store(store: &Store, root: &Path) -> Library {
-    Library::build_with(
-        kantele::index::library::library_name(root),
-        &store.remembered(root).expect("the rows"),
-        &store.remembered_playlists(root).expect("the playlist rows"),
-    )
+    let name = kantele::index::library::library_name(root);
+    if !store.describes_roots(root).expect("asking after the rows") {
+        return Library::build_with(name, &[], &[]);
+    }
+    let cache = store.cache(root).expect("a cache");
+    Library::build_with(name, &cache.remembered(), &cache.remembered_playlists())
 }
 
 #[test]

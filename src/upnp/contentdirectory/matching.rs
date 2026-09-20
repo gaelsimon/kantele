@@ -78,7 +78,7 @@ pub(super) fn indexed_matches<'a>(
                 for (at, track) in library.tracks().iter().enumerate() {
                     if criteria.matches(&searchable.tracks.object(at)) {
                         matched
-                            .keep(|| didl::Child::Item(track, track_parent(library, menus, track)));
+                            .keep(|| didl::Child::item(track, track_parent(library, menus, track)));
                     }
                 }
             }

@@ -11,6 +11,7 @@ pub mod server;
 pub mod service;
 pub mod state;
 pub mod tags;
+pub mod tasks;
 pub mod upnp;
 
 /// A lock taken past a poisoning: every mutex here guards a table a panic cannot leave half-written.

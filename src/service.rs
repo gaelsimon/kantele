@@ -162,7 +162,7 @@ impl Indexing {
     /// What a configuration asks for, sharing the stop and the progress already in hand.
     pub fn of_config(config: &crate::config::Config, underway: Arc<Underway>) -> Result<Self> {
         Ok(Self {
-            roots: roots_of(config)?,
+            roots: roots_named(config, Missing::Kept)?,
             options: config.scan_options(),
             menus: config.menu_settings(),
             underway,
@@ -174,20 +174,44 @@ impl Indexing {
     }
 }
 
+/// What a folder that is not on the disk means.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Missing {
+    /// Refused. An owner naming a folder on the page is told now, not at the next pass.
+    Refused,
+    /// Kept as written. A share that is not mounted yet must not stop the server: it serves what
+    /// it remembers, says the folder is not readable, and finds it when it comes back.
+    Kept,
+}
+
 /// The music folders a configuration names, as they are on disk. None named is a server waiting
 /// for the page to choose one.
 pub fn roots_of(config: &crate::config::Config) -> Result<Roots> {
+    roots_named(config, Missing::Refused)
+}
+
+pub fn roots_named(config: &crate::config::Config, missing: Missing) -> Result<Roots> {
     let named = config.content_dirs();
     if named.is_empty() {
         return Ok(Roots::default());
     }
     let mut folders = Vec::with_capacity(named.len());
     for folder in named {
-        folders.push(
-            folder
-                .canonicalize()
-                .with_context(|| format!("no such folder: {}", folder.display()))?,
-        );
+        match folder.canonicalize() {
+            Ok(path) => folders.push(path),
+            Err(error) if missing == Missing::Kept => {
+                tracing::warn!(
+                    folder = %folder.display(), %error,
+                    "this music folder is not there: serving what is remembered of it and \
+                     looking again at every pass"
+                );
+                folders.push(folder);
+            }
+            Err(error) => {
+                return Err(anyhow::Error::new(error))
+                    .with_context(|| format!("no such folder: {}", folder.display()));
+            }
+        }
     }
     Ok(Roots::new(folders)?)
 }
@@ -228,26 +252,29 @@ impl Live {
 }
 
 /// An index built from what the store remembers, with no round trip to the library at all.
+/// What the store remembers, built from one reading of its rows: the cache stays with the store
+/// for the first pass, which would otherwise parse every payload a second time.
 pub fn remembered(indexing: &Indexing, store: &mut Option<Store>) -> Option<Library> {
     let content_dir = indexing.root();
     let started = std::time::Instant::now();
-    let files = match store.as_ref()?.remembered(content_dir) {
-        Ok(files) if files.is_empty() => return None,
-        Ok(files) => files,
+    let cache = cache_for(content_dir, store);
+    let files = match store.as_ref()?.describes_roots(content_dir.clone()) {
+        Ok(true) => cache.remembered(),
+        Ok(false) => return None,
         Err(error) => {
             tracing::warn!(%error, "the store held no usable rows: reading every file");
             return None;
         }
     };
+    if files.is_empty() {
+        return None;
+    }
     let rows = files.len();
-    let playlists = match store.as_ref()?.remembered_playlists(content_dir) {
-        Ok(playlists) => playlists,
-        Err(error) => {
-            tracing::warn!(%error, "the store held no playlists: the next scan reads them");
-            Vec::new()
-        }
-    };
+    let playlists = cache.remembered_playlists();
     let held = store.as_ref()?.claims().unwrap_or_default();
+    if let Some(store) = store.as_mut() {
+        store.hold(cache);
+    }
     let mut library = Library::build_holding(
         content_dir.name(),
         &files,
@@ -365,7 +392,13 @@ fn indexing_pass(indexing: &Indexing, store: &mut Option<Store>, pass: Pass) -> 
         tracing::info!("ignoring the store's cache on request: every file will be read");
         Cache::default()
     } else {
-        cache_for(content_dir, store)
+        match store
+            .as_mut()
+            .and_then(|store| store.held_cache(content_dir))
+        {
+            Some(held) => held,
+            None => cache_for(content_dir, store),
+        }
     };
     let pass = match pass {
         // The rest of the library comes from the rows.

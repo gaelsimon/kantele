@@ -209,10 +209,12 @@ impl Subscriptions {
                 continue;
             };
             for callback in callbacks {
-                let permit = permits.clone().acquire_owned().await.expect("never closed");
+                // Taken inside the task: taken here, a slow subscriber stops the round being
+                // handed out at all, and the deadline below starts after the wait it bounds.
+                let permits = permits.clone();
                 let (subscriptions, sid, body) = (self.clone(), sid.clone(), body.clone());
                 sending.spawn(async move {
-                    let _held = permit;
+                    let _held = permits.acquire_owned().await.expect("never closed");
                     subscriptions
                         .deliver_and_say_so(&callback, &sid, seq, &body)
                         .await;
@@ -221,11 +223,13 @@ impl Subscriptions {
         }
         // The pass that published the index waits on this, so slow subscribers are left to finish
         // on their own rather than holding it up.
-        if tokio::time::timeout(ROUND_WITHIN, sending.join_all())
-            .await
-            .is_err()
-        {
+        let round = tokio::time::timeout(ROUND_WITHIN, async {
+            while sending.join_next().await.is_some() {}
+        })
+        .await;
+        if round.is_err() {
             tracing::warn!("some subscribers had not taken the event before the round was up");
+            sending.detach_all();
         }
     }
 
@@ -577,6 +581,66 @@ mod tests {
             subs.is_empty(),
             "a subscriber nobody can reach is no longer one"
         );
+    }
+
+    /// A subscriber that takes the connection and never answers holds its delivery for
+    /// `ANSWER_WITHIN`, so more of them than run at once makes the round's own wait visible.
+    #[tokio::test]
+    async fn every_subscriber_is_handed_its_event_before_the_round_waits_on_any_of_them() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("a port");
+        let address = listener.local_addr().expect("bound");
+        let quiet = tokio::spawn(async move {
+            let mut taken = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                taken.push(stream);
+            }
+        });
+
+        let subs = Subscriptions::default();
+        let slow = DELIVERIES_AT_ONCE * 2;
+        held_by(&subs, slow, &format!("http://{address}/notify"));
+
+        let round = tokio::spawn({
+            let subs = subs.clone();
+            async move {
+                subs.notify(
+                    Service::ContentDirectory,
+                    &[("SystemUpdateID", "2".to_owned())],
+                )
+                .await;
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let handed = subs.listed().iter().filter(|held| held.events == 1).count();
+        round.await.expect("the round ends");
+        quiet.abort();
+
+        assert_eq!(
+            handed, slow,
+            "a subscriber past the first {DELIVERIES_AT_ONCE} waited on the ones before it"
+        );
+    }
+
+    /// Subscriptions put in place directly: this needs more of them than one device is granted.
+    fn held_by(subs: &Subscriptions, count: usize, callback: &str) {
+        let mut held = crate::held(&subs.inner);
+        for nth in 0..count {
+            held.insert(
+                format!("uuid:{nth}"),
+                Subscription {
+                    service: Service::ContentDirectory,
+                    callbacks: vec![callback.to_owned()],
+                    expires: Instant::now() + DEFAULT_TIMEOUT,
+                    seq: 0,
+                    user_agent: None,
+                    peer: "127.0.0.1".parse().expect("an address"),
+                    since: nth as u64,
+                    missed: 0,
+                },
+            );
+        }
     }
 
     /// Sends the number of rounds it takes to give up on a subscriber, one short of it first.

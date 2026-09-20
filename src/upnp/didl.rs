@@ -1,5 +1,6 @@
 //! DIDL-Lite generation.
 
+use std::borrow::Cow;
 use std::io::Cursor;
 use std::time::Duration;
 
@@ -92,7 +93,20 @@ impl<'a> ContainerSpec<'a> {
 
 pub enum Child<'a> {
     Container(ContainerSpec<'a>),
-    Item(&'a Track, &'a ObjectId),
+    Item(&'a Track, Cow<'a, ObjectId>),
+}
+
+impl<'a> Child<'a> {
+    /// The parent is the container this listing walked to, which is not always the one that
+    /// minted the track's identifier.
+    pub fn item(track: &'a Track, parent: &'a ObjectId) -> Self {
+        Self::Item(track, Cow::Borrowed(parent))
+    }
+
+    /// The same, where the container was built for this listing and outlives nothing.
+    pub fn item_under(track: &'a Track, parent: ObjectId) -> Self {
+        Self::Item(track, Cow::Owned(parent))
+    }
 }
 
 pub fn children(children: &[Child<'_>], to: To<'_>) -> String {
@@ -393,7 +407,7 @@ mod tests {
     fn items(tracks: &[Track], parent: &ObjectId, to: To<'_>) -> String {
         let items: Vec<Child<'_>> = tracks
             .iter()
-            .map(|track| Child::Item(track, parent))
+            .map(|track| Child::item(track, parent))
             .collect();
         children(&items, to)
     }

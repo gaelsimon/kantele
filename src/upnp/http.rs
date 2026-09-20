@@ -6,7 +6,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::{ConnectInfo, Path, Request, State};
-use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderName, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
 use tokio_stream::StreamExt;
@@ -177,6 +177,18 @@ fn xml(body: String) -> Response {
     ([(header::CONTENT_TYPE, XML)], body).into_response()
 }
 
+/// UDA 1.0 requires `EXT` on the answer to every control request, and a strict stack may say so.
+fn soap_xml(body: String) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, XML),
+            (HeaderName::from_static("ext"), ""),
+        ],
+        body,
+    )
+        .into_response()
+}
+
 async fn device_description(State(device): State<Shared>) -> Response {
     xml(description::device(&device.identity))
 }
@@ -226,7 +238,7 @@ async fn content_directory_control(
                             total = response.total_matches,
                             "browse"
                         );
-                        xml(contentdirectory::browse_envelope(&response))
+                        soap_xml(contentdirectory::browse_envelope(&response))
                     }
                     Err(fault) => fault_response(&fault),
                 }
@@ -248,26 +260,26 @@ async fn content_directory_control(
                             total = response.total_matches,
                             "search"
                         );
-                        xml(contentdirectory::search_envelope(&response))
+                        soap_xml(contentdirectory::search_envelope(&response))
                     }
                     Err(fault) => fault_response(&fault),
                 }
             }
             Err(fault) => fault_response(&fault),
         },
-        "GetSearchCapabilities" => xml(contentdirectory::simple_envelope(
+        "GetSearchCapabilities" => soap_xml(contentdirectory::simple_envelope(
             "GetSearchCapabilities",
             "ContentDirectory",
             "SearchCaps",
             &search::capabilities(),
         )),
-        "GetSortCapabilities" => xml(contentdirectory::simple_envelope(
+        "GetSortCapabilities" => soap_xml(contentdirectory::simple_envelope(
             "GetSortCapabilities",
             "ContentDirectory",
             "SortCaps",
             "",
         )),
-        "GetSystemUpdateID" => xml(contentdirectory::simple_envelope(
+        "GetSystemUpdateID" => soap_xml(contentdirectory::simple_envelope(
             "GetSystemUpdateID",
             "ContentDirectory",
             "Id",
@@ -290,19 +302,19 @@ async fn connection_manager_control(headers: HeaderMap, body: String) -> Respons
     match soap_action(&headers).unwrap_or_default().as_str() {
         "GetProtocolInfo" => {
             let source = crate::upnp::PROTOCOL_INFO.join(",");
-            xml(format!(
+            soap_xml(format!(
                 r#"<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:GetProtocolInfoResponse xmlns:u="urn:schemas-upnp-org:service:ConnectionManager:1"><Source>{source}</Source><Sink></Sink></u:GetProtocolInfoResponse></s:Body></s:Envelope>"#
             ))
         }
-        "GetCurrentConnectionIDs" => xml(contentdirectory::simple_envelope(
+        "GetCurrentConnectionIDs" => soap_xml(contentdirectory::simple_envelope(
             "GetCurrentConnectionIDs",
             "ConnectionManager",
             "ConnectionIDs",
             &DEFAULT_CONNECTION.to_string(),
         )),
         "GetCurrentConnectionInfo" => match current_connection_info(&body) {
-            Ok(response) => xml(response),
+            Ok(response) => soap_xml(response),
             Err(fault) => fault_response(&fault),
         },
         other => {
@@ -612,8 +624,7 @@ async fn art(State(device): State<Shared>, Path(id): Path<String>) -> Response {
 fn fault_response(fault: &contentdirectory::Fault) -> Response {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        [(header::CONTENT_TYPE, XML)],
-        contentdirectory::fault_envelope(fault),
+        soap_xml(contentdirectory::fault_envelope(fault)),
     )
         .into_response()
 }

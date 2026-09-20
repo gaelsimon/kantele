@@ -245,6 +245,30 @@ async fn a_pass_underway_is_answered_without_counting_the_whole_library() {
 }
 
 #[tokio::test]
+async fn a_background_task_that_stopped_is_named_on_the_page() {
+    let tree = a_library("stopped-task");
+    let server = serving(&tree, None);
+
+    assert!(
+        json(&server, "/api/status").await["stopped"].is_null(),
+        "nothing has stopped, so nothing is said about it"
+    );
+
+    server.control.tasks.spawn("library sweeps", async {
+        panic!("the pass loop fell over")
+    });
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+
+    assert_eq!(
+        json(&server, "/api/status").await["stopped"][0],
+        "library sweeps",
+        "the sweeps stopping is otherwise visible only in what /api/rescan answers"
+    );
+}
+
+#[tokio::test]
 async fn the_status_says_whether_the_library_is_answered_for_and_since_when() {
     let tree = a_library("failing");
     let server = serving(&tree, None);

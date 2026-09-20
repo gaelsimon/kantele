@@ -13,26 +13,25 @@ pub struct Remembered {
     pub playlists: HashMap<PathBuf, Fingerprint>,
 }
 
-/// A missing file counts as changed only when every folder could be read.
+/// A missing file counts as changed only where the folder it sat in could be read.
 pub fn differences(
     roots: impl Into<Roots>,
     walked: &Walked,
     remembered: &Remembered,
 ) -> Vec<PathBuf> {
     let roots = &roots.into();
-    let complete = walked.complete();
-    let mut changed = differing(roots, walked.files.iter(), &remembered.files, complete);
+    let mut changed = differing(roots, walked.files.iter(), &remembered.files, walked);
     changed.extend(differing(
         roots,
         walked.covers.values(),
         &remembered.covers,
-        complete,
+        walked,
     ));
     changed.extend(differing(
         roots,
         walked.playlists.iter(),
         &remembered.playlists,
-        complete,
+        walked,
     ));
     changed.sort();
     changed.dedup();
@@ -43,10 +42,10 @@ fn differing<'a>(
     roots: &Roots,
     found: impl Iterator<Item = &'a Found>,
     remembered: &HashMap<PathBuf, Fingerprint>,
-    complete: bool,
+    walked: &Walked,
 ) -> Vec<PathBuf> {
     let mut changed = Vec::new();
-    let mut walked: HashSet<PathBuf> = HashSet::new();
+    let mut found_here: HashSet<PathBuf> = HashSet::new();
     for item in found {
         let Some(relative) = roots.relative(&item.path) else {
             continue;
@@ -57,15 +56,14 @@ fn differing<'a>(
         {
             changed.push(item.path.clone());
         }
-        walked.insert(relative);
+        found_here.insert(relative);
     }
-    if complete {
-        for relative in remembered.keys() {
-            if !walked.contains(relative)
-                && let Some(path) = roots.absolute(relative)
-            {
-                changed.push(path);
-            }
+    for relative in remembered.keys() {
+        if !found_here.contains(relative)
+            && walked.reached(relative)
+            && let Some(path) = roots.absolute(relative)
+        {
+            changed.push(path);
         }
     }
     changed
@@ -140,15 +138,30 @@ mod tests {
     }
 
     #[test]
-    fn a_walk_that_could_not_read_every_folder_infers_no_deletion() {
+    fn a_folder_that_would_not_open_is_a_hole_only_under_itself() {
         let tree = Walked {
-            unreadable: 1,
+            unreadable: vec!["c".to_owned()],
+            ..walked(vec![found("a/1.flac", 10)])
+        };
+        let known = remembered(&[("a/1.flac", 10), ("b/1.flac", 7), ("c/1.flac", 7)]);
+        assert_eq!(
+            differences(Path::new(ROOT), &tree, &known),
+            vec![PathBuf::from("/music/b/1.flac")],
+            "the rows under the folder that would not open say nothing, and the rest of the tree \
+             is still walked"
+        );
+    }
+
+    #[test]
+    fn a_walk_that_stopped_infers_no_deletion_anywhere() {
+        let tree = Walked {
+            stopped: true,
             ..walked(vec![found("a/1.flac", 10)])
         };
         let known = remembered(&[("a/1.flac", 10), ("c/1.flac", 7)]);
         assert!(
             differences(Path::new(ROOT), &tree, &known).is_empty(),
-            "a folder that would not open is a hole, and its rows are not gone"
+            "a pass that stopped part way has not been anywhere it did not reach"
         );
     }
 

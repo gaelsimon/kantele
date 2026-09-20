@@ -42,6 +42,8 @@ pub struct Control {
     pub passes: Arc<Passes>,
     /// The indexing settings in force, which a write replaces and the pass loop reads.
     pub indexing: Arc<Live>,
+    /// The background tasks, and which of them are no longer running.
+    pub tasks: crate::tasks::Watched,
     operation: ArcSwap<Operation>,
     started: Instant,
     /// Held across a whole settings write, so two saves at once land one after the other.
@@ -54,6 +56,7 @@ impl Control {
             device,
             passes,
             indexing: Arc::new(Live::default()),
+            tasks: crate::tasks::Watched::default(),
             operation: ArcSwap::from_pointee(Operation::default()),
             started: Instant::now(),
             settings_writes: tokio::sync::Mutex::new(()),

@@ -135,11 +135,14 @@ impl Config {
     }
 
     pub fn with_env(mut self) -> Self {
-        if let Some(port) = std::env::var("KANTELE_PORT")
-            .ok()
-            .and_then(|value| value.parse().ok())
-        {
-            self.http_port = Some(port);
+        if let Ok(named) = std::env::var("KANTELE_PORT") {
+            match env_port() {
+                Some(port) => self.http_port = Some(port),
+                None => tracing::warn!(
+                    value = %named,
+                    "KANTELE_PORT is not a port number: the port it names is not used"
+                ),
+            }
         }
         if let Ok(name) = std::env::var("KANTELE_NAME") {
             self.friendly_name = Some(name);
@@ -307,6 +310,11 @@ pub fn store_path(state_dir: &Path) -> PathBuf {
     state_dir.join("index.sqlite")
 }
 
+/// The port `KANTELE_PORT` names, and nothing where it names something that is not a port.
+fn env_port() -> Option<u16> {
+    std::env::var("KANTELE_PORT").ok()?.trim().parse().ok()
+}
+
 fn env_path(name: &str) -> Option<PathBuf> {
     let value = std::env::var_os(name)?;
     (!value.is_empty()).then(|| PathBuf::from(value))
@@ -435,7 +443,11 @@ impl Resolved {
             "friendly_name" => {
                 set("KANTELE_NAME").or_else(|| file(|read| read.friendly_name.is_some()))
             }
-            "http_port" => set("KANTELE_PORT").or_else(|| file(|read| read.http_port.is_some())),
+            "http_port" => env_port()
+                .map(|_| Source::Environment {
+                    variable: "KANTELE_PORT",
+                })
+                .or_else(|| file(|read| read.http_port.is_some())),
             "state_dir" => {
                 set_path("KANTELE_STATE").or_else(|| file(|read| read.state_dir.is_some()))
             }

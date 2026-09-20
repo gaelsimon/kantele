@@ -89,7 +89,7 @@ fn browse(
 fn one_item(track: &Track) -> String {
     let root = ObjectId::root();
     didl::children(
-        &[didl::Child::Item(track, &root)],
+        &[didl::Child::item(track, &root)],
         didl::To::plain(BASE_URL),
     )
 }
@@ -384,7 +384,7 @@ fn a_corrupt_tag_cannot_produce_malformed_xml() {
         &library
             .tracks()
             .iter()
-            .map(|track| didl::Child::Item(track, &root))
+            .map(|track| didl::Child::item(track, &root))
             .collect::<Vec<_>>(),
         didl::To::plain(BASE_URL),
     );

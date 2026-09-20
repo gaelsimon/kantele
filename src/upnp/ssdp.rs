@@ -25,6 +25,11 @@ const REJOIN: Duration = Duration::from_secs(120);
 
 const SALVO: Duration = Duration::from_secs(1);
 
+/// How often the periodic alive goes out. A third of `MAX_AGE` rather than a half, and the jitter
+/// taken off rather than added: at a half plus jitter, one lost datagram leaves a renderer's cache
+/// expired for up to 450 s while the server runs and answers nothing it has not been asked.
+const REFRESH: Duration = Duration::from_secs(MAX_AGE.as_secs() / 3);
+
 /// Receive failures in a row before the socket is taken again rather than read on for ever.
 const DEAF: usize = 5;
 
@@ -136,7 +141,11 @@ impl Advertiser {
             if let Ok(mut held) = serving.lock() {
                 held.clone_from(&known);
             }
-            if refreshed.elapsed() >= self.spread(MAX_AGE / 2, 3) {
+            if refreshed.elapsed() >= self.sooner(REFRESH, 3) {
+                // Twice, as on a new interface: one datagram is the whole announcement, and a
+                // multicast datagram is not retransmitted by anything.
+                self.alive(&known).await;
+                tokio::time::sleep(SALVO).await;
                 self.alive(&known).await;
                 refreshed = tokio::time::Instant::now();
             }
@@ -171,9 +180,18 @@ impl Advertiser {
     }
 
     fn spread(&self, base: Duration, salvo: u32) -> Duration {
+        base + self.jitter(base, salvo)
+    }
+
+    /// The same spread taken off instead of added, for a wait whose whole point is a ceiling.
+    fn sooner(&self, base: Duration, salvo: u32) -> Duration {
+        base - self.jitter(base, salvo)
+    }
+
+    fn jitter(&self, base: Duration, salvo: u32) -> Duration {
         let widest = base.as_millis() as u64 / 4;
         let of = u64::from(self.boot_id.rotate_right(salvo * 8) % 251);
-        base + Duration::from_millis(widest * of / 250)
+        Duration::from_millis(widest * of / 250)
     }
 
     fn notification(&self, nts: &str, nt: &str, usn: &str, location: Option<&str>) -> String {
@@ -506,6 +524,24 @@ mod tests {
             assert!(
                 waited <= base + base / 4,
                 "and never late enough to matter: {waited:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn one_lost_alive_still_leaves_the_next_one_inside_the_cache_it_refreshes() {
+        for boot_id in [0, 1, 250, 251, 7919, 1_700_000_000, u32::MAX] {
+            let advertiser = Advertiser::new("uuid:one", 8200, Peers::default(), boot_id);
+            let every = advertiser.sooner(REFRESH, 3);
+            assert!(
+                every <= REFRESH,
+                "boot {boot_id}: the jitter comes off a ceiling, it is not added to it: {every:?}"
+            );
+            assert!(
+                every * 2 < MAX_AGE,
+                "boot {boot_id}: two intervals is {:?} against a cache of {MAX_AGE:?}, so a \
+                 renderer that misses one alive drops this server",
+                every * 2
             );
         }
     }

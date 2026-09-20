@@ -207,15 +207,31 @@ pub struct Walked {
     pub covers: HashMap<PathBuf, Found>,
     /// Sorted by path.
     pub playlists: Vec<Found>,
-    pub unreadable: usize,
+    /// The folders the walk could not list, relative and folded, so the rows under one of them
+    /// are known to say nothing.
+    pub unreadable: Vec<String>,
     pub refusals: Refusals,
     pub stopped: bool,
 }
 
 impl Walked {
     pub fn complete(&self) -> bool {
-        self.unreadable == 0 && !self.stopped
+        self.unreadable.is_empty() && !self.stopped
     }
+
+    /// Whether the walk read the folder this file sits in. One folder it could not list says
+    /// nothing about the files under it, and says nothing at all about the rest of the tree.
+    pub fn reached(&self, relative: &Path) -> bool {
+        if self.stopped {
+            return false;
+        }
+        let path = crate::index::fold::path(relative);
+        !self.unreadable.iter().any(|folder| under(&path, folder))
+    }
+}
+
+fn under(path: &str, folder: &str) -> bool {
+    path.len() > folder.len() && path.starts_with(folder) && path.as_bytes()[folder.len()] == b'/'
 }
 
 const SKIPPED_FOLDERS: &[&str] = &[
@@ -494,12 +510,11 @@ pub fn walk_within(
                 Some(error) => return Err(error),
                 None => {
                     if !scope.is_root(roots, &folder) {
-                        walk.walked.unreadable += 1;
-                        walk.walked.refusals.refuse(
-                            Cause::UnreadableFolder,
-                            relative_to(roots, &folder),
-                            None,
-                        );
+                        let relative = relative_to(roots, &folder);
+                        walk.walked.unreadable.push(relative.clone());
+                        walk.walked
+                            .refusals
+                            .refuse(Cause::UnreadableFolder, relative, None);
                     }
                     continue;
                 }
@@ -543,10 +558,11 @@ impl Walk {
                 Ok(entry) => entry,
                 // Half a listing is half a library, so the pass is incomplete rather than short.
                 Err(error) => {
-                    self.walked.unreadable += 1;
+                    let relative = relative_to(roots, &folder);
+                    self.walked.unreadable.push(relative.clone());
                     self.walked.refusals.refuse(
                         Cause::UnreadableFolder,
-                        relative_to(roots, &folder),
+                        relative,
                         Some(error.to_string()),
                     );
                     continue;
@@ -1123,8 +1139,8 @@ mod tests {
             !walked.complete(),
             "an unfinished pass is not an answer about what it covered"
         );
-        assert_eq!(
-            walked.unreadable, 0,
+        assert!(
+            walked.unreadable.is_empty(),
             "and it is not a folder that would not open, which is a different thing"
         );
         assert!(walked.refusals.total() == 0, "nothing was refused");

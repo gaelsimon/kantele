@@ -348,6 +348,28 @@ async fn a_browse_of_the_root_answers_containers_over_soap() {
 }
 
 #[tokio::test]
+async fn every_control_answer_carries_ext() {
+    let tree = library_tree("wire-ext");
+    let server = serving(&tree);
+    let answers = [
+        browse("0", "BrowseDirectChildren", 0, 10),
+        soap("GetSystemUpdateID", ""),
+        soap("GetProtocolInfo", ""),
+        // A fault is an answer to a control request too.
+        soap("CreateObject", ""),
+    ];
+    for request in answers {
+        let uri = request.uri().to_string();
+        let response = ask(&server, request).await;
+        assert_eq!(
+            response.headers().get("ext").map(|value| value.as_bytes()),
+            Some(b"".as_slice()),
+            "{uri}: the one header UDA 1.0 makes mandatory on a control answer"
+        );
+    }
+}
+
+#[tokio::test]
 async fn an_unknown_object_is_a_fault_with_a_code_a_client_can_read() {
     let tree = library_tree("wire-fault");
     let server = serving(&tree);
@@ -737,13 +759,28 @@ async fn the_resource_url_follows_the_host_the_client_used() {
     );
 }
 
-/// The identifiers a listing offers, with the title each one carries.
-fn listing(answer: &str) -> Vec<(String, String)> {
-    let didl = answer
+/// The DIDL a SOAP answer carries, which travels escaped inside the envelope.
+fn didl_in(answer: &str) -> String {
+    answer
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
-        .replace("&amp;", "&");
+        .replace("&amp;", "&")
+}
+
+/// The container a listing gives an object as its parent.
+fn parent_in(answer: &str, id: &str) -> String {
+    let didl = didl_in(answer);
+    let (_, after) = didl
+        .split_once(&format!("id=\"{id}\""))
+        .expect("the object is in the listing");
+    let (_, rest) = after.split_once("parentID=\"").expect("a parent");
+    rest[..rest.find('"').expect("a closing quote")].to_owned()
+}
+
+/// The identifiers a listing offers, with the title each one carries.
+fn listing(answer: &str) -> Vec<(String, String)> {
+    let didl = didl_in(answer);
     let mut found = Vec::new();
     for element in didl.split('<').skip(1) {
         let Some(rest) = element
@@ -876,6 +913,32 @@ async fn the_folder_view_can_be_walked_from_the_root_to_a_track() {
     assert!(
         tracks.iter().any(|(id, _)| id.starts_with("tr-")),
         "the folder view reaches the music: {tracks:?}"
+    );
+}
+
+#[tokio::test]
+async fn in_the_folder_view_a_track_belongs_to_the_folder_it_sits_in() {
+    let server = serving_tagged();
+
+    let root = children_of(&server, "0").await;
+    let (folders, _) = root
+        .iter()
+        .find(|(_, title)| title == "[folder view]")
+        .expect("the folder view is offered")
+        .clone();
+    let (latin, _) = children_of(&server, &folders).await[0].clone();
+    let (sierra, _) = children_of(&server, &latin).await[0].clone();
+    let (leaf, _) = children_of(&server, &sierra).await[0].clone();
+
+    let answer = body_of(ask(&server, browse(&leaf, "BrowseDirectChildren", 0, 0)).await).await;
+    let (track, _) = listing(&answer)
+        .into_iter()
+        .find(|(id, _)| id.starts_with("tr-"))
+        .expect("the leaf folder holds the music");
+    assert_eq!(
+        parent_in(&answer, &track),
+        leaf,
+        "going up from a track leads back to the folder it was listed in, not to every title"
     );
 }
 

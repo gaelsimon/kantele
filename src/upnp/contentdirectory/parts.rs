@@ -56,7 +56,7 @@ pub(super) fn children<'a>(library: &'a Library, part: &Part<'a>) -> Vec<didl::C
             run.tracks
                 .iter()
                 .filter_map(|track| library.tracks().get(*track))
-                .map(|track| didl::Child::Item(track, &run.id))
+                .map(|track| didl::Child::item(track, &run.id))
                 .collect()
         }
     }
@@ -115,7 +115,7 @@ fn listed<'a>(
             Shown::Track(at) => library
                 .tracks()
                 .get(at)
-                .map(|track| didl::Child::Item(track, parent)),
+                .map(|track| didl::Child::item(track, parent)),
         })
         .collect()
 }

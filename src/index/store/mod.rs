@@ -76,6 +76,10 @@ CREATE TABLE IF NOT EXISTS claims (
 
 pub struct Store {
     connection: Connection,
+    /// The cache the start built to answer with what is remembered. The first pass takes it
+    /// rather than reading and parsing every row a second time.
+    held: Option<Cache>,
+    built: std::cell::Cell<usize>,
 }
 
 impl Store {
@@ -169,7 +173,11 @@ impl Store {
                 "ALTER TABLE {table} ADD COLUMN reader INTEGER NOT NULL DEFAULT {READER_VERSION};"
             ));
         }
-        let mut store = Self { connection };
+        let mut store = Self {
+            connection,
+            held: None,
+            built: std::cell::Cell::new(0),
+        };
 
         store.drop_stale(
             "schema_version",
@@ -276,6 +284,12 @@ impl Store {
     }
 
     /// More than half of the sample must be there: two libraries can share one path.
+    /// Whether the rows describe the folders this server is serving. Asked before a library is
+    /// built from them: a cache is rows, and rows alone do not know whose library they are.
+    pub fn describes_roots(&self, roots: impl Into<Roots>) -> Result<bool> {
+        self.describes(&roots.into())
+    }
+
     fn describes(&self, roots: &Roots) -> Result<bool> {
         if self.holds(roots)? {
             return Ok(true);
@@ -304,7 +318,24 @@ impl Store {
         Ok(rows.filter_map(Result::ok).map(PathBuf::from).collect())
     }
 
+    /// Keeps the cache the start already built, for the first pass to take.
+    pub fn hold(&mut self, cache: Cache) {
+        self.held = Some(cache);
+    }
+
+    /// The held cache, once, and only where it answers for the folders this pass covers.
+    pub fn held_cache(&mut self, roots: &Roots) -> Option<Cache> {
+        self.held.take().filter(|held| held.is_for(roots))
+    }
+
+    /// How many times every row has been read and parsed. A start that answers from the store
+    /// and then walks reads them once.
+    pub fn caches_built(&self) -> usize {
+        self.built.get()
+    }
+
     pub fn cache(&self, roots: impl Into<Roots>) -> Result<Cache> {
+        self.built.set(self.built.get() + 1);
         let mut cache = Cache {
             roots: roots.into(),
             ..Cache::default()
@@ -355,137 +386,6 @@ impl Store {
         rows.map(|row| row.map_err(anyhow::Error::from)).collect()
     }
 
-    pub fn remembered(&self, roots: impl Into<Roots>) -> Result<Vec<Scanned>> {
-        let roots = &roots.into();
-        if !self.describes(roots)? {
-            tracing::warn!(
-                folder = %roots.describe(),
-                "the store's rows name another library, so this start walks before it answers"
-            );
-            return Ok(Vec::new());
-        }
-        let mut statement = self
-            .connection
-            .prepare("SELECT relative, size, payload FROM files")?;
-        let rows = statement.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })?;
-        let mut files = Vec::new();
-        for row in rows {
-            let Ok((relative, size, text)) = row else {
-                continue;
-            };
-            let Ok(payload) = serde_json::from_str::<Payload>(&text) else {
-                continue;
-            };
-            let relative = PathBuf::from(relative);
-            let Some(path) = roots.absolute(&relative) else {
-                continue;
-            };
-            files.push(Scanned {
-                path,
-                artwork: payload
-                    .artwork
-                    .as_ref()
-                    .and_then(|image| image.artwork(roots, &relative)),
-                relative,
-                tags: payload.tags,
-                properties: payload.properties,
-                size: size as u64,
-            });
-        }
-        files.sort_by(|left, right| left.path.cmp(&right.path));
-        Ok(files)
-    }
-
-    pub fn remembered_playlists(&self, roots: impl Into<Roots>) -> Result<Vec<playlist::Scanned>> {
-        if !self.describes(&roots.into())? {
-            return Ok(Vec::new());
-        }
-        let mut statement = self
-            .connection
-            .prepare("SELECT relative, size, mtime, payload FROM playlists")?;
-        let rows = statement.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        })?;
-        let mut playlists = Vec::new();
-        for row in rows {
-            let Ok((relative, size, mtime, text)) = row else {
-                continue;
-            };
-            let Ok(contents) = serde_json::from_str(&text) else {
-                continue;
-            };
-            playlists.push(playlist::Scanned {
-                relative: PathBuf::from(relative),
-                fingerprint: Fingerprint {
-                    size: size as u64,
-                    mtime,
-                },
-                contents,
-            });
-        }
-        playlists.sort_by(|left, right| left.relative.cmp(&right.relative));
-        Ok(playlists)
-    }
-
-    fn rows<T: serde::de::DeserializeOwned>(
-        &self,
-        table: &str,
-    ) -> Result<(HashMap<PathBuf, Row<T>>, usize)> {
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT relative, size, mtime, payload, reader FROM {table}"
-        ))?;
-        let rows = statement.query_map([], |row| {
-            let relative: String = row.get(0)?;
-            let size: i64 = row.get(1)?;
-            let mtime: i64 = row.get(2)?;
-            let payload: String = row.get(3)?;
-            let reader: i64 = row.get(4)?;
-            Ok((
-                PathBuf::from(relative),
-                Fingerprint {
-                    size: size as u64,
-                    mtime,
-                },
-                payload,
-                reader,
-            ))
-        })?;
-        let mut kept = HashMap::new();
-        let mut unreadable = 0usize;
-        for row in rows {
-            let Ok((relative, fingerprint, text, reader)) = row else {
-                unreadable += 1;
-                continue;
-            };
-            match serde_json::from_str::<T>(&text) {
-                Ok(payload) => {
-                    kept.insert(
-                        relative,
-                        Row {
-                            fingerprint,
-                            digest: digest(&text),
-                            payload,
-                            reader,
-                        },
-                    );
-                }
-                Err(_) => unreadable += 1,
-            }
-        }
-        Ok((kept, unreadable))
-    }
-
     pub fn save(
         &mut self,
         roots: impl Into<Roots>,
@@ -511,7 +411,7 @@ impl Store {
                 refused: write_refused(&transaction, refused, cache, &mut saved)?,
             };
             if prune {
-                forget_stale(&transaction, cache, scope, &written, &mut saved)?;
+                forget_stale(&transaction, cache, scope, walked, &written, &mut saved)?;
             }
         }
         transaction.commit()?;
@@ -536,14 +436,20 @@ impl Store {
             );
             return Ok(false);
         }
-        if !walked.complete() {
-            tracing::error!(
-                folders = walked.unreadable,
+        if walked.stopped {
+            tracing::info!(
                 rows = cache.len(),
-                "the walk could not read every folder: keeping every cached row rather than \
-                 forgetting the ones it did not reach"
+                "the walk stopped part way: keeping every cached row"
             );
             return Ok(false);
+        }
+        if !walked.unreadable.is_empty() {
+            tracing::error!(
+                folders = ?walked.unreadable,
+                rows = cache.len(),
+                "the walk could not read these folders: the rows under them are kept, the rest \
+                 of the tree is pruned as usual"
+            );
         }
         if scope.is_whole_tree() && files.is_empty() && !cache.is_empty() {
             tracing::error!(
@@ -596,6 +502,54 @@ impl Store {
     }
 
     /// Which folder was awarded each album key, as the last pass left it.
+    fn rows<T: serde::de::DeserializeOwned>(
+        &self,
+        table: &str,
+    ) -> Result<(HashMap<PathBuf, Row<T>>, usize)> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT relative, size, mtime, payload, reader FROM {table}"
+        ))?;
+        let rows = statement.query_map([], |row| {
+            let relative: String = row.get(0)?;
+            let size: i64 = row.get(1)?;
+            let mtime: i64 = row.get(2)?;
+            let payload: String = row.get(3)?;
+            let reader: i64 = row.get(4)?;
+            Ok((
+                PathBuf::from(relative),
+                Fingerprint {
+                    size: size as u64,
+                    mtime,
+                },
+                payload,
+                reader,
+            ))
+        })?;
+        let mut kept = HashMap::new();
+        let mut unreadable = 0usize;
+        for row in rows {
+            let Ok((relative, fingerprint, text, reader)) = row else {
+                unreadable += 1;
+                continue;
+            };
+            match serde_json::from_str::<T>(&text) {
+                Ok(payload) => {
+                    kept.insert(
+                        relative,
+                        Row {
+                            fingerprint,
+                            digest: digest(&text),
+                            payload,
+                            reader,
+                        },
+                    );
+                }
+                Err(_) => unreadable += 1,
+            }
+        }
+        Ok((kept, unreadable))
+    }
+
     pub fn claims(&self) -> Result<crate::index::identity::Claims> {
         let mut statement = self.connection.prepare("SELECT key, scope FROM claims")?;
         let rows = statement.query_map([], |row| {
@@ -928,6 +882,7 @@ fn forget_stale(
     transaction: &Transaction<'_>,
     cache: &Cache,
     scope: &Scope,
+    walked: &Walked,
     written: &Covered<'_>,
     saved: &mut Saved,
 ) -> Result<()> {
@@ -942,7 +897,7 @@ fn forget_stale(
         }
         Ok(forgotten)
     };
-    let inside = |path: &&PathBuf| scope.covers_file(path);
+    let inside = |path: &&PathBuf| scope.covers_file(path) && walked.reached(path);
     saved.forgotten += stale(
         "files",
         cache
@@ -1053,7 +1008,7 @@ mod tests {
                 })
                 .collect(),
             covers: HashMap::new(),
-            unreadable: 0,
+            unreadable: Vec::new(),
             refusals: Default::default(),
         }
     }
@@ -1204,15 +1159,12 @@ mod tests {
         }
 
         let opened = store.open();
+        let cache = opened.cache(Path::new(ROOT)).expect("a cache");
         assert_eq!(
-            opened
-                .remembered(Path::new(ROOT))
-                .expect("what the store holds")
-                .len(),
+            cache.remembered().len(),
             1,
             "an owner updating the package keeps the library the last build wrote"
         );
-        let cache = opened.cache(Path::new(ROOT)).expect("a cache");
         assert!(
             cache
                 .file(Path::new("a/1.flac"), fingerprint(27, 1_700_000_000))
@@ -1233,16 +1185,13 @@ mod tests {
             .execute("UPDATE files SET reader = 0", [])
             .expect("a row from an older reader");
 
+        let cache = store.cache(Path::new(ROOT)).expect("a cache");
         assert_eq!(
-            store
-                .remembered(Path::new(ROOT))
-                .expect("what the store holds")
-                .len(),
+            cache.remembered().len(),
             1,
             "the library answers from the first second, where emptying the table would have \
              cost a whole cold walk before anything was served"
         );
-        let cache = store.cache(Path::new(ROOT)).expect("a cache");
         assert!(
             cache.file(Path::new("a/1.flac"), print).is_none(),
             "and the file is read again, since this row cannot carry what this reader knows"
@@ -1485,24 +1434,31 @@ mod tests {
     }
 
     #[test]
-    fn a_walk_that_could_not_read_every_folder_forgets_nothing() {
+    fn a_folder_that_would_not_open_keeps_its_own_rows_and_no_others() {
         let mut store = Store::in_memory().expect("a store");
         let print = fingerprint(27, 1_700_000_000);
-        let both = [
+        let all = [
             scanned("a/1.flac", "Juana Peña", None),
             scanned("b/2.flac", "Dundunbanza", None),
+            scanned("c/3.flac", "Marcus Garvey", None),
         ];
-        saved(&mut store, &both, print);
+        saved(&mut store, &all, print);
 
-        let half = [scanned("a/1.flac", "Juana Peña", None)];
-        let mut walk = walked(&half, print);
-        walk.unreadable = 1;
+        let read = [scanned("a/1.flac", "Juana Peña", None)];
+        let mut walk = walked(&read, print);
+        walk.unreadable = vec!["b".to_owned()];
         let cache = store.cache(Path::new(ROOT)).expect("a cache");
         let written = store
-            .save(Path::new(ROOT), Reading::of(&walk, &half), &cache, &whole())
+            .save(Path::new(ROOT), Reading::of(&walk, &read), &cache, &whole())
             .expect("saving");
-        assert_eq!(written.forgotten, 0);
-        assert_eq!(store.cache(Path::new(ROOT)).expect("a cache").len(), 2);
+
+        assert_eq!(
+            written.forgotten, 1,
+            "one badly permissioned folder is not the whole library going unforgettable"
+        );
+        let kept = store.cache(Path::new(ROOT)).expect("a cache");
+        assert!(kept.file(Path::new("b/2.flac"), print).is_some());
+        assert!(kept.file(Path::new("c/3.flac"), print).is_none());
     }
 
     #[test]

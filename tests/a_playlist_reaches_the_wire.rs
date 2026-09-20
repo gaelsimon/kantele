@@ -229,6 +229,40 @@ fn a_start_from_the_store_serves_the_playlists_it_remembers() {
 }
 
 #[test]
+fn a_start_reads_the_rows_once_and_the_first_pass_uses_what_it_read() {
+    let tree = crate_of_selections("playlist-one-read");
+    // Outside the library, and file-backed, so the store can be closed and opened again.
+    let path = std::env::temp_dir().join(format!("kantele-one-read-{}.sqlite", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+
+    let mut store = Some(Store::open_or_replace(&path).expect("a store"));
+    service::index(&Indexing::of(&tree.0), &mut store, Pass::Whole).expect("a pass to fill it");
+    drop(store);
+
+    // What the NAS does at every boot: open the store, answer from it, then walk.
+    let mut store = Some(Store::open_or_replace(&path).expect("the store again"));
+    assert_eq!(
+        store.as_ref().expect("a store").caches_built(),
+        0,
+        "nothing has been read yet"
+    );
+    service::remembered(&Indexing::of(&tree.0), &mut store).expect("rows to serve");
+    assert_eq!(
+        store.as_ref().expect("a store").caches_built(),
+        1,
+        "the start reads every row once"
+    );
+
+    service::index(&Indexing::of(&tree.0), &mut store, Pass::Whole).expect("the first pass");
+    assert_eq!(
+        store.as_ref().expect("a store").caches_built(),
+        1,
+        "and the first pass takes what the start parsed rather than parsing every payload again"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn a_playlist_that_goes_away_is_forgotten() {
     let tree = crate_of_selections("playlist-forgotten");
     let mut store = Some(Store::in_memory().expect("a store"));

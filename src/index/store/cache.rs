@@ -106,6 +106,11 @@ impl Cache {
         }
     }
 
+    /// Whether this cache was built for the folders a pass is about to cover.
+    pub fn is_for(&self, roots: &Roots) -> bool {
+        self.roots == *roots
+    }
+
     pub fn remembered(&self) -> Vec<Scanned> {
         self.remembered_outside(&Scope::default())
     }
@@ -146,6 +151,10 @@ impl Cache {
         }
         let row = self.playlists.get(relative)?;
         row.answers_for(fingerprint).then(|| row.payload.clone())
+    }
+
+    pub fn remembered_playlists(&self) -> Vec<playlist::Scanned> {
+        self.remembered_playlists_outside(&Scope::default())
     }
 
     pub fn remembered_playlists_outside(&self, scope: &Scope) -> Vec<playlist::Scanned> {

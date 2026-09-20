@@ -109,6 +109,14 @@ fn configure(arguments: &Arguments, from_env: Option<PathBuf>) -> Result<Resolve
     Resolved::load(path.as_deref(), arguments.content_dir.clone())
 }
 
+/// Under a service manager the log is a file, and colour in it is escape codes in the way of
+/// every reader.
+fn colour_wanted() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
+        && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let arguments = Arguments::parse(&std::env::args().skip(1).collect::<Vec<_>>())?;
@@ -129,6 +137,7 @@ async fn main() -> Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "kantele=info".into()),
         )
+        .with_ansi(colour_wanted())
         .init();
 
     let resolved = configure(&arguments, env_config_path())?;
@@ -366,17 +375,21 @@ async fn serve(
 
     let underway = indexing.underway.clone();
     server.control.indexing.replace(indexing);
-    tokio::spawn(service::keep_fresh(
-        server.device.clone(),
-        server.passes.clone(),
-        server.control.indexing.clone(),
-        store,
-        started.verify,
-        started.reread,
-    ));
+    let tasks = server.control.tasks.clone();
+    tasks.spawn(
+        "library sweeps",
+        service::keep_fresh(
+            server.device.clone(),
+            server.passes.clone(),
+            server.control.indexing.clone(),
+            store,
+            started.verify,
+            started.reread,
+        ),
+    );
 
     let subscriptions = server.device.subscriptions.clone();
-    tokio::spawn(async move {
+    tasks.spawn("subscription expiry", async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             subscriptions.expire();
@@ -403,7 +416,7 @@ async fn serve(
 
     let (stop_ssdp, ssdp_stopped) = tokio::sync::oneshot::channel();
     let advertiser = ssdp::Advertiser::new(udn, bound.port(), server.device.peers.clone(), boot_id);
-    let discovery = tokio::spawn(async move {
+    let discovery = tasks.spawn("ssdp", async move {
         if let Err(error) = advertiser.run(ssdp_stopped).await {
             tracing::error!(%error, "ssdp stopped");
         }
@@ -417,6 +430,7 @@ async fn serve(
     .with_graceful_shutdown(async move {
         let signal = asked_to_stop().await;
         // Before anything else.
+        tasks.leaving();
         underway.stopping.stop();
         let _ = stop_ssdp.send(());
         let _ = leaving.send(());
