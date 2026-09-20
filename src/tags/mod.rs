@@ -145,21 +145,60 @@ pub struct TagError {
     pub source: lofty::error::FileParseError,
 }
 
-/// Reads one file's tags and audio properties.
-pub fn read(path: &Path) -> Result<(FileTags, AudioProperties), TagError> {
-    let (tags, properties) = read_as_written(path)?;
-    Ok((tags.tidied(), properties))
+/// Whether the first embedded picture is wanted. Reading it costs nothing once the file is
+/// parsed; copying it does, and a folder image that has already won does not need it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Cover {
+    Wanted,
+    Skipped,
 }
 
-fn read_as_written(path: &Path) -> Result<(FileTags, AudioProperties), TagError> {
+/// Reads one file's tags and audio properties.
+pub fn read(path: &Path) -> Result<(FileTags, AudioProperties), TagError> {
+    let (tags, properties, _) = read_keeping(path, Cover::Skipped)?;
+    Ok((tags, properties))
+}
+
+/// The same, keeping the first embedded picture. The file is parsed once either way: opening it
+/// again to reach the picture costs a second parse of every tag in it.
+pub fn read_keeping(
+    path: &Path,
+    cover: Cover,
+) -> Result<(FileTags, AudioProperties, Option<Vec<u8>>), TagError> {
+    let (tags, properties, picture) = read_as_written(path, cover)?;
+    Ok((tags.tidied(), properties, picture))
+}
+
+fn read_as_written(
+    path: &Path,
+    cover: Cover,
+) -> Result<(FileTags, AudioProperties, Option<Vec<u8>>), TagError> {
+    let wanted = |tagged: &lofty::file::TaggedFile| match cover {
+        Cover::Wanted => first_picture(tagged),
+        Cover::Skipped => None,
+    };
     if let Some(dsd) = dsd::read(path) {
         let tags = dsd.tagged.as_ref().map(tags_of).unwrap_or_default();
-        return Ok((tags, dsd.properties));
+        let picture = dsd.tagged.as_ref().and_then(wanted);
+        return Ok((tags, dsd.properties, picture));
     }
-    match probe(path, ParseOptions::new()) {
-        Ok(tagged) => Ok((tags_from(path, &tagged), properties_of(&tagged))),
-        Err(refused) => read_again(path, refused),
+    // A picture nobody is going to look at is a megabyte read and decoded per file.
+    let options = ParseOptions::new().read_cover_art(cover == Cover::Wanted);
+    match probe(path, options) {
+        Ok(tagged) => Ok((
+            tags_from(path, &tagged),
+            properties_of(&tagged),
+            wanted(&tagged),
+        )),
+        Err(refused) => read_again(path, refused, options, &wanted),
     }
+}
+
+/// The first picture a file carries, whichever tag holds it.
+fn first_picture(tagged: &lofty::file::TaggedFile) -> Option<Vec<u8>> {
+    use lofty::file::TaggedFileExt;
+    let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
+    Some(tag.pictures().first()?.data().to_vec())
 }
 
 /// One file's tags, with the ones the tag crate discards read from the container. `GROUP` names
@@ -182,14 +221,23 @@ fn tags_from(path: &Path, tagged: &lofty::file::TaggedFile) -> FileTags {
 }
 
 /// Two things go wrong on a real library, and the file is worth serving after either.
-fn read_again(path: &Path, refused: TagError) -> Result<(FileTags, AudioProperties), TagError> {
-    if let Ok(tagged) = probe_sniffed(path, ParseOptions::new()) {
+fn read_again(
+    path: &Path,
+    refused: TagError,
+    options: ParseOptions,
+    wanted: &dyn Fn(&lofty::file::TaggedFile) -> Option<Vec<u8>>,
+) -> Result<(FileTags, AudioProperties, Option<Vec<u8>>), TagError> {
+    if let Ok(tagged) = probe_sniffed(path, options) {
         tracing::warn!(
             path = %path.display(),
             found = ?tagged.file_type(),
             "the extension does not match the bytes; read as the format they say"
         );
-        return Ok((tags_from(path, &tagged), properties_of(&tagged)));
+        return Ok((
+            tags_from(path, &tagged),
+            properties_of(&tagged),
+            wanted(&tagged),
+        ));
     }
     tracing::warn!(
         path = %path.display(),
@@ -197,7 +245,7 @@ fn read_again(path: &Path, refused: TagError) -> Result<(FileTags, AudioProperti
         "tags will not parse; serving the file without them"
     );
     let tagged = probe(path, ParseOptions::new().read_tags(false))?;
-    Ok((FileTags::default(), properties_of(&tagged)))
+    Ok((FileTags::default(), properties_of(&tagged), None))
 }
 
 fn probe(path: &Path, options: ParseOptions) -> Result<lofty::file::TaggedFile, TagError> {

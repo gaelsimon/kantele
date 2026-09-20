@@ -96,13 +96,33 @@ fn says_front(path: &Path) -> bool {
     says(SAYS_FRONT) && !says(SAYS_NOT_FRONT)
 }
 
+/// Enough for a PNG header, and for the JPEG frame marker behind any run of `APPn` segments one
+/// of which carries a thumbnail, which the format caps at 64 KB.
+const HEADER: usize = 128 * 1024;
+
 pub fn describe(path: &Path) -> Option<Artwork> {
-    let bytes = std::fs::read(path).ok()?;
+    let head = head_of(path, HEADER).ok()?;
+    let mime = image_mime(&head)?;
+    let dimensions = match dimensions(&head) {
+        Some(found) => Some(found),
+        // Only where the header did not fit in the prefix: covers run to megabytes, and a cold
+        // walk reads one per folder off a disk that turns.
+        None if head.len() == HEADER => dimensions(&std::fs::read(path).ok()?),
+        None => None,
+    };
     Some(Artwork {
         source: Source::File(path.to_owned()),
-        mime: image_mime(&bytes)?,
-        dimensions: dimensions(&bytes),
+        mime,
+        dimensions,
     })
+}
+
+fn head_of(path: &Path, most: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)?;
+    let mut head = Vec::new();
+    file.take(most as u64).read_to_end(&mut head)?;
+    Ok(head)
 }
 
 pub fn image_mime_named(name: &str) -> Option<&'static str> {
@@ -111,13 +131,18 @@ pub fn image_mime_named(name: &str) -> Option<&'static str> {
         .find(|known| *known == name)
 }
 
-/// DSD has its own reader; lofty refuses the container.
+/// DSD has its own reader; lofty refuses the container. A file whose extension lies is read by
+/// its bytes, as the tag reader reads it: otherwise its cover is the one picture nothing serves.
 fn tagged_file(path: &Path) -> Option<lofty::file::TaggedFile> {
     use lofty::probe::Probe;
     if let Some(dsd) = crate::tags::dsd::read(path) {
         return dsd.tagged;
     }
-    Probe::open(path).ok()?.read().ok()
+    let probe = Probe::open(path).ok()?;
+    match probe.read() {
+        Ok(tagged) => Some(tagged),
+        Err(_) => Probe::open(path).ok()?.guess_file_type().ok()?.read().ok(),
+    }
 }
 
 pub fn embedded(track: &Path) -> Option<Artwork> {
@@ -125,8 +150,11 @@ pub fn embedded(track: &Path) -> Option<Artwork> {
 
     let tagged = tagged_file(track)?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
-    let picture = tag.pictures().first()?;
-    let bytes = picture.data();
+    of_picture(track, tag.pictures().first()?.data())
+}
+
+/// A picture the tag reader already had in hand, described without opening the file again.
+pub fn of_picture(track: &Path, bytes: &[u8]) -> Option<Artwork> {
     Some(Artwork {
         source: Source::Embedded {
             path: track.to_owned(),
@@ -226,6 +254,55 @@ mod tests {
         jpeg.extend_from_slice(&800_u16.to_be_bytes()); // width
         jpeg.extend_from_slice(&[0; 8]);
         assert_eq!(dimensions(&jpeg), Some((800, 600)));
+    }
+
+    /// A JPEG whose frame marker sits at `at`, padded out to `size` with a segment nothing reads.
+    fn jpeg_with_frame_at(at: usize, size: usize) -> Vec<u8> {
+        let mut jpeg = vec![0xFF, 0xD8];
+        let padding = at.saturating_sub(jpeg.len() + 4);
+        jpeg.extend_from_slice(&[0xFF, 0xE0]);
+        jpeg.extend_from_slice(&((padding + 2) as u16).to_be_bytes());
+        jpeg.extend(std::iter::repeat_n(0u8, padding));
+        jpeg.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x11, 0x08]);
+        jpeg.extend_from_slice(&600_u16.to_be_bytes());
+        jpeg.extend_from_slice(&800_u16.to_be_bytes());
+        // The scanner needs the frame to sit inside the bytes, not to end them.
+        jpeg.extend_from_slice(&[0; 8]);
+        jpeg.resize(size.max(jpeg.len()), 0);
+        jpeg
+    }
+
+    fn written(name: &str, bytes: &[u8]) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("kantele-art-{}-{name}", std::process::id()));
+        std::fs::write(&path, bytes).expect("writing the image");
+        path
+    }
+
+    #[test]
+    fn a_cover_is_measured_without_reading_all_of_it() {
+        let path = written("small-header.jpg", &jpeg_with_frame_at(64, 4 * HEADER));
+        let art = describe(&path).expect("a jpeg");
+        assert_eq!(art.mime, "image/jpeg");
+        assert_eq!(art.dimensions, Some((800, 600)));
+        assert_eq!(
+            head_of(&path, HEADER).expect("the head").len(),
+            HEADER,
+            "and the read stops at the prefix however long the file is"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_cover_whose_header_runs_past_the_prefix_is_still_measured() {
+        let path = written("late-header.jpg", &jpeg_with_frame_at(HEADER + 4_096, 0));
+        let art = describe(&path).expect("a jpeg");
+        assert_eq!(
+            art.dimensions,
+            Some((800, 600)),
+            "a prefix that missed the frame falls back to the whole file rather than saying \
+             nothing, which would cost the image its DLNA profile"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

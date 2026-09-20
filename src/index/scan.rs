@@ -867,7 +867,14 @@ fn read_file(
             properties: cached.properties,
         });
     }
-    let (tags, properties) = tags::read(path)?;
+    // The picture comes out of the parse this read already pays for, where it is wanted at all.
+    let wanted = match prefer {
+        artwork::Prefer::Embedded => tags::Cover::Wanted,
+        artwork::Prefer::Folder if cover.is_none() => tags::Cover::Wanted,
+        artwork::Prefer::Folder => tags::Cover::Skipped,
+    };
+    let (tags, properties, picture) = tags::read_keeping(path, wanted)?;
+    let embedded = picture.and_then(|bytes| artwork::of_picture(path, &bytes));
     let size = match found.fingerprint {
         Fingerprint::UNKNOWN => std::fs::metadata(path)?.len(),
         fingerprint => fingerprint.size,
@@ -876,8 +883,8 @@ fn read_file(
         relative,
         size,
         artwork: match prefer {
-            artwork::Prefer::Folder => cover.or_else(|| artwork::embedded(path)),
-            artwork::Prefer::Embedded => artwork::embedded(path).or(cover),
+            artwork::Prefer::Folder => cover.or(embedded),
+            artwork::Prefer::Embedded => embedded.or(cover),
         },
         path: path.to_path_buf(),
         tags,

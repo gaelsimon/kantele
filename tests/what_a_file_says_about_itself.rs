@@ -41,6 +41,39 @@ fn an_extension_that_lies_costs_nothing() {
 }
 
 #[test]
+fn a_file_whose_extension_lies_keeps_its_embedded_cover() {
+    let tree = Tree::new("tags-wrong-extension-cover");
+    std::fs::write(
+        tree.path("flac-called-mp3.mp3"),
+        fixtures::flac(&[("TITLE", "Juana Peña")], true),
+    )
+    .expect("writing it");
+
+    let (_, _, picture) =
+        tags::read_keeping(&tree.path("flac-called-mp3.mp3"), tags::Cover::Wanted)
+            .expect("a file lofty refuses by name is read again by its bytes");
+    assert!(
+        picture.is_some(),
+        "the picture comes out of the read that succeeded, not out of a second open that \
+         guesses the format from the name again and fails"
+    );
+}
+
+#[test]
+fn the_cover_of_a_file_whose_extension_lies_is_still_served() {
+    let tree = Tree::new("art-wrong-extension");
+    let path = tree.path("flac-called-mp3.mp3");
+    std::fs::write(&path, fixtures::flac(&[("TITLE", "Juana Peña")], true)).expect("writing it");
+
+    let art = kantele::index::artwork::embedded(&path).expect("the file carries a picture");
+    let bytes = kantele::index::artwork::read(&art.source).expect("reading it back");
+    assert!(
+        !bytes.is_empty(),
+        "a renderer asking for this cover gets the bytes, not a 404"
+    );
+}
+
+#[test]
 fn a_file_that_is_not_audio_at_all_is_an_error_that_names_the_path() {
     let tree = Tree::new("tags-garbage");
     std::fs::write(tree.path("notes.txt"), b"not audio, not even close").expect("writing it");
