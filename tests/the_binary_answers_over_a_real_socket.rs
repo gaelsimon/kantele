@@ -86,6 +86,33 @@ impl Running {
         panic!("no port after {PATIENCE:?}:\n{}", self.said());
     }
 
+    /// The server binds before it walks, so what the page says about the library arrives a moment
+    /// after the port does.
+    fn wait_for_tracks(&self, tracks: u64) -> serde_json::Value {
+        let deadline = Instant::now() + PATIENCE;
+        let mut last = serde_json::Value::Null;
+        while Instant::now() < deadline {
+            let json = ask(
+                self.port,
+                "GET",
+                "/api/status",
+                &[("Accept", "application/json")],
+                b"",
+            );
+            if json.status == 200 {
+                last = serde_json::from_slice(&json.body).expect("json");
+                if last["library"]["tracks"] == tracks {
+                    return last;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!(
+            "{tracks} tracks never published in {PATIENCE:?}: {last}\n{}",
+            self.said()
+        );
+    }
+
     fn said(&self) -> String {
         plain(&std::fs::read_to_string(&self.log).unwrap_or_default())
     }
@@ -333,16 +360,7 @@ fn the_page_and_the_control_interface_are_served_by_the_binary() {
         "a browser opens this"
     );
 
-    let json = ask(
-        server.port,
-        "GET",
-        "/api/status",
-        &[("Accept", "application/json")],
-        b"",
-    );
-    assert_eq!(json.status, 200);
-    let answered: serde_json::Value = serde_json::from_slice(&json.body).expect("json");
-    assert_eq!(answered["library"]["tracks"], 3);
+    let answered = server.wait_for_tracks(3);
     assert_eq!(answered["library"]["albums"], 1);
     assert_eq!(answered["store"]["open"], true);
 
@@ -366,18 +384,7 @@ fn what_the_first_start_wrote_down_is_what_the_second_start_serves() {
     let state = Scratch::new("e2e-restart");
 
     let first = Running::start(&tree, &state, &[]);
-    let before: serde_json::Value = serde_json::from_slice(
-        &ask(
-            first.port,
-            "GET",
-            "/api/status",
-            &[("Accept", "application/json")],
-            b"",
-        )
-        .body,
-    )
-    .expect("json");
-    assert_eq!(before["library"]["tracks"], 3);
+    let before = first.wait_for_tracks(3);
     let took = first.stop();
     assert!(
         took < PATIENCE,
