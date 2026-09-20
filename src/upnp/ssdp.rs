@@ -435,11 +435,27 @@ fn made_by_software(name: &str) -> bool {
     }
 }
 
+/// Flags, where the name rule has nothing to say. `Unknown` is what Unix reports for an interface
+/// that does not carry `IFF_RUNNING`, which is not the same as one the kernel calls down: only an
+/// explicit down is refused, or a working interface on a platform that reports nothing goes with
+/// it. A point-to-point link reaches one peer, and multicast does not travel it. An address in
+/// 169.254 is what a host gives itself when nothing answered, and no client reaches this server
+/// there.
+fn carries_announcements(interface: &if_addrs::Interface) -> bool {
+    use if_addrs::IfOperStatus;
+    let down = matches!(
+        interface.oper_status,
+        IfOperStatus::Down | IfOperStatus::NotPresent | IfOperStatus::LowerLayerDown
+    );
+    !down && !interface.is_p2p() && !interface.is_link_local()
+}
+
 pub fn local_addresses() -> Vec<Ipv4Addr> {
     let found: Vec<(String, Ipv4Addr)> = if_addrs::get_if_addrs()
         .into_iter()
         .flatten()
         .filter(|interface| !interface.is_loopback())
+        .filter(carries_announcements)
         .filter_map(|interface| match interface.ip() {
             std::net::IpAddr::V4(address) => Some((interface.name, address)),
             std::net::IpAddr::V6(_) => None,
@@ -589,6 +605,58 @@ mod tests {
         ] {
             assert!(!made_by_software(name), "{name}");
         }
+    }
+
+    fn interface(
+        name: &str,
+        address: [u8; 4],
+        status: if_addrs::IfOperStatus,
+    ) -> if_addrs::Interface {
+        if_addrs::Interface {
+            name: name.to_owned(),
+            addr: if_addrs::IfAddr::V4(if_addrs::Ifv4Addr {
+                ip: Ipv4Addr::from(address),
+                netmask: Ipv4Addr::new(255, 255, 255, 0),
+                prefixlen: 24,
+                broadcast: None,
+            }),
+            index: Some(1),
+            oper_status: status,
+            is_p2p: false,
+            #[cfg(windows)]
+            adapter_name: String::new(),
+        }
+    }
+
+    #[test]
+    fn an_interface_that_reaches_nobody_is_not_announced_on() {
+        use if_addrs::IfOperStatus;
+
+        let up = interface("eth0", [192, 168, 8, 227], IfOperStatus::Up);
+        assert!(carries_announcements(&up));
+
+        let quiet = interface("eth1", [192, 168, 9, 1], IfOperStatus::Unknown);
+        assert!(
+            carries_announcements(&quiet),
+            "Unix reports Unknown for an interface without IFF_RUNNING, and refusing that \
+             silences a server on a platform that reports nothing"
+        );
+
+        let unplugged = interface("eth2", [192, 168, 10, 1], IfOperStatus::Down);
+        assert!(!carries_announcements(&unplugged));
+
+        let nothing_answered = interface("eth3", [169, 254, 3, 7], IfOperStatus::Up);
+        assert!(
+            !carries_announcements(&nothing_answered),
+            "an address a host gave itself when no DHCP answered reaches no client"
+        );
+
+        let mut tunnel = interface("tun9", [10, 8, 0, 2], IfOperStatus::Up);
+        tunnel.is_p2p = true;
+        assert!(
+            !carries_announcements(&tunnel),
+            "multicast does not travel a link with one peer at the far end"
+        );
     }
 
     #[tokio::test]

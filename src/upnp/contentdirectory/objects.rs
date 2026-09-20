@@ -87,11 +87,11 @@ pub(super) fn children<'a>(
         Named::Playlists => flat(library.playlists().len(), &|at| {
             playlist_child(&library.playlists()[at], &menus.playlists)
         }),
-        Named::Folders => all(folder_children(library, view, "", &menus.folders)),
+        Named::Folders => all(folder_children(library, view, menus, "", &menus.folders)),
         Named::Recent => all(recent_children(library, view, menus)),
         Named::Folder(path) => {
             let here = folder_object(&path)?;
-            all(folder_children(library, view, &path, &here))
+            all(folder_children(library, view, menus, &path, &here))
         }
         Named::Position(position) => {
             let here = position_object(&position)?;
@@ -141,6 +141,42 @@ fn folder_object(path: &str) -> Option<ObjectId> {
     ObjectId::new(browse::folder_id(path)).ok()
 }
 
+/// Whether the tag rule has anything to say inside this folder, which is one more child.
+fn tag_view_inside(library: &Library, view: &View, path: &str) -> bool {
+    !path.is_empty()
+        && matches!(
+            browse::menu(library, view, &browse::Position::inside(path)),
+            Some(browse::Menu::Facets(_))
+        )
+}
+
+/// What a folder holds on the wire, the tag view included: a `childCount` that disagrees with the
+/// children rendered is what makes a client page past the end or stop short.
+fn folder_entries(library: &Library, view: &View, path: &str) -> usize {
+    let (below, inside) = browse::folder_size(view, path);
+    below + inside + usize::from(tag_view_inside(library, view, path))
+}
+
+/// One folder container, described the same way from its own metadata and from its parent's
+/// listing. A container that answers two different parents is one a breadcrumb cannot walk.
+fn folder_spec<'a>(
+    library: &Library,
+    view: &View,
+    menus: &Menus,
+    path: &str,
+) -> Option<didl::ContainerSpec<'a>> {
+    let parent = match path.rsplit_once('/') {
+        Some((above, _)) => folder_object(above)?,
+        None => menus.folders.clone(),
+    };
+    Some(didl::ContainerSpec::folder(
+        folder_object(path)?,
+        parent,
+        browse::folder_name(path).to_owned(),
+        folder_entries(library, view, path),
+    ))
+}
+
 fn position_object(position: &browse::Position) -> Option<ObjectId> {
     ObjectId::new(position.id()).ok()
 }
@@ -176,20 +212,20 @@ fn root_children<'a>(
 fn folder_children<'a>(
     library: &'a Library,
     view: &'a View,
+    menus: &Menus,
     path: &str,
     here: &ObjectId,
 ) -> Vec<didl::Child<'a>> {
     let (folders, tracks) = browse::folder(view, path);
     let mut children: Vec<didl::Child<'a>> = folders
         .iter()
-        .map(|child| {
-            didl::Child::Container(didl::ContainerSpec::folder(
-                ObjectId::new(browse::folder_id(&child.path))
-                    .expect("a digest behind an ascii prefix"),
-                here.clone(),
-                child.name.clone(),
-                child.children,
-            ))
+        .filter_map(|child| {
+            Some(didl::Child::Container(folder_spec(
+                library,
+                view,
+                menus,
+                &child.path,
+            )?))
         })
         .collect();
 
@@ -350,10 +386,12 @@ pub(super) fn metadata<'a>(
             "Kantele",
             root_children(library, view, menus).len(),
         )),
+        // The root's listing decides what this container is called; saying something else here
+        // shows one container under two names to anything that reads both.
         Named::Albums => menu(didl::ContainerSpec::menu(
             menus.albums.clone(),
             menus.root.clone(),
-            "Albums",
+            browse::root::counted(library.albums().len(), "album"),
             library.albums().len(),
         )),
         Named::Artists => menu(didl::ContainerSpec::menu(
@@ -376,25 +414,13 @@ pub(super) fn metadata<'a>(
             RECENT_TITLE,
             view.recent().len(),
         )),
-        Named::Folders => {
-            let (folders, loose) = browse::folder_size(view, "");
-            menu(didl::ContainerSpec::folder(
-                menus.folders.clone(),
-                menus.root.clone(),
-                FOLDERS_TITLE,
-                folders + loose,
-            ))
-        }
-        Named::Folder(path) => {
-            let here = folder_object(&path)?;
-            let (below, inside) = browse::folder_size(view, &path);
-            menu(didl::ContainerSpec::folder(
-                here,
-                menus.folders.clone(),
-                browse::folder_name(&path).to_owned(),
-                below + inside,
-            ))
-        }
+        Named::Folders => menu(didl::ContainerSpec::folder(
+            menus.folders.clone(),
+            menus.root.clone(),
+            FOLDERS_TITLE,
+            folder_entries(library, view, ""),
+        )),
+        Named::Folder(path) => menu(folder_spec(library, view, menus, &path)?),
         Named::Position(position) => {
             let here = position_object(&position)?;
             let offered = browse::menu(library, view, &position)?;

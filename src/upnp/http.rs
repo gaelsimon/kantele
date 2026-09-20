@@ -589,7 +589,13 @@ async fn media(
     }
 }
 
-async fn art(State(device): State<Shared>, Path(id): Path<String>) -> Response {
+/// Either the image, or the word that the one the client holds is still the one this server has.
+enum Cover {
+    Fresh(String),
+    Bytes(Vec<u8>, Option<String>),
+}
+
+async fn art(State(device): State<Shared>, Path(id): Path<String>, headers: HeaderMap) -> Response {
     let Ok(object_id) = ObjectId::new(id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -599,17 +605,37 @@ async fn art(State(device): State<Shared>, Path(id): Path<String>) -> Response {
     };
     let (source, mime) = (artwork.source.clone(), artwork.mime);
     drop(served);
+    let asked = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
 
-    let read = tokio::task::spawn_blocking(move || crate::index::artwork::read(&source)).await;
+    // The stat and the read are one blocking call: a picture held in a music file costs a whole
+    // parse of every tag in it, and that is the cost a validator is here to skip.
+    let read = tokio::task::spawn_blocking(move || {
+        let held = source.validator();
+        if let (Some(held), Some(asked)) = (&held, &asked)
+            && crate::index::artwork::unchanged(asked, held)
+        {
+            return Ok(Cover::Fresh(held.clone()));
+        }
+        crate::index::artwork::read(&source).map(|bytes| Cover::Bytes(bytes, held))
+    })
+    .await;
+
+    let cached = [(header::CACHE_CONTROL, "public, max-age=86400".to_owned())];
     match read {
-        Ok(Ok(bytes)) => (
-            [
-                (header::CONTENT_TYPE, mime),
-                (header::CACHE_CONTROL, "public, max-age=86400"),
-            ],
-            bytes,
-        )
-            .into_response(),
+        Ok(Ok(Cover::Fresh(held))) => {
+            (StatusCode::NOT_MODIFIED, cached, [(header::ETAG, held)]).into_response()
+        }
+        Ok(Ok(Cover::Bytes(bytes, held))) => {
+            let mut response =
+                ([(header::CONTENT_TYPE, mime.to_owned())], cached, bytes).into_response();
+            if let Some(held) = held.and_then(|held| held.parse().ok()) {
+                response.headers_mut().insert(header::ETAG, held);
+            }
+            response
+        }
         Ok(Err(error)) => {
             tracing::error!(%error, "reading artwork");
             StatusCode::NOT_FOUND.into_response()

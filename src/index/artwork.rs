@@ -24,6 +24,44 @@ pub enum Source {
     Embedded { path: PathBuf, index: usize },
 }
 
+impl Source {
+    /// The file the bytes come out of, which is the music file for an embedded picture.
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::File(path) | Self::Embedded { path, .. } => path,
+        }
+    }
+
+    /// What the image is right now, as a validator a client may send back. A picture changes only
+    /// when the file holding it does, and an embedded one costs a whole parse to read.
+    pub fn validator(&self) -> Option<String> {
+        let metadata = std::fs::metadata(self.path()).ok()?;
+        let changed = metadata
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        let index = match self {
+            Self::File(_) => 0,
+            Self::Embedded { index, .. } => *index,
+        };
+        Some(format!(
+            "\"{:x}-{:x}-{index:x}\"",
+            metadata.len(),
+            changed.as_millis()
+        ))
+    }
+}
+
+/// Whether an `If-None-Match` asks for exactly what is held. Weak comparison is enough: nothing
+/// here serves a transformed image.
+pub fn unchanged(asked: &str, held: &str) -> bool {
+    asked.split(',').any(|one| {
+        let one = one.trim();
+        one == "*" || one == held || one.strip_prefix("W/") == Some(held)
+    })
+}
+
 /// Which one wins where a folder holds an image and the file carries a picture of its own.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]

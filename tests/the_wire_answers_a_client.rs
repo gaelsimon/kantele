@@ -554,6 +554,54 @@ async fn artwork_is_served_from_the_same_port_as_the_audio() {
 }
 
 #[tokio::test]
+async fn a_cover_a_renderer_already_holds_is_not_read_again() {
+    let tree = library_tree("wire-artwork-fresh");
+    let server = serving(&tree);
+    let id = first_track(&server).await;
+
+    let first = ask(&server, get(&format!("/art/{id}"))).await;
+    let tag = first
+        .headers()
+        .get(header::ETAG)
+        .and_then(|value| value.to_str().ok())
+        .expect("a validator, or a renderer has nothing to ask with")
+        .to_owned();
+    let bytes = body_of(first).await.len();
+    assert!(bytes > 0);
+
+    let again = Request::builder()
+        .uri(format!("/art/{id}"))
+        .header(header::IF_NONE_MATCH, &tag)
+        .body(Body::empty())
+        .expect("a request");
+    let answered = ask(&server, again).await;
+    assert_eq!(answered.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        body_of(answered).await.len(),
+        0,
+        "and the bytes are not read at all: a picture held in a music file costs a parse of \
+         every tag in it"
+    );
+
+    // The same cover, changed on disk: the validator moves and the bytes come back.
+    let cover = tree.path("Sierra Maestra/cover.jpg");
+    let mut grown = std::fs::read(&cover).expect("the cover");
+    grown.extend_from_slice(&[0; 16]);
+    std::fs::write(&cover, &grown).expect("writing it again");
+    let moved = serving(&tree);
+    let after = ask(&moved, get(&format!("/art/{}", first_track(&moved).await))).await;
+    assert_eq!(after.status(), StatusCode::OK);
+    assert_ne!(
+        after
+            .headers()
+            .get(header::ETAG)
+            .and_then(|value| value.to_str().ok()),
+        Some(tag.as_str()),
+        "a cover replaced on disk is a different cover"
+    );
+}
+
+#[tokio::test]
 async fn nothing_that_names_no_object_is_answered_with_bytes() {
     let tree = library_tree("wire-missing");
     let server = serving(&tree);
@@ -940,6 +988,224 @@ async fn in_the_folder_view_a_track_belongs_to_the_folder_it_sits_in() {
         leaf,
         "going up from a track leads back to the folder it was listed in, not to every title"
     );
+}
+
+#[tokio::test]
+async fn a_container_describes_itself_the_way_its_parent_listed_it() {
+    let server = serving_tagged();
+
+    // The root's own listing is what a device reads first.
+    let root = children_of(&server, "0").await;
+    for (id, title) in &root {
+        let metadata = body_of(ask(&server, browse(id, "BrowseMetadata", 0, 0)).await).await;
+        let didl = didl_in(&metadata);
+        assert!(
+            didl.contains(&format!("<dc:title>{title}</dc:title>")),
+            "{id} is \"{title}\" in the root and something else in its own metadata: {didl}"
+        );
+    }
+
+    // And a nested folder answers the folder it sits in, not the top of the view.
+    let (folders, _) = root
+        .iter()
+        .find(|(_, title)| title == "[folder view]")
+        .expect("the folder view is offered")
+        .clone();
+    let (latin, _) = children_of(&server, &folders).await[0].clone();
+    let listed = body_of(ask(&server, browse(&latin, "BrowseDirectChildren", 0, 0)).await).await;
+    let (sierra, _) = listing(&listed)[0].clone();
+
+    let metadata = body_of(ask(&server, browse(&sierra, "BrowseMetadata", 0, 0)).await).await;
+    assert_eq!(
+        parent_in(&metadata, &sierra),
+        parent_in(&listed, &sierra),
+        "one folder, two parents, depending on which way it was asked about"
+    );
+}
+
+#[tokio::test]
+async fn a_folder_counts_the_children_it_renders() {
+    let server = serving_tagged();
+
+    let root = children_of(&server, "0").await;
+    let (folders, _) = root
+        .iter()
+        .find(|(_, title)| title == "[folder view]")
+        .expect("the folder view is offered")
+        .clone();
+    // Reggae holds two artists, so the tag rule offers a view inside it and that is a child too.
+    let top = children_of(&server, &folders).await;
+    let (reggae, _) = top[1].clone();
+
+    let listed = body_of(ask(&server, browse(&folders, "BrowseDirectChildren", 0, 0)).await).await;
+    let rendered = children_of(&server, &reggae).await.len();
+    let didl = didl_in(&listed);
+    assert!(
+        didl.contains(&format!("childCount=\"{rendered}\"")),
+        "the parent's listing promises a count this folder does not render ({rendered}): {didl}"
+    );
+}
+
+/// `TotalMatches` out of a browse answer.
+fn total_in(answer: &str) -> usize {
+    let (_, after) = answer
+        .split_once("<TotalMatches>")
+        .expect("every answer carries a total");
+    after
+        .split_once("</TotalMatches>")
+        .expect("a closing tag")
+        .0
+        .parse()
+        .expect("a number")
+}
+
+fn returned_in(answer: &str) -> usize {
+    let (_, after) = answer
+        .split_once("<NumberReturned>")
+        .expect("every answer says how many it carried");
+    after
+        .split_once("</NumberReturned>")
+        .expect("a closing tag")
+        .0
+        .parse()
+        .expect("a number")
+}
+
+#[tokio::test]
+async fn the_total_is_the_same_at_every_offset_and_past_the_end() {
+    let server = serving_tagged();
+    let whole = body_of(ask(&server, browse("music", "BrowseDirectChildren", 0, 0)).await).await;
+    let total = total_in(&whole);
+    assert!(total > 1, "this needs a container with several items");
+
+    for offset in 0..=total + 1 {
+        let answer =
+            body_of(ask(&server, browse("music", "BrowseDirectChildren", offset, 1)).await).await;
+        assert_eq!(
+            total_in(&answer),
+            total,
+            "offset {offset} answers a different total than offset 0"
+        );
+        let expected = usize::from(offset < total);
+        assert_eq!(
+            returned_in(&answer),
+            expected,
+            "offset {offset} of {total} returned the wrong number of items"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_paging_number_this_server_cannot_read_is_a_page_and_not_a_fault() {
+    let server = serving_tagged();
+    let whole = body_of(ask(&server, browse("music", "BrowseDirectChildren", 0, 0)).await).await;
+    let total = total_in(&whole);
+
+    let asked = |index: &str, count: &str| {
+        soap(
+            "Browse",
+            &format!(
+                "<ObjectID>music</ObjectID><BrowseFlag>BrowseDirectChildren</BrowseFlag>\
+                 <Filter>*</Filter>{index}{count}<SortCriteria></SortCriteria>"
+            ),
+        )
+    };
+    for index in [
+        "<StartingIndex> 1 </StartingIndex>",
+        "<StartingIndex>abc</StartingIndex>",
+        "<StartingIndex>-1</StartingIndex>",
+        "",
+    ] {
+        let answer =
+            body_of(ask(&server, asked(index, "<RequestedCount>1</RequestedCount>")).await).await;
+        assert!(!answer.contains("errorCode"), "{index}: {answer}");
+        assert_eq!(total_in(&answer), total, "{index}: the total is the truth");
+        assert_eq!(returned_in(&answer), 1, "{index}: one item was asked for");
+    }
+
+    for count in [
+        "<RequestedCount>abc</RequestedCount>",
+        "<RequestedCount>-1</RequestedCount>",
+        "",
+    ] {
+        let answer =
+            body_of(ask(&server, asked("<StartingIndex>0</StartingIndex>", count)).await).await;
+        assert!(!answer.contains("errorCode"), "{count}: {answer}");
+        assert_eq!(
+            returned_in(&answer),
+            total,
+            "{count}: a count this server cannot read means the whole container, as zero does"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_root_and_the_folder_view_count_the_children_they_render() {
+    let server = serving_tagged();
+    let mut checked = 0;
+    let mut waiting = vec!["0".to_owned()];
+
+    while let Some(id) = waiting.pop() {
+        let listed = body_of(ask(&server, browse(&id, "BrowseDirectChildren", 0, 0)).await).await;
+        let didl = didl_in(&listed);
+        for (child, title) in listing(&listed) {
+            let Some(count) = child_count_in(&didl, &child) else {
+                continue;
+            };
+            let below = children_of(&server, &child).await;
+            assert_eq!(
+                below.len(),
+                count,
+                "{title} ({child}) promises {count} children and renders {}",
+                below.len()
+            );
+            checked += 1;
+            // Down the folder view, where a nested folder also offers the tag rule as a child.
+            if child.starts_with("fv") {
+                waiting.push(child);
+            }
+        }
+    }
+    assert!(checked > 5, "only {checked} containers were checked");
+}
+
+/// Known, and not fixed here: a value chosen on an axis says how many tracks carry it, and renders
+/// the albums those tracks belong to. Counting what it renders costs a pass over the library per
+/// value, because the axis maps tracks to values and not the other way round, and dropping the
+/// attribute is a wire change on the busiest menu. The owner decides which.
+#[tokio::test]
+async fn a_chosen_value_counts_its_tracks_and_renders_its_albums() {
+    let server = serving_tagged();
+    let root = children_of(&server, "0").await;
+    let (artists, _) = root
+        .iter()
+        .find(|(_, title)| title == "Artist")
+        .expect("the artist axis is offered")
+        .clone();
+
+    let listed = body_of(ask(&server, browse(&artists, "BrowseDirectChildren", 0, 0)).await).await;
+    let didl = didl_in(&listed);
+    let (scientist, _) = listing(&listed)
+        .into_iter()
+        .find(|(_, title)| title == "Scientist")
+        .expect("an artist with two tracks on one album");
+
+    let promised = child_count_in(&didl, &scientist).expect("a count");
+    let rendered = children_of(&server, &scientist).await;
+    assert_eq!(promised, 2, "the two tracks that carry the name");
+    assert_eq!(rendered.len(), 1, "the one album they belong to");
+    assert!(
+        rendered.len() < promised,
+        "a client that pages until it has {promised} children asks past the end"
+    );
+}
+
+/// The `childCount` a listing gives a container, where it gives one.
+fn child_count_in(didl: &str, id: &str) -> Option<usize> {
+    let (_, after) = didl.split_once(&format!("id=\"{id}\""))?;
+    let (before, _) = after.split_once('>')?;
+    let (_, rest) = before.split_once("childCount=\"")?;
+    rest.split_once('"')?.0.parse().ok()
 }
 
 #[tokio::test]

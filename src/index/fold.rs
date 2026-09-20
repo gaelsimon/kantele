@@ -133,6 +133,51 @@ mod ignored {
     use super::{Ignored, fold};
 
     #[test]
+    fn a_relative_path_has_one_spelling_whatever_walked_it() {
+        use std::path::{MAIN_SEPARATOR, PathBuf};
+
+        let joined: PathBuf = ["Sierra Maestra", "Dundunbanza", "01.flac"]
+            .iter()
+            .collect();
+        assert_eq!(
+            super::path(&joined),
+            "Sierra Maestra/Dundunbanza/01.flac",
+            "the separator the platform walked with is not the one the index stores"
+        );
+        assert!(
+            !super::path(&joined).contains(MAIN_SEPARATOR) || MAIN_SEPARATOR == '/',
+            "no platform separator survives into the stored spelling"
+        );
+    }
+
+    #[test]
+    fn a_name_decomposed_by_one_filesystem_matches_the_same_name_composed() {
+        use std::path::Path;
+
+        // What macOS hands back: e and a combining acute, against the single composed letter.
+        let decomposed = Path::new("E\u{301}le\u{301}gie/01.flac");
+        let composed = Path::new("Élégie/01.flac");
+        assert_ne!(
+            decomposed.to_string_lossy(),
+            composed.to_string_lossy(),
+            "the two spellings are different bytes, or this proves nothing"
+        );
+        assert_eq!(
+            super::path(decomposed),
+            super::path(composed),
+            "one file walked on two platforms is one row, not two"
+        );
+    }
+
+    #[test]
+    fn a_path_with_nothing_in_it_is_the_empty_spelling() {
+        use std::path::Path;
+
+        assert_eq!(super::path(Path::new("")), "");
+        assert_eq!(super::path(Path::new("one")), "one");
+    }
+
+    #[test]
     fn the_article_is_looked_past_as_a_whole_word_and_never_inside_one() {
         let ignored = Ignored::default();
         assert_eq!(ignored.strip(&fold("The Beatles")), "beatles");
