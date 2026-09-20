@@ -345,7 +345,9 @@ pub(super) fn metadata<'a>(
     match named(view, id) {
         Named::Root => menu(didl::ContainerSpec::menu(
             menus.root.clone(),
-            menus.root.clone(),
+            // ContentDirectory fixes the root's parent at -1. Naming itself makes the root its own
+            // child to anything that walks parents for a breadcrumb.
+            ObjectId::new("-1".to_owned()).expect("a constant in the permitted alphabet"),
             "Kantele",
             root_children(library, view, menus).len(),
         )),

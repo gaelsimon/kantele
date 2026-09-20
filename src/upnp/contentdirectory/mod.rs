@@ -1001,6 +1001,16 @@ mod tests {
     }
 
     #[test]
+    fn the_root_names_the_parent_the_specification_fixes_for_it() {
+        let itself = ask(&serving(library()), ObjectId::ROOT, BrowseFlag::Metadata);
+        assert!(
+            itself.result.contains(r#"parentID="-1""#),
+            "naming itself makes the root its own child to anything walking parents: {}",
+            itself.result
+        );
+    }
+
+    #[test]
     fn a_folder_is_published_as_a_folder_rather_than_as_a_menu() {
         let served = serving(library());
         for id in [ObjectId::ROOT, FOLDERS] {

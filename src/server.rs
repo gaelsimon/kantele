@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::Request;
-use axum::http::{HeaderMap, Method};
+use axum::http::{HeaderMap, Method, header};
 use axum::response::Response;
 
 use crate::api::Control;
@@ -78,7 +78,11 @@ async fn trace_request(request: Request, next: axum::middleware::Next) -> Respon
     } else {
         tracing::info!(%peer, %method, %path, status, %headers, "request");
     }
-    if uri.path().starts_with("/media/") || uri.path().starts_with("/art/") {
+    // Only the request that opens a resource: a renderer refilling its buffer asks for a range
+    // every few seconds, and one line per track says what seven header fields say.
+    if (uri.path().starts_with("/media/") || uri.path().starts_with("/art/"))
+        && !asked.contains_key(header::RANGE)
+    {
         http::trace_renderer(&peer, &method, uri.path(), status, &asked);
     }
     response

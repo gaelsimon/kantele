@@ -52,7 +52,7 @@ impl Cache {
             return None;
         }
         let row = self.files.get(relative)?;
-        if row.fingerprint != fingerprint {
+        if !row.answers_for(fingerprint) {
             return None;
         }
         self.hits.fetch_add(1, Relaxed);
@@ -72,7 +72,7 @@ impl Cache {
             return None;
         }
         let row = self.refused.get(relative)?;
-        (row.fingerprint == fingerprint).then_some(row.payload.as_str())
+        row.answers_for(fingerprint).then_some(row.payload.as_str())
     }
 
     pub(super) fn agrees_on_refused(
@@ -145,7 +145,7 @@ impl Cache {
             return None;
         }
         let row = self.playlists.get(relative)?;
-        (row.fingerprint == fingerprint).then(|| row.payload.clone())
+        row.answers_for(fingerprint).then(|| row.payload.clone())
     }
 
     pub fn remembered_playlists_outside(&self, scope: &Scope) -> Vec<playlist::Scanned> {
@@ -181,7 +181,7 @@ impl Cache {
         }
         let relative = self.roots.relative(&image.path)?;
         let row = self.covers.get(&relative)?;
-        if row.fingerprint != image.fingerprint {
+        if !row.answers_for(image.fingerprint) {
             return None;
         }
         Some(Artwork {
@@ -205,4 +205,13 @@ pub(super) struct Row<T> {
     /// Digest of the stored text, compared instead of the text.
     pub(super) digest: u64,
     pub(super) payload: T,
+    /// The reader that wrote this row. Another one means the row is served but not trusted to
+    /// answer for the file, so the pass reads it again.
+    pub(super) reader: i64,
+}
+
+impl<T> Row<T> {
+    fn answers_for(&self, fingerprint: Fingerprint) -> bool {
+        self.fingerprint == fingerprint && self.reader == super::READER_VERSION
+    }
 }

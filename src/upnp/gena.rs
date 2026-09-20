@@ -12,6 +12,12 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(1800);
 const MAX_TIMEOUT: Duration = Duration::from_secs(3600);
 const MAX_CALLBACKS: usize = 2;
 const MAX_PER_PEER: usize = 16;
+/// Every device on the network together. Nothing else bounds the number of peers, and a round of
+/// events walks all of them.
+const MAX_SUBSCRIPTIONS: usize = 256;
+/// Deliveries that failed in a row before a subscriber is dropped. One failure is a renderer on
+/// wi-fi missing a connect, and dropping it there costs it every event until its own renewal.
+const MISSED: u8 = 3;
 const DELIVERIES_AT_ONCE: usize = 8;
 /// A renderer on the same network answers in milliseconds, and one that never does holds a
 /// delivery slot for this long.
@@ -43,6 +49,7 @@ struct Subscription {
     user_agent: Option<String>,
     peer: IpAddr,
     since: u64,
+    missed: u8,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -73,6 +80,8 @@ pub enum Refused {
     CallbackElsewhere,
     #[error("the transport gave no address for the subscriber")]
     PeerUnknown,
+    #[error("this server keeps as many subscriptions as it will")]
+    TooMany,
 }
 
 impl Subscriptions {
@@ -89,7 +98,16 @@ impl Subscriptions {
         let timeout = parse_timeout(timeout);
         let sid = format!("uuid:{}", uuid::Uuid::new_v4());
         let mut held = crate::held(&self.inner);
+        let now = Instant::now();
+        held.retain(|_, s| s.expires > now);
         make_room(&mut held, peer);
+        if held.len() >= MAX_SUBSCRIPTIONS {
+            tracing::warn!(
+                held = held.len(), %peer,
+                "as many subscriptions as this server keeps: refusing another"
+            );
+            return Err(Refused::TooMany);
+        }
         let since = held.values().map(|s| s.since).max().map_or(0, |n| n + 1);
         held.insert(
             sid.clone(),
@@ -101,6 +119,7 @@ impl Subscriptions {
                 user_agent,
                 peer,
                 since,
+                missed: 0,
             },
         );
         Ok(Granted { sid, timeout })
@@ -126,11 +145,18 @@ impl Subscriptions {
         listed
     }
 
-    pub fn renew(&self, sid: &str, timeout: Option<&str>) -> Option<Granted> {
+    /// `peer` is the address the renewal came from: a subscription is renewed by the device that
+    /// took it and by nobody else.
+    pub fn renew(&self, sid: &str, peer: Option<IpAddr>, timeout: Option<&str>) -> Option<Granted> {
         let timeout = parse_timeout(timeout);
         let mut guard = crate::held(&self.inner);
         let subscription = guard.get_mut(sid)?;
+        if peer.is_some_and(|asking| asking != subscription.peer) {
+            tracing::warn!(%sid, "a renewal from another address than the one that subscribed");
+            return None;
+        }
         subscription.expires = Instant::now() + timeout;
+        subscription.missed = 0;
         Some(Granted {
             sid: sid.to_owned(),
             timeout,
@@ -215,14 +241,35 @@ impl Subscriptions {
 
     async fn deliver_and_say_so(&self, callback: &str, sid: &str, seq: u32, body: &str) {
         match deliver(callback, sid, seq, body).await {
-            Ok(()) => tracing::debug!(%sid, %callback, seq, "event delivered"),
-            Err(error) => {
-                tracing::warn!(
-                    %sid, %callback, seq, %error,
-                    "event not delivered: the subscription is dropped"
-                );
-                self.unsubscribe(sid);
+            Ok(()) => {
+                tracing::debug!(%sid, %callback, seq, "event delivered");
+                self.delivered(sid);
             }
+            Err(error) => {
+                let missed = self.missed(sid);
+                tracing::warn!(%sid, %callback, seq, %error, missed, "event not delivered");
+                if missed >= MISSED {
+                    tracing::warn!(%sid, %callback, "nothing reached this subscriber: it is dropped");
+                    self.unsubscribe(sid);
+                }
+            }
+        }
+    }
+
+    fn delivered(&self, sid: &str) {
+        if let Some(subscription) = crate::held(&self.inner).get_mut(sid) {
+            subscription.missed = 0;
+        }
+    }
+
+    /// The count after this failure, or the ceiling where the subscription is already gone.
+    fn missed(&self, sid: &str) -> u8 {
+        match crate::held(&self.inner).get_mut(sid) {
+            Some(subscription) => {
+                subscription.missed = subscription.missed.saturating_add(1);
+                subscription.missed
+            }
+            None => MISSED,
         }
     }
 }
@@ -502,7 +549,10 @@ mod tests {
         )
         .expect("another device is not held to the first one's share");
         assert_eq!(subs.len(), MAX_PER_PEER + 1);
-        assert!(subs.renew(&first, None).is_none(), "the oldest went first");
+        assert!(
+            subs.renew(&first, None, None).is_none(),
+            "the oldest went first"
+        );
     }
 
     #[tokio::test]
@@ -522,15 +572,31 @@ mod tests {
             None,
         )
         .expect("granted");
+        until_dropped(&subs).await;
+        assert!(
+            subs.is_empty(),
+            "a subscriber nobody can reach is no longer one"
+        );
+    }
+
+    /// Sends the number of rounds it takes to give up on a subscriber, one short of it first.
+    async fn until_dropped(subs: &Subscriptions) {
+        for round in 1..u32::from(MISSED) {
+            subs.notify(
+                Service::ContentDirectory,
+                &[("SystemUpdateID", "2".to_owned())],
+            )
+            .await;
+            assert!(
+                !subs.is_empty(),
+                "round {round}: one failure is a renderer missing a connect, not a dead subscriber"
+            );
+        }
         subs.notify(
             Service::ContentDirectory,
             &[("SystemUpdateID", "2".to_owned())],
         )
         .await;
-        assert!(
-            subs.is_empty(),
-            "a subscriber nobody can reach is no longer one"
-        );
     }
 
     /// A subscriber listening on a port, answering each NOTIFY with the line it was given.
@@ -588,11 +654,7 @@ mod tests {
             None,
         )
         .expect("granted");
-        subs.notify(
-            Service::ContentDirectory,
-            &[("SystemUpdateID", "2".to_owned())],
-        )
-        .await;
+        until_dropped(&subs).await;
         assert!(subs.is_empty(), "the code arrived, late and in two pieces");
     }
 
@@ -606,13 +668,56 @@ mod tests {
             (None, true),
         ] {
             let (subs, callback) = answering(answer).await;
-            subs.notify(
-                Service::ContentDirectory,
-                &[("SystemUpdateID", "2".to_owned())],
-            )
-            .await;
+            until_dropped(&subs).await;
             assert_eq!(!subs.is_empty(), kept, "answering {answer:?} at {callback}");
         }
+    }
+
+    #[test]
+    fn a_renewal_names_the_address_that_took_the_subscription() {
+        let subs = Subscriptions::default();
+        let granted = subs
+            .subscribe(
+                Service::ContentDirectory,
+                "<http://192.0.2.1:1/>",
+                at("192.0.2.1"),
+                None,
+                None,
+            )
+            .expect("granted");
+        assert!(
+            subs.renew(&granted.sid, at("198.51.100.9"), None).is_none(),
+            "another address does not hold this subscription alive"
+        );
+        assert!(
+            subs.renew(&granted.sid, at("192.0.2.1"), None).is_some(),
+            "and the one that took it does"
+        );
+    }
+
+    #[test]
+    fn this_server_keeps_as_many_subscriptions_as_it_will() {
+        let subs = Subscriptions::default();
+        // One peer may hold MAX_PER_PEER, so the ceiling is reached with enough of them.
+        let peers = MAX_SUBSCRIPTIONS / MAX_PER_PEER + 1;
+        for peer in 0..peers {
+            for _ in 0..MAX_PER_PEER {
+                let address = format!("198.51.100.{peer}");
+                let _ = subs.subscribe(
+                    Service::ContentDirectory,
+                    &format!("<http://{address}:1/>"),
+                    at(&address),
+                    None,
+                    None,
+                );
+            }
+        }
+        assert!(
+            subs.len() <= MAX_SUBSCRIPTIONS,
+            "nothing bounds the number of peers, and a round of events walks every one of them: \
+             {} held",
+            subs.len()
+        );
     }
 
     #[test]
@@ -631,8 +736,8 @@ mod tests {
         assert!(granted.sid.starts_with("uuid:"));
         assert_eq!(granted.timeout, Duration::from_secs(120));
 
-        assert!(subs.renew(&granted.sid, Some("Second-600")).is_some());
-        assert!(subs.renew("uuid:nobody", None).is_none());
+        assert!(subs.renew(&granted.sid, None, Some("Second-600")).is_some());
+        assert!(subs.renew("uuid:nobody", None, None).is_none());
 
         assert!(subs.unsubscribe(&granted.sid));
         assert!(subs.is_empty());

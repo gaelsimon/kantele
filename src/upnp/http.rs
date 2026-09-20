@@ -392,7 +392,7 @@ async fn event(
 
     match method.as_str() {
         "SUBSCRIBE" => match (sid, callback) {
-            (Some(sid), None) => match device.subscriptions.renew(&sid, timeout.as_deref()) {
+            (Some(sid), None) => match device.subscriptions.renew(&sid, peer, timeout.as_deref()) {
                 Some(granted) => granted_response(&granted),
                 None => {
                     tracing::warn!(%sid, "renewal for an unknown subscription");
@@ -420,7 +420,13 @@ async fn event(
                 }
                 Err(refused) => {
                     tracing::warn!(%callback, ?peer, %refused, "subscription refused");
-                    (StatusCode::PRECONDITION_FAILED, refused.to_string()).into_response()
+                    // A ceiling is this server being busy, which a device may retry; the rest are
+                    // the request being wrong, which it may not.
+                    let status = match refused {
+                        crate::upnp::gena::Refused::TooMany => StatusCode::SERVICE_UNAVAILABLE,
+                        _ => StatusCode::PRECONDITION_FAILED,
+                    };
+                    (status, refused.to_string()).into_response()
                 }
             },
             _ => (StatusCode::BAD_REQUEST, "SUBSCRIBE needs CALLBACK or SID").into_response(),

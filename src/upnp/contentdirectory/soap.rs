@@ -110,12 +110,20 @@ pub fn fault_envelope(fault: &Fault) -> String {
     )
 }
 
+/// One pass: the DIDL of a large container is megabytes, and a `replace` per character copied all
+/// of it again each time.
 fn escape_text(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    let mut escaped = String::with_capacity(value.len() + value.len() / 16);
+    for character in value.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            other => escaped.push(other),
+        }
+    }
+    escaped
 }
 
 fn element_text(xml: &str, local_name: &str) -> Option<String> {

@@ -2,6 +2,11 @@
 
 use crate::upnp::didl;
 
+/// What one answer carries where the client named no count. Zero means "every child" on the wire,
+/// and a library of tens of thousands of tracks is not an answer a renderer can hold: the total
+/// still says how many there are, so a client that wants the rest asks for it.
+const MOST_AT_ONCE: usize = 2_000;
+
 /// A count of zero means every child.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Window {
@@ -11,6 +16,7 @@ pub(super) struct Window {
 
 impl Window {
     pub(super) fn new(from: usize, count: usize) -> Self {
+        let count = if count == 0 { MOST_AT_ONCE } else { count };
         Self { from, count }
     }
 
@@ -76,10 +82,21 @@ mod tests {
     }
 
     #[test]
-    fn requested_count_zero_means_everything() {
+    fn requested_count_zero_means_everything_it_can_carry() {
         let items = [1, 2, 3, 4, 5];
         assert_eq!(window(0, 0).of(&items), &items[..]);
         assert_eq!(window(2, 0).of(&items), &items[2..]);
+        assert_eq!(
+            window(0, 0).open_range(),
+            0..MOST_AT_ONCE,
+            "a library of tens of thousands of tracks is not one answer, and the total still says \
+             how many there are"
+        );
+        assert_eq!(
+            Window::ALL.open_range(),
+            0..usize::MAX,
+            "what this server asks itself for is not capped"
+        );
     }
 
     #[test]

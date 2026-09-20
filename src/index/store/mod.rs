@@ -18,10 +18,15 @@ use crate::index::sweep;
 /// Paths probed, spread across the rows, before deciding whether they describe another library.
 const SAMPLE: usize = 16;
 
-/// Bump when a file, cover or refused row changes shape.
+/// Bump when a row becomes unsafe to read back at all: every one is deleted and read again.
 const SCHEMA_VERSION: &str = "2";
 /// Versioned apart so a parser change rereads no audio file.
 const PLAYLIST_VERSION: &str = "1";
+/// Bump when a reader learns a field an older row cannot carry. Stamped on every row it writes:
+/// rows from another reader are still served, so the library answers from the first second, and
+/// they miss in the cache, so the pass reads those files again and replaces them one by one.
+/// Emptying the tables instead costs a whole cold walk before anything is served at all.
+const READER_VERSION: i64 = 1;
 
 /// `STRICT` so a wrong type is refused at write time.
 const SCHEMA: &str = "
@@ -33,25 +38,29 @@ CREATE TABLE IF NOT EXISTS files (
     relative TEXT PRIMARY KEY,
     size INTEGER NOT NULL,
     mtime INTEGER NOT NULL,
-    payload TEXT NOT NULL
+    payload TEXT NOT NULL,
+    reader INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 CREATE TABLE IF NOT EXISTS covers (
     relative TEXT PRIMARY KEY,
     size INTEGER NOT NULL,
     mtime INTEGER NOT NULL,
-    payload TEXT NOT NULL
+    payload TEXT NOT NULL,
+    reader INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 CREATE TABLE IF NOT EXISTS playlists (
     relative TEXT PRIMARY KEY,
     size INTEGER NOT NULL,
     mtime INTEGER NOT NULL,
-    payload TEXT NOT NULL
+    payload TEXT NOT NULL,
+    reader INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 CREATE TABLE IF NOT EXISTS refused (
     relative TEXT PRIMARY KEY,
     size INTEGER NOT NULL,
     mtime INTEGER NOT NULL,
-    payload TEXT NOT NULL
+    payload TEXT NOT NULL,
+    reader INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 CREATE TABLE IF NOT EXISTS added (
     identity TEXT PRIMARY KEY,
@@ -101,6 +110,22 @@ impl Store {
         Self::open(path)
     }
 
+    /// Says nothing where the reader has not moved, and says what a moved one means: the rows are
+    /// kept and served, and every file behind them is read again as the pass reaches it.
+    fn note_reader(&mut self) -> Result<()> {
+        let now = READER_VERSION.to_string();
+        if let Some(older) = self.meta("reader_version")?
+            && older != now
+        {
+            tracing::info!(
+                from = %older, to = %now,
+                "these rows were written by another reader: they are served while the files \
+                 behind them are read again"
+            );
+        }
+        self.set_meta("reader_version", &now)
+    }
+
     fn drop_stale(&mut self, key: &str, version: &str, tables: &[&str]) -> Result<()> {
         match self.meta(key)?.as_deref() {
             Some(held) if held == version => return Ok(()),
@@ -128,9 +153,22 @@ impl Store {
         connection.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
-             PRAGMA busy_timeout = 5000;",
+             PRAGMA busy_timeout = 5000;
+             -- Sort and index scratch stays off a NAS disk, and the default page cache is small
+             -- for a table of tens of thousands of payloads. Negative is KiB.
+             PRAGMA temp_store = MEMORY;
+             PRAGMA cache_size = -16000;",
         )?;
         connection.execute_batch(SCHEMA)?;
+        for table in ["files", "covers", "playlists", "refused"] {
+            // A column a database written before it existed has not got. Anything else, including
+            // its already being there, is the table being as it should. The default is this
+            // reader: the column arrived without the payload changing shape, so what is already
+            // stored is what this reader writes, and an owner updating the package pays nothing.
+            let _ = connection.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN reader INTEGER NOT NULL DEFAULT {READER_VERSION};"
+            ));
+        }
         let mut store = Self { connection };
 
         store.drop_stale(
@@ -139,6 +177,7 @@ impl Store {
             &["files", "covers", "refused"],
         )?;
         store.drop_stale("playlist_version", PLAYLIST_VERSION, &["playlists"])?;
+        store.note_reader()?;
 
         let identity_version = IDENTITY_VERSION.to_string();
         if let Some(older) = store.meta("identity_version")?
@@ -404,13 +443,14 @@ impl Store {
         table: &str,
     ) -> Result<(HashMap<PathBuf, Row<T>>, usize)> {
         let mut statement = self.connection.prepare(&format!(
-            "SELECT relative, size, mtime, payload FROM {table}"
+            "SELECT relative, size, mtime, payload, reader FROM {table}"
         ))?;
         let rows = statement.query_map([], |row| {
             let relative: String = row.get(0)?;
             let size: i64 = row.get(1)?;
             let mtime: i64 = row.get(2)?;
             let payload: String = row.get(3)?;
+            let reader: i64 = row.get(4)?;
             Ok((
                 PathBuf::from(relative),
                 Fingerprint {
@@ -418,12 +458,13 @@ impl Store {
                     mtime,
                 },
                 payload,
+                reader,
             ))
         })?;
         let mut kept = HashMap::new();
         let mut unreadable = 0usize;
         for row in rows {
-            let Ok((relative, fingerprint, text)) = row else {
+            let Ok((relative, fingerprint, text, reader)) = row else {
                 unreadable += 1;
                 continue;
             };
@@ -435,6 +476,7 @@ impl Store {
                             fingerprint,
                             digest: digest(&text),
                             payload,
+                            reader,
                         },
                     );
                 }
@@ -710,9 +752,10 @@ fn write_files<'a>(
         .map(|found| (found.path.as_path(), found.fingerprint))
         .collect();
     let mut upsert = transaction.prepare(
-        "INSERT INTO files (relative, size, mtime, payload) VALUES (?1, ?2, ?3, ?4)
+        "INSERT INTO files (relative, size, mtime, payload, reader) VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT (relative) DO UPDATE
-         SET size = excluded.size, mtime = excluded.mtime, payload = excluded.payload",
+         SET size = excluded.size, mtime = excluded.mtime, payload = excluded.payload,
+             reader = excluded.reader",
     )?;
     let mut covered: HashSet<&Path> = HashSet::with_capacity(files.len());
     for file in files {
@@ -739,7 +782,8 @@ fn write_files<'a>(
             relative,
             fingerprint.size as i64,
             fingerprint.mtime,
-            payload
+            payload,
+            READER_VERSION
         ])?;
         saved.files += 1;
     }
@@ -753,9 +797,10 @@ fn write_refused<'a>(
     saved: &mut Saved,
 ) -> Result<HashSet<&'a Path>> {
     let mut upsert = transaction.prepare(
-        "INSERT INTO refused (relative, size, mtime, payload) VALUES (?1, ?2, ?3, ?4)
+        "INSERT INTO refused (relative, size, mtime, payload, reader) VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT (relative) DO UPDATE
-         SET size = excluded.size, mtime = excluded.mtime, payload = excluded.payload",
+         SET size = excluded.size, mtime = excluded.mtime, payload = excluded.payload,
+             reader = excluded.reader",
     )?;
     let mut covered: HashSet<&Path> = HashSet::with_capacity(refused.len());
     for file in refused {
@@ -779,7 +824,8 @@ fn write_refused<'a>(
             relative,
             file.fingerprint.size as i64,
             file.fingerprint.mtime,
-            payload
+            payload,
+            READER_VERSION
         ])?;
         saved.refused += 1;
     }
@@ -805,9 +851,10 @@ fn write_covers(
         })
         .collect();
     let mut upsert = transaction.prepare(
-        "INSERT INTO covers (relative, size, mtime, payload) VALUES (?1, ?2, ?3, ?4)
+        "INSERT INTO covers (relative, size, mtime, payload, reader) VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT (relative) DO UPDATE
-         SET size = excluded.size, mtime = excluded.mtime, payload = excluded.payload",
+         SET size = excluded.size, mtime = excluded.mtime, payload = excluded.payload,
+             reader = excluded.reader",
     )?;
     let mut covered: HashSet<PathBuf> = HashSet::with_capacity(walked.covers.len());
     for image in walked.covers.values() {
@@ -831,7 +878,8 @@ fn write_covers(
             text,
             image.fingerprint.size as i64,
             image.fingerprint.mtime,
-            payload
+            payload,
+            READER_VERSION
         ])?;
         saved.covers += 1;
     }
@@ -845,9 +893,10 @@ fn write_playlists<'a>(
     saved: &mut Saved,
 ) -> Result<HashSet<&'a Path>> {
     let mut upsert = transaction.prepare(
-        "INSERT INTO playlists (relative, size, mtime, payload) VALUES (?1, ?2, ?3, ?4)
+        "INSERT INTO playlists (relative, size, mtime, payload, reader) VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT (relative) DO UPDATE
-         SET size = excluded.size, mtime = excluded.mtime, payload = excluded.payload",
+         SET size = excluded.size, mtime = excluded.mtime, payload = excluded.payload,
+             reader = excluded.reader",
     )?;
     let mut covered: HashSet<&Path> = HashSet::with_capacity(playlists.len());
     for found in playlists {
@@ -867,7 +916,8 @@ fn write_playlists<'a>(
             relative,
             found.fingerprint.size as i64,
             found.fingerprint.mtime,
-            payload
+            payload,
+            READER_VERSION
         ])?;
         saved.playlists += 1;
     }
@@ -1126,6 +1176,80 @@ mod tests {
     }
 
     #[test]
+    fn a_store_written_before_the_reader_column_existed_opens_and_keeps_its_rows() {
+        let store = OnDisk::new("without-reader");
+        {
+            // The tables as a build before this column wrote them.
+            let connection = Connection::open(&store.0).expect("a database");
+            connection
+                .execute_batch(
+                    "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
+                     CREATE TABLE files (
+                        relative TEXT PRIMARY KEY,
+                        size INTEGER NOT NULL,
+                        mtime INTEGER NOT NULL,
+                        payload TEXT NOT NULL
+                     ) STRICT;
+                     INSERT INTO files VALUES ('a/1.flac', 27, 1700000000, '{\"tags\":{}}');
+                     INSERT INTO meta VALUES ('schema_version', '2');",
+                )
+                .expect("the older shape");
+            let roots: Roots = Path::new(ROOT).into();
+            connection
+                .execute(
+                    "INSERT INTO meta VALUES ('root', ?1)",
+                    [roots.meta().expect("a named root")],
+                )
+                .expect("the library those rows name");
+        }
+
+        let opened = store.open();
+        assert_eq!(
+            opened
+                .remembered(Path::new(ROOT))
+                .expect("what the store holds")
+                .len(),
+            1,
+            "an owner updating the package keeps the library the last build wrote"
+        );
+        let cache = opened.cache(Path::new(ROOT)).expect("a cache");
+        assert!(
+            cache
+                .file(Path::new("a/1.flac"), fingerprint(27, 1_700_000_000))
+                .is_some(),
+            "and nothing is read again: the column arrived without the payload changing shape, \
+             so an owner updating the package pays nothing for it"
+        );
+    }
+
+    #[test]
+    fn a_row_an_older_reader_wrote_is_served_and_read_again_rather_than_deleted() {
+        let mut store = Store::in_memory().expect("a store");
+        let files = [scanned("a/1.flac", "Juana Peña", None)];
+        let print = fingerprint(27, 1_700_000_000);
+        assert_eq!(saved(&mut store, &files, print).files, 1);
+        store
+            .connection
+            .execute("UPDATE files SET reader = 0", [])
+            .expect("a row from an older reader");
+
+        assert_eq!(
+            store
+                .remembered(Path::new(ROOT))
+                .expect("what the store holds")
+                .len(),
+            1,
+            "the library answers from the first second, where emptying the table would have \
+             cost a whole cold walk before anything was served"
+        );
+        let cache = store.cache(Path::new(ROOT)).expect("a cache");
+        assert!(
+            cache.file(Path::new("a/1.flac"), print).is_none(),
+            "and the file is read again, since this row cannot carry what this reader knows"
+        );
+    }
+
+    #[test]
     fn a_playlist_the_parser_has_changed_under_is_read_again_and_no_file_is() {
         let store = OnDisk::new("playlist-version");
         {
@@ -1137,7 +1261,8 @@ mod tests {
             );
             open.connection
                 .execute(
-                    "INSERT INTO playlists VALUES ('a/p.m3u', 9, 1, '{\"title\":\"P\"}')",
+                    "INSERT INTO playlists (relative, size, mtime, payload, reader)
+                     VALUES ('a/p.m3u', 9, 1, '{\"title\":\"P\"}', 1)",
                     [],
                 )
                 .expect("a playlist row");

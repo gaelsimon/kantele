@@ -75,7 +75,9 @@ impl Advertiser {
     pub async fn run(&self, shutdown: tokio::sync::oneshot::Receiver<()>) -> anyhow::Result<()> {
         let mut shutdown = shutdown;
         let serving = std::sync::Mutex::new(Vec::new());
-        let mut listener = bind_listener()?;
+        // Not `bind_listener()?`: something else holding 1900 at this instant would leave the
+        // server serving its page and announcing nothing until somebody restarted it.
+        let mut listener = taken_again().await;
 
         loop {
             let deaf = {
