@@ -194,17 +194,29 @@ async fn main() -> Result<()> {
         _ if roots.is_empty() => None,
         _ => service::remembered(&indexing, &mut store),
     };
-    let verify = remembered.is_some() && arguments.start != Start::Remembered;
+    let opening = opening(
+        remembered.is_some(),
+        arguments.start,
+        arguments.report_only || arguments.album_list.is_some(),
+    );
     let mut first_pass = None;
     let library = match remembered {
         Some(library) => library,
         None if roots.is_empty() => kantele::index::Library::default(),
-        None => {
+        None if !opening.walk_here => {
             if arguments.start == Start::Remembered {
                 tracing::warn!(
                     "nothing is remembered about this folder, so it is walked despite --no-scan"
                 );
             }
+            tracing::info!(
+                folder = %roots.describe(),
+                "serving nothing yet: the page and the network answer now, and the library is \
+                 read in the background"
+            );
+            kantele::index::Library::default()
+        }
+        None => {
             let pass = if arguments.start == Start::Reread {
                 Pass::Reread
             } else {
@@ -220,7 +232,7 @@ async fn main() -> Result<()> {
             indexed.library
         }
     };
-    if library.is_empty() && !roots.is_empty() {
+    if library.is_empty() && !roots.is_empty() && !opening.verify {
         tracing::warn!("nothing playable found: a player will show an empty folder");
     }
     if let Some(path) = &arguments.album_list {
@@ -249,7 +261,7 @@ async fn main() -> Result<()> {
         Started {
             operation,
             first_pass,
-            verify,
+            verify: opening.verify,
             reread: arguments.start == Start::Reread,
         },
     )
@@ -257,6 +269,32 @@ async fn main() -> Result<()> {
 }
 
 /// What a start knows that the index does not, handed to the server in one piece.
+/// What a start does before it serves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Opening {
+    /// The walk finishes before anything is served, because the caller wants the index printed.
+    walk_here: bool,
+    /// The first pass runs in the background once the server is up.
+    verify: bool,
+}
+
+/// A walk of a whole library is minutes on a NAS, and nothing answers while it runs: no page, no
+/// description, nothing on the network. Only a start that prints the index and leaves waits for
+/// it. Every other one serves what it has, nothing at all on a first start, and the pass that
+/// follows publishes the library under a moved update id.
+fn opening(remembered: bool, start: Start, in_hand: bool) -> Opening {
+    if remembered {
+        return Opening {
+            walk_here: false,
+            verify: start != Start::Remembered,
+        };
+    }
+    Opening {
+        walk_here: in_hand,
+        verify: !in_hand,
+    }
+}
+
 struct Started {
     operation: Operation,
     /// The pass that built the index, where one ran rather than the store answering.
@@ -471,6 +509,52 @@ mod tests {
     use std::path::Path;
 
     use super::*;
+
+    #[test]
+    fn a_start_with_nothing_remembered_serves_before_it_walks() {
+        assert_eq!(
+            opening(false, Start::Cached, false),
+            Opening {
+                walk_here: false,
+                verify: true
+            },
+            "a first start answers the page and the network while the library is read"
+        );
+        assert_eq!(
+            opening(false, Start::Remembered, false),
+            Opening {
+                walk_here: false,
+                verify: true
+            },
+            "and one asked not to scan still has to, since nothing is remembered"
+        );
+        assert_eq!(
+            opening(true, Start::Cached, false),
+            Opening {
+                walk_here: false,
+                verify: true
+            },
+            "a store answers at once and the pass checks it against the tree"
+        );
+        assert_eq!(
+            opening(true, Start::Remembered, false),
+            Opening {
+                walk_here: false,
+                verify: false
+            },
+            "unless the owner asked for the store and nothing else"
+        );
+        for start in [Start::Cached, Start::Reread, Start::Remembered] {
+            assert_eq!(
+                opening(false, start, true),
+                Opening {
+                    walk_here: true,
+                    verify: false
+                },
+                "a start that prints the index and leaves waits for the walk"
+            );
+        }
+    }
 
     fn parse(arguments: &[&str]) -> Result<Arguments> {
         Arguments::parse(

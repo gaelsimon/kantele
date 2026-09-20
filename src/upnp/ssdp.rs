@@ -25,6 +25,12 @@ const REJOIN: Duration = Duration::from_secs(120);
 
 const SALVO: Duration = Duration::from_secs(1);
 
+/// Receive failures in a row before the socket is taken again rather than read on for ever.
+const DEAF: usize = 5;
+
+/// How long to wait before taking the socket again, and between tries where something holds it.
+const AGAIN: Duration = Duration::from_secs(2);
+
 fn notification_types(udn: &str) -> Vec<(String, String)> {
     let uuid = format!("uuid:{udn}");
     vec![
@@ -67,16 +73,26 @@ impl Advertiser {
     }
 
     pub async fn run(&self, shutdown: tokio::sync::oneshot::Receiver<()>) -> anyhow::Result<()> {
-        let listener = bind_listener()?;
+        let mut shutdown = shutdown;
         let serving = std::sync::Mutex::new(Vec::new());
+        let mut listener = bind_listener()?;
 
-        let announce = self.announce_loop(&listener, &serving);
-        let respond = self.respond_loop(&listener);
-
-        tokio::select! {
-            result = announce => result?,
-            result = respond => result?,
-            _ = shutdown => {}
+        loop {
+            let deaf = {
+                let announce = self.announce_loop(&listener, &serving);
+                let respond = self.respond_loop(&listener);
+                tokio::select! {
+                    result = announce => { result?; false }
+                    result = respond => { result?; true }
+                    _ = &mut shutdown => false,
+                }
+            };
+            if !deaf {
+                break;
+            }
+            // The announcements start over on the new socket, which is what a client that stopped
+            // hearing this server needs anyway.
+            listener = taken_again().await;
         }
 
         let interfaces = serving.lock().map(|held| held.clone()).unwrap_or_default();
@@ -184,11 +200,22 @@ impl Advertiser {
 
     async fn respond_loop(&self, listener: &UdpSocket) -> anyhow::Result<()> {
         let mut buffer = vec![0_u8; 2048];
+        let mut failures = 0_usize;
         loop {
             let (read, from) = match listener.recv_from(&mut buffer).await {
-                Ok(received) => received,
+                Ok(received) => {
+                    failures = 0;
+                    received
+                }
                 Err(error) => {
-                    tracing::warn!(%error, "ssdp receive failed; listening on");
+                    failures += 1;
+                    tracing::warn!(%error, failures, "ssdp receive failed; listening on");
+                    // A socket that has stopped answering is read for ever otherwise, and the
+                    // server sits there announcing itself and replying to nobody.
+                    if failures >= DEAF {
+                        tracing::warn!("the ssdp socket answers nothing: taking it again");
+                        return Ok(());
+                    }
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     continue;
                 }
@@ -280,6 +307,20 @@ fn bind_listener() -> io::Result<UdpSocket> {
     socket.bind(&SocketAddr::from((Ipv4Addr::UNSPECIFIED, PORT)).into())?;
     socket.set_nonblocking(true)?;
     UdpSocket::from_std(socket.into())
+}
+
+/// The socket again, waiting for it where something else still holds it. A failure here is not
+/// worth ending the server over: the rest of it serves.
+async fn taken_again() -> UdpSocket {
+    loop {
+        match bind_listener() {
+            Ok(listener) => return listener,
+            Err(error) => {
+                tracing::warn!(%error, "the ssdp socket could not be taken again");
+                tokio::time::sleep(AGAIN).await;
+            }
+        }
+    }
 }
 
 fn join_group(listener: &UdpSocket, interface: Ipv4Addr) -> io::Result<()> {
