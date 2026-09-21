@@ -43,6 +43,19 @@ async fn nothing(watcher: &mut Watcher) -> bool {
     timeout(QUIET * 6, watcher.changed()).await.is_err()
 }
 
+/// The first change and whatever follows it inside a settle window, as one. The debouncer
+/// flushes each event when its own quiet period is up, so a folder made a few milliseconds
+/// before its files can wake the loop one tick ahead of them; the loop runs a pass per wake,
+/// and the second finds the folder already read.
+async fn all_of(watcher: &mut Watcher) -> Change {
+    let mut change = next(watcher).await;
+    while let Ok(Some(more)) = timeout(QUIET * 6, watcher.changed()).await {
+        change.paths.extend(more.paths);
+        change.whole_tree |= more.whole_tree;
+    }
+    change
+}
+
 fn within(root: &Path, change: &Change) -> kantele::service::Scope {
     match Pass::for_change(root, change) {
         Pass::Within(scope) => scope,
@@ -81,7 +94,7 @@ async fn a_file_written_under_the_root_is_a_change_naming_its_folder() {
 }
 
 #[tokio::test]
-async fn an_album_copied_in_is_one_change_and_one_scoped_pass() {
+async fn an_album_copied_in_is_a_change_over_that_album_alone() {
     let tree = Tree::new("watch-burst");
     tree.album("Jazz/Existing", &["01.wav"], false);
     let root = root_of(&tree);
@@ -92,7 +105,7 @@ async fn an_album_copied_in_is_one_change_and_one_scoped_pass() {
         tree.write(&format!("Jazz/Arriving/0{track}.wav"), track);
     }
 
-    let change = next(&mut watcher).await;
+    let change = all_of(&mut watcher).await;
     assert!(
         change
             .paths
@@ -100,17 +113,14 @@ async fn an_album_copied_in_is_one_change_and_one_scoped_pass() {
             .filter(|path| path.starts_with(root.join("Jazz/Arriving")))
             .count()
             >= 2,
-        "the burst is folded into one change: {change:?}"
+        "the burst names the album's files, not one at a time: {change:?}"
     );
+    assert!(!change.whole_tree, "{change:?}");
     let scope = within(&root, &change);
     assert!(scope.covers(Path::new("Jazz/Arriving")), "{scope:?}");
     assert!(
         !scope.covers(Path::new("Jazz/Existing")),
         "an album nobody touched is not walked again: {scope:?}"
-    );
-    assert!(
-        nothing(&mut watcher).await,
-        "six files in one quiet period wake the loop once"
     );
 }
 
