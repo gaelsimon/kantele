@@ -376,6 +376,29 @@ fn the_page_and_the_control_interface_are_served_by_the_binary() {
     assert_eq!(answered["library"]["albums"], 1);
     assert_eq!(answered["store"]["open"], true);
 
+    // The pass that published is written down a moment after the library it published appears.
+    let deadline = Instant::now() + PATIENCE;
+    let last = loop {
+        let status = ask(
+            server.port,
+            "GET",
+            "/api/status",
+            &[("Accept", "application/json")],
+            b"",
+        );
+        let json: serde_json::Value = serde_json::from_slice(&status.body).expect("json");
+        if !json["last_pass"].is_null() {
+            break json["last_pass"].clone();
+        }
+        assert!(Instant::now() < deadline, "no pass written down: {json}");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(
+        last["outcome"], "published",
+        "the page says what became of the index, not only that a pass ran: {last}"
+    );
+    assert_eq!(last["published"], true);
+
     let plain = ask(server.port, "GET", "/api/status", &[], b"");
     assert_eq!(plain.status, 200);
     assert!(

@@ -702,6 +702,7 @@ pub async fn keep_fresh(
     if verify {
         let first = if reread { Pass::Reread } else { Pass::Whole };
         store = rebuild(&device, &passes, &settings, store, first, "index verified").await;
+        ceiling_advice(&mut ceiling, &passes, &settings);
     }
     let mut asked = passes.requests_asked_for();
     let mut sweeps = sweeps_every(settings.options.sweep, store.is_some());
@@ -743,15 +744,21 @@ pub async fn keep_fresh(
         settings = fresh;
         let Some(pass) = pass else { continue };
         store = rebuild(&device, &passes, &settings, store, pass, "index replaced").await;
-        if let Some(refused) = ceiling
-            && passes.last().is_some_and(|last| last.whole_tree)
-        {
-            let folders = settings.underway.progress.reached().folders;
-            if folders > 0 {
-                tracing::warn!("{}", watch_advice(refused, folders));
-                ceiling = None;
-            }
-        }
+        ceiling_advice(&mut ceiling, &passes, &settings);
+    }
+}
+
+/// Once a whole pass has counted the folders, the line that lifts the kernel's ceiling above
+/// them, said once.
+fn ceiling_advice(ceiling: &mut Option<Option<u64>>, passes: &Passes, settings: &Indexing) {
+    let Some(refused) = *ceiling else { return };
+    if !passes.last().is_some_and(|last| last.whole_tree) {
+        return;
+    }
+    let folders = settings.underway.progress.reached().folders;
+    if folders > 0 {
+        tracing::warn!("{}", watch_advice(refused, folders));
+        *ceiling = None;
     }
 }
 
@@ -1011,6 +1018,7 @@ async fn rebuild(
                 // The loop persists the number: this task is the only one holding the store,
                 // and the settings page moves it too.
                 let id = device.publish(served).await;
+                fresh.pass.outcome = Outcome::Published;
                 tracing::info!(system_update_id = id, "{done}");
             }
         }
