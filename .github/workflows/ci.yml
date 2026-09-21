@@ -50,7 +50,8 @@ jobs:
           build-warnings: allow
       - uses: mlugg/setup-zig@v2
       - run: cargo install cargo-zigbuild --locked
-      - run: cargo zigbuild test --target ${{ matrix.target }}
+      # `cargo zigbuild` is the build alone; the other cargo verbs go through the binary itself.
+      - run: cargo-zigbuild test --target ${{ matrix.target }}
 
   page:
     runs-on: ubuntu-latest

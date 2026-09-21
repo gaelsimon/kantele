@@ -129,6 +129,14 @@ fn collect(
 }
 
 fn matters(path: &Path, kind: &EventKind, roots: &Roots, exclude: &scan::Exclusions) -> bool {
+    // A folder said to be modified is a folder whose contents or attributes moved, and the content
+    // arrives as its own event on every backend. Windows says it for the parent of every change,
+    // and a pass over the parent is a pass over every album beside the one that changed.
+    if matches!(kind, EventKind::Modify(modified) if !matches!(modified, ModifyKind::Name(_)))
+        && path.is_dir()
+    {
+        return false;
+    }
     let skipped = path
         .components()
         .filter_map(|part| part.as_os_str().to_str())
@@ -289,6 +297,45 @@ mod tests {
         assert!(!counts("/music/a/@eaDir/1.flac/THUMB.jpg", &file));
         assert!(!counts("/music/#recycle/deleted.flac", &file));
         assert!(!counts("/music/a/notes.txt", &file));
+    }
+
+    #[test]
+    fn a_folder_that_is_there_and_merely_modified_is_not_a_change_of_its_own() {
+        let dir = std::env::temp_dir().join(format!("kantele-watch-dir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a folder on disk");
+        let roots = Roots::one(std::env::temp_dir());
+        let none = Exclusions::default();
+        assert!(
+            !matters(&dir, &EventKind::Modify(ModifyKind::Any), &roots, &none),
+            "what changed inside it is an event of its own"
+        );
+        assert!(
+            !matters(
+                &dir,
+                &EventKind::Modify(ModifyKind::Metadata(
+                    notify_debouncer_full::notify::event::MetadataKind::Any
+                )),
+                &roots,
+                &none
+            ),
+            "a chmod on a folder changes nothing served"
+        );
+        assert!(
+            matters(
+                &dir,
+                &EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+                &roots,
+                &none
+            ),
+            "a folder renamed is a folder that arrived"
+        );
+        assert!(matters(
+            &dir,
+            &EventKind::Create(CreateKind::Folder),
+            &roots,
+            &none
+        ));
+        let _ = std::fs::remove_dir(&dir);
     }
 
     #[test]

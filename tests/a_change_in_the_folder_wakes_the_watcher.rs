@@ -169,20 +169,25 @@ async fn an_album_arriving_by_rename_names_the_folder_it_now_is() {
     let tree = Tree::new("watch-rename");
     tree.album("Jazz/Album", &["01.wav"], false);
     let staging = Tree::new("watch-rename-staging");
-    staging.album("R.E.M.", &["01.wav", "02.wav"], true);
+    // A dot inside the name, not at its end: Windows drops a trailing dot from any file name.
+    staging.album("St. Vincent", &["01.wav", "02.wav"], true);
     let root = root_of(&tree);
     let mut watcher = watching(&root, Exclusions::default());
     settled(&mut watcher).await;
 
-    std::fs::rename(staging.path("R.E.M."), tree.path("R.E.M.")).expect("moving the album in");
+    std::fs::rename(staging.path("St. Vincent"), tree.path("St. Vincent"))
+        .expect("moving the album in");
 
     let change = next(&mut watcher).await;
     assert!(
-        change.paths.iter().any(|path| path.ends_with("R.E.M.")),
+        change
+            .paths
+            .iter()
+            .any(|path| path.ends_with("St. Vincent")),
         "the folder is named, dot in its name and all: {change:?}"
     );
     let scope = within(&root, &change);
-    assert!(scope.covers(Path::new("R.E.M.")), "{scope:?}");
+    assert!(scope.covers(Path::new("St. Vincent")), "{scope:?}");
 }
 
 #[tokio::test]
