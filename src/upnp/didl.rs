@@ -214,6 +214,12 @@ fn write_item(writer: &mut Writer<Cursor<Vec<u8>>>, track: &Track, parent: &Obje
         &credits::names(&track.composers),
         to.profile,
     );
+    roles(
+        writer,
+        "Conductor",
+        &credits::names(&track.conductors),
+        to.profile,
+    );
     if let Some(number) = track.track_number {
         text_element(writer, "upnp:originalTrackNumber", &number.to_string());
     }
@@ -426,6 +432,7 @@ mod tests {
             artists: vec![Credit::new("Sierra Maestra")],
             album_artists: vec![Credit::new("Sierra Maestra")],
             composers: Vec::new(),
+            conductors: Vec::new(),
             album: Some("!Dundunbanza!".to_owned()),
             genres: vec!["Latin".to_owned()],
             date: Some("1994-01-01".to_owned()),
@@ -456,6 +463,17 @@ mod tests {
         );
         assert_eq!(format_duration(Duration::ZERO), "0:00:00.000");
         assert_eq!(format_duration(Duration::from_secs(3661)), "1:01:01.000");
+    }
+
+    #[test]
+    fn a_conductor_rides_on_the_artist_element_as_a_role() {
+        let mut track = track();
+        track.conductors = vec![Credit::new("Herbert von Karajan")];
+        let xml = items(&[track], &ObjectId::root(), To::plain("http://h"));
+        assert!(
+            xml.contains(r#"<upnp:artist role="Conductor">Herbert von Karajan</upnp:artist>"#),
+            "a control point with a classical mode builds its own list from this: {xml}"
+        );
     }
 
     #[test]

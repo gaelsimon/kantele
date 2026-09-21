@@ -27,6 +27,9 @@ schema 2 playlist 1
     "composers": [
       "Arsenio Rodríguez"
     ],
+    "conductors": [
+      "Juan de Marcos González"
+    ],
     "genres": [
       "Son",
       "Latin"

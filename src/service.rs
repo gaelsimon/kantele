@@ -442,6 +442,17 @@ fn indexing_pass(indexing: &Indexing, store: &mut Option<Store>, pass: Pass) -> 
         },
         Some(store) => persist(store, content_dir, &mut scan, &cache, &scope),
     };
+    // A whole pass that wrote is the moment the store is worth copying: the copy is what serves
+    // the day the file will not open, with the identity and the dates added still in it.
+    if persisted.stored
+        && scope.is_whole_tree()
+        && let Some(store) = store.as_ref()
+    {
+        match store.copy_beside() {
+            Ok(copy) => tracing::info!(copy = %copy.display(), "the store is copied beside itself"),
+            Err(error) => tracing::warn!(%error, "the store was not copied"),
+        }
+    }
     let report = PassReport {
         ended: now(),
         seconds: started.elapsed().as_secs_f32(),
@@ -685,7 +696,7 @@ pub async fn keep_fresh(
 ) {
     let mut settings = indexing.now();
     let mut bumps = device.bumps();
-    let mut watcher = watching(&settings).await;
+    let (mut watcher, mut ceiling) = watching(&settings).await;
 
     let mut store = store;
     if verify {
@@ -723,7 +734,7 @@ pub async fn keep_fresh(
         let fresh = indexing.now();
         if fresh.roots != settings.roots {
             tracing::info!(folder = %fresh.roots.describe(), "the music folders changed");
-            watcher = watching(&fresh).await;
+            (watcher, ceiling) = watching(&fresh).await;
             store = repointed(store, fresh.roots.clone()).await;
         }
         if fresh.options.sweep != settings.options.sweep {
@@ -732,32 +743,77 @@ pub async fn keep_fresh(
         settings = fresh;
         let Some(pass) = pass else { continue };
         store = rebuild(&device, &passes, &settings, store, pass, "index replaced").await;
+        if let Some(refused) = ceiling
+            && passes.last().is_some_and(|last| last.whole_tree)
+        {
+            let folders = settings.underway.progress.reached().folders;
+            if folders > 0 {
+                tracing::warn!("{}", watch_advice(refused, folders));
+                ceiling = None;
+            }
+        }
     }
 }
 
-/// The watch on the folders in force, or nothing where none could be established.
-async fn watching(indexing: &Indexing) -> Option<watch::Watcher> {
+/// The watch on the folders in force, or nothing where none could be established. The second
+/// is the kernel's ceiling on folder watches when that is what refused it, read where the kernel
+/// publishes one; the exact line to raise it waits for a pass to count the folders.
+async fn watching(indexing: &Indexing) -> (Option<watch::Watcher>, Option<Option<u64>>) {
     if indexing.roots.is_empty() {
-        return None;
+        return (None, None);
     }
     let folder = indexing.roots.clone();
     let exclude = indexing.options.exclude.clone();
     match tokio::task::spawn_blocking(move || watch::Watcher::start(folder, watch::QUIET, exclude))
         .await
     {
-        Ok(Ok(watcher)) => Some(watcher),
+        Ok(Ok(watcher)) => (Some(watcher), None),
         Ok(Err(error)) => {
-            tracing::warn!(
-                %error,
-                "not watching for changes: a new album appears at the next timed check instead"
+            let at_ceiling = matches!(
+                error.kind,
+                notify_debouncer_full::notify::ErrorKind::MaxFilesWatch
             );
-            None
+            let ceiling = at_ceiling.then(watch_ceiling);
+            match ceiling.flatten() {
+                Some(ceiling) => tracing::warn!(
+                    ceiling,
+                    "not watching for changes: the kernel allows fewer folder watches than the \
+                     library has folders, so a new album appears at the next timed check instead"
+                ),
+                None => tracing::warn!(
+                    %error,
+                    "not watching for changes: a new album appears at the next timed check instead"
+                ),
+            }
+            (None, ceiling)
         }
         Err(error) => {
             tracing::error!(%error, "the watch was not established");
-            None
+            (None, None)
         }
     }
+}
+
+/// The kernel's ceiling on inotify watches, one per folder. Only Linux publishes one.
+fn watch_ceiling() -> Option<u64> {
+    std::fs::read_to_string("/proc/sys/fs/inotify/max_user_watches")
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// The line that lifts the ceiling above the library, with room for the albums to come.
+fn watch_advice(ceiling: Option<u64>, folders: usize) -> String {
+    let needed = (folders + folders / 4).div_ceil(1024) * 1024;
+    let allows = match ceiling {
+        Some(ceiling) => format!("the kernel allows {ceiling} folder watches"),
+        None => "the kernel allows fewer folder watches".to_owned(),
+    };
+    format!(
+        "{allows} and the library has {folders} folders: \
+         `sysctl fs.inotify.max_user_watches={needed}` lets it be watched"
+    )
 }
 
 /// Tells the store which library it serves, after the folders changed under it.
@@ -1101,6 +1157,19 @@ fn now() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_watch_advice_names_the_ceiling_the_folders_and_a_line_with_room_above_them() {
+        let advice = super::watch_advice(Some(8192), 12_034);
+        assert!(advice.contains("allows 8192 folder watches"), "{advice}");
+        assert!(advice.contains("has 12034 folders"), "{advice}");
+        assert!(
+            advice.contains("sysctl fs.inotify.max_user_watches=15360"),
+            "a quarter above the library, rounded up to the thousand: {advice}"
+        );
+        let unread = super::watch_advice(None, 12_034);
+        assert!(unread.contains("max_user_watches=15360"), "{unread}");
+    }
+
     use super::*;
     use crate::index::Scanned;
     use crate::upnp::client::Profiles;

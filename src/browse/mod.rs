@@ -122,9 +122,11 @@ impl Facet {
     fn values(self, track: &Track) -> Values<'_> {
         match self {
             Self::Genre => Values::Many(&track.genres),
+            // A compilation is served under its own credit but stands under no artist: one entry
+            // holding every compilation is not an artist anybody looks for.
             Self::Artist => Values::Credited(match () {
-                () if !track.album_artists.is_empty() => &track.album_artists,
                 () if track.compilation => &[],
+                () if !track.album_artists.is_empty() => &track.album_artists,
                 () => &track.artists,
             }),
             Self::AllArtists => Values::Credited(&track.artists),

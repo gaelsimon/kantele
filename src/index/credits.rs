@@ -5,8 +5,13 @@ use crate::index::fold;
 /// MusicBrainz's special-purpose artist for a release with no one credit.
 pub const VARIOUS_ARTISTS_MBID: &str = "89ad4ac3-39f7-470e-963a-56509c546377";
 
-/// Folded, so `V/A`, `V-A` and `V.A.` all match.
-const PLACEHOLDERS: &[&str] = &[
+/// The one spelling every variation is published under. MusicBrainz and Rate Your Music write
+/// this; Discogs and FreeDB write "Various". Serving both splits one collection in two.
+pub const VARIOUS_ARTISTS: &str = "Various Artists";
+
+/// Folded, so `V/A`, `V-A` and `V.A.` all match. These name the release as having no one artist,
+/// which is a statement, so they are kept and spelt one way.
+const VARIOUS: &[&str] = &[
     "various",
     "various artists",
     "various artist",
@@ -14,6 +19,10 @@ const PLACEHOLDERS: &[&str] = &[
     "v a",
     "v.a",
     "v.a.",
+];
+
+/// These name nobody at all, so they are dropped.
+const UNKNOWN: &[&str] = &[
     "unknown",
     "unknown artist",
     "[unknown]",
@@ -22,14 +31,13 @@ const PLACEHOLDERS: &[&str] = &[
     "none",
 ];
 
-pub fn is_placeholder(name: &str) -> bool {
-    let folded = fold(name);
-    PLACEHOLDERS.contains(&folded.as_str())
+/// The identifier is checked too: the list is English only.
+pub fn is_various(name: &str, mbid: Option<&str>) -> bool {
+    VARIOUS.contains(&fold(name).as_str()) || mbid == Some(VARIOUS_ARTISTS_MBID)
 }
 
-/// The identifier is checked too: the placeholder list is English only.
-fn refuses(name: &str, mbid: Option<&str>) -> bool {
-    is_placeholder(name) || mbid == Some(VARIOUS_ARTISTS_MBID)
+pub fn is_unknown(name: &str) -> bool {
+    UNKNOWN.contains(&fold(name).as_str())
 }
 
 /// Only when the tagger wrote one identifier per name.
@@ -37,26 +45,33 @@ fn aligned<'a>(names: &[String], mbids: &'a [String]) -> Option<&'a [String]> {
     (mbids.len() == names.len()).then_some(mbids)
 }
 
-/// A refused name takes its sort spelling with it, so later sorts stay aligned.
+/// A dropped name takes its sort spelling with it, so later sorts stay aligned. A Various spelling
+/// is kept under the one spelling, and loses its sort value, which described the old spelling.
 pub fn crediting(names: &[String], sorts: &[String], mbids: &[String]) -> Vec<Credit> {
     let mbids = aligned(names, mbids);
     names
         .iter()
         .enumerate()
-        .filter(|(at, name)| !refuses(name, mbids.and_then(|ids| ids.get(*at)).map(String::as_str)))
-        .map(|(at, name)| Credit {
-            name: name.clone(),
-            sort: sort_at(sorts, at),
+        .filter(|(_, name)| !is_unknown(name))
+        .map(|(at, name)| {
+            match is_various(name, mbids.and_then(|ids| ids.get(at)).map(String::as_str)) {
+                true => Credit::new(VARIOUS_ARTISTS),
+                false => Credit {
+                    name: name.clone(),
+                    sort: sort_at(sorts, at),
+                },
+            }
         })
         .collect()
 }
 
-pub fn holds_placeholder(names: &[String], mbids: &[String]) -> bool {
+/// Whether the tagger said this release has no one artist, by name or by identifier.
+pub fn credits_various(names: &[String], mbids: &[String]) -> bool {
     let mbids = aligned(names, mbids);
     names
         .iter()
         .enumerate()
-        .any(|(at, name)| refuses(name, mbids.and_then(|ids| ids.get(at)).map(String::as_str)))
+        .any(|(at, name)| is_various(name, mbids.and_then(|ids| ids.get(at)).map(String::as_str)))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -114,23 +129,24 @@ mod tests {
     }
 
     #[test]
-    fn the_spellings_a_real_library_carries_are_refused() {
+    fn the_spellings_a_real_library_carries_all_mean_various() {
         for value in ["Various", "Various Artists", "VARIOUS ARTISTS", "various"] {
-            assert!(is_placeholder(value), "{value}");
+            assert!(is_various(value, None), "{value}");
         }
     }
 
     #[test]
-    fn the_short_forms_a_tagger_writes_are_refused_however_they_are_punctuated() {
+    fn the_short_forms_a_tagger_writes_mean_various_however_they_are_punctuated() {
         for value in ["VA", "V.A.", "V/A", "V-A", "v.a"] {
-            assert!(is_placeholder(value), "{value}");
+            assert!(is_various(value, None), "{value}");
         }
     }
 
     #[test]
-    fn a_missing_credit_written_out_is_refused() {
+    fn a_missing_credit_written_out_names_nobody() {
         for value in ["Unknown", "Unknown Artist", "[Unknown Artist]", "None"] {
-            assert!(is_placeholder(value), "{value}");
+            assert!(is_unknown(value), "{value}");
+            assert!(!is_various(value, None), "{value}");
         }
     }
 
@@ -143,7 +159,7 @@ mod tests {
             "Van Halen",
             "Nonesuch Explorer Series",
         ] {
-            assert!(!is_placeholder(value), "{value}");
+            assert!(!is_various(value, None) && !is_unknown(value), "{value}");
         }
     }
 
@@ -152,10 +168,10 @@ mod tests {
     }
 
     #[test]
-    fn a_placeholder_beside_a_name_leaves_the_name() {
+    fn a_name_that_names_nobody_leaves_the_name_beside_it() {
         assert_eq!(
             shown(&crediting(
-                &names(&["Various Artists", "Bob Marley"]),
+                &names(&["Unknown Artist", "Bob Marley"]),
                 &[],
                 &[]
             )),
@@ -164,8 +180,12 @@ mod tests {
     }
 
     #[test]
-    fn nothing_but_placeholders_is_no_credit() {
-        assert!(crediting(&names(&["Various", "VA"]), &[], &[]).is_empty());
+    fn every_spelling_of_various_is_published_as_one() {
+        assert_eq!(
+            shown(&crediting(&names(&["Various", "VA"]), &[], &[])),
+            names(&[VARIOUS_ARTISTS, VARIOUS_ARTISTS]),
+            "two spellings of the same statement must not split a collection in two"
+        );
     }
 
     #[test]
@@ -175,10 +195,10 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_credit_takes_the_sort_spelling_written_beside_it() {
+    fn a_dropped_credit_takes_the_sort_spelling_written_beside_it() {
         let credits = crediting(
-            &names(&["Various Artists", "Bob Marley"]),
-            &names(&["Various Artists", "Marley, Bob"]),
+            &names(&["Unknown Artist", "Bob Marley"]),
+            &names(&["Unknown Artist", "Marley, Bob"]),
             &[],
         );
         assert_eq!(shown(&credits), names(&["Bob Marley"]));
@@ -186,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn the_musicbrainz_placeholder_is_refused_whatever_language_spelled_it() {
+    fn the_musicbrainz_identifier_means_various_whatever_language_spelled_it() {
         let credits = crediting(
             &names(&["Divers", "Amadou & Mariam"]),
             &[],
@@ -194,10 +214,10 @@ mod tests {
         );
         assert_eq!(
             shown(&credits),
-            names(&["Amadou & Mariam"]),
+            names(&[VARIOUS_ARTISTS, "Amadou & Mariam"]),
             "no spelling of `various` in any language is on the list, and the identifier is"
         );
-        assert!(holds_placeholder(
+        assert!(credits_various(
             &names(&["Divers"]),
             &names(&[VARIOUS_ARTISTS_MBID])
         ));

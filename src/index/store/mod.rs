@@ -26,7 +26,7 @@ const PLAYLIST_VERSION: &str = "1";
 /// rows from another reader are still served, so the library answers from the first second, and
 /// they miss in the cache, so the pass reads those files again and replaces them one by one.
 /// Emptying the tables instead costs a whole cold walk before anything is served at all.
-const READER_VERSION: i64 = 1;
+const READER_VERSION: i64 = 2;
 
 /// `STRICT` so a wrong type is refused at write time.
 const SCHEMA: &str = "
@@ -94,8 +94,9 @@ impl Store {
     }
 
     /// Opens the store, setting aside a file no build can read so the next start has one that
-    /// works. Without this a single corrupt file costs a full walk of the share on every start,
-    /// for ever, and the dates added never come back.
+    /// works. The copy taken after the last full pass goes in its place where there is one;
+    /// without it a single corrupt file costs a full walk of the share and the dates added never
+    /// come back.
     pub fn open_or_replace(path: &Path) -> Result<Self> {
         let refused = match Self::open(path) {
             Ok(store) => return Ok(store),
@@ -106,12 +107,43 @@ impl Store {
         }
         let aside = set_aside(path)
             .with_context(|| format!("setting aside a store that will not open: {refused:#}"))?;
+        let copy = copy_path(path);
+        if Self::open(&copy).is_ok() {
+            std::fs::copy(&copy, path)
+                .with_context(|| format!("putting {} in place", copy.display()))?;
+            tracing::warn!(
+                path = %path.display(), aside = %aside.display(), why = %format!("{refused:#}"),
+                "the saved index would not open: it is set aside and the copy taken after the \
+                 last full pass serves in its place"
+            );
+            return Self::open(path);
+        }
         tracing::warn!(
             path = %path.display(), aside = %aside.display(), why = %format!("{refused:#}"),
             "the saved index would not open: it is set aside and a new one started, so this start \
              reads every file and the dates added begin again"
         );
         Self::open(path)
+    }
+
+    /// A whole copy beside the store, for the day the store will not open. Written to a fresh
+    /// file and moved over the last copy, so a stop mid-write leaves the last copy whole.
+    pub fn copy_beside(&self) -> Result<PathBuf> {
+        let path = self
+            .connection
+            .path()
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .context("a store in memory has nothing to copy")?;
+        let copy = copy_path(&path);
+        let fresh = copy.with_extension("copy.tmp");
+        let _ = std::fs::remove_file(&fresh);
+        self.connection
+            .execute("VACUUM INTO ?1", [fresh.to_string_lossy().as_ref()])
+            .with_context(|| format!("copying the store to {}", fresh.display()))?;
+        std::fs::rename(&fresh, &copy)
+            .with_context(|| format!("moving {} over the last copy", fresh.display()))?;
+        Ok(copy)
     }
 
     /// Says nothing where the reader has not moved, and says what a moved one means: the rows are
@@ -612,6 +644,13 @@ fn beyond_reading(error: &anyhow::Error) -> bool {
     })
 }
 
+/// `index.sqlite.copy`, beside the store it copies.
+fn copy_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_owned();
+    name.push(".copy");
+    path.with_file_name(name)
+}
+
 fn set_aside(path: &Path) -> Result<PathBuf> {
     let aside = free_name(path);
     std::fs::rename(path, &aside).with_context(|| format!("moving {} aside", path.display()))?;
@@ -1048,6 +1087,7 @@ mod tests {
             album_artists: vec!["Sierra Maestra".to_owned()],
             album: Some("!Dundunbanza!".to_owned()),
             composers: vec!["Arsenio Rodríguez".to_owned()],
+            conductors: vec!["Juan de Marcos González".to_owned()],
             artist_sorts: vec!["Sierra Maestra".to_owned(), "Marcos, Juan de".to_owned()],
             album_artist_sorts: vec!["Sierra Maestra".to_owned()],
             composer_sorts: vec!["Rodríguez, Arsenio".to_owned()],
@@ -1636,6 +1676,68 @@ mod tests {
         assert_eq!(std::fs::read(&second).expect("beside it"), again);
         let _ = std::fs::remove_file(&second);
         let _ = std::fs::remove_file(&aside);
+    }
+
+    #[test]
+    fn a_copy_taken_after_a_pass_is_what_serves_when_the_store_will_not_open() {
+        let file = OnDisk::new("copy-restored");
+        let copy = super::copy_path(&file.0);
+        let aside = file.0.with_extension("unreadable");
+        for stale in [&copy, &aside] {
+            let _ = std::fs::remove_file(stale);
+        }
+        let minted = {
+            let mut store = file.open();
+            let udn = store.device_udn().expect("an identity minted");
+            // sqlite names the file by its real path, and a temp folder on macOS is a link.
+            let taken = store.copy_beside().expect("a copy");
+            assert_eq!(
+                taken.canonicalize().expect("the copy is there"),
+                copy.canonicalize().expect("beside the store")
+            );
+            udn
+        };
+        assert!(copy.exists(), "the copy sits beside the store");
+
+        for suffix in ["-wal", "-shm"] {
+            let mut companion = file.0.as_os_str().to_owned();
+            companion.push(suffix);
+            let _ = std::fs::remove_file(PathBuf::from(companion));
+        }
+        std::fs::write(&file.0, b"not a database").expect("writing over the store");
+
+        let mut replaced = Store::open_or_replace(&file.0).expect("a store in its place");
+        assert_eq!(
+            replaced.device_udn().expect("reading"),
+            minted,
+            "the identity the amplifiers know survives the corruption"
+        );
+        assert!(
+            aside.exists(),
+            "the broken file is kept for whoever wants to look"
+        );
+        drop(replaced);
+        for stale in [&copy, &aside] {
+            let _ = std::fs::remove_file(stale);
+        }
+    }
+
+    #[test]
+    fn a_copy_is_whole_or_it_is_not_there() {
+        let file = OnDisk::new("copy-whole");
+        let copy = super::copy_path(&file.0);
+        let _ = std::fs::remove_file(&copy);
+        let store = file.open();
+        store.copy_beside().expect("a first copy");
+        let first = std::fs::metadata(&copy).expect("the copy").len();
+        store.copy_beside().expect("a second copy over the first");
+        assert_eq!(std::fs::metadata(&copy).expect("the copy").len(), first);
+        assert!(
+            !copy.with_extension("copy.tmp").exists(),
+            "nothing half-written is left beside it"
+        );
+        Store::open(&copy).expect("the copy opens as a store of its own");
+        let _ = std::fs::remove_file(&copy);
     }
 
     #[test]

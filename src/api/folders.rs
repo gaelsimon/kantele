@@ -588,7 +588,7 @@ mod tests {
     fn every_thing_wrong_with_a_folder_is_listed_faults_first() {
         let issues = issues_of(
             &refused(&[
-                (Cause::PlaceholderCredit, 2192),
+                (Cause::AlbumKeyedOnPath, 2192),
                 (Cause::MissingEntry, 177),
                 (Cause::UnreadableFile, 6),
             ]),
@@ -604,7 +604,7 @@ mod tests {
             vec![
                 ("Broken playlist link", 177),
                 ("Unreadable file", 6),
-                ("No album artist", 2192),
+                ("Identical album tags", 2192),
             ],
             "faults before what the tags decided, and the largest of each first"
         );
@@ -630,12 +630,12 @@ mod tests {
     #[test]
     fn what_the_tags_decided_is_no_problem() {
         let issues = issues_of(
-            &refused(&[(Cause::PlaceholderCredit, 12), (Cause::UnreadableFile, 1)]),
+            &refused(&[(Cause::AlbumKeyedOnPath, 12), (Cause::UnreadableFile, 1)]),
             None,
             0,
         );
         assert!(issues[0].problem, "a file that would not read is a fault");
-        assert!(!issues[1].problem, "a compilation is not");
+        assert!(!issues[1].problem, "two albums tagged alike is not");
     }
 
     #[test]

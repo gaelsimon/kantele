@@ -441,36 +441,75 @@ fn made_by_software(name: &str) -> bool {
 /// it. A point-to-point link reaches one peer, and multicast does not travel it. An address in
 /// 169.254 is what a host gives itself when nothing answered, and no client reaches this server
 /// there.
-fn carries_announcements(interface: &if_addrs::Interface) -> bool {
+fn set_aside_because(interface: &if_addrs::Interface) -> Option<&'static str> {
     use if_addrs::IfOperStatus;
     let down = matches!(
         interface.oper_status,
         IfOperStatus::Down | IfOperStatus::NotPresent | IfOperStatus::LowerLayerDown
     );
-    !down && !interface.is_p2p() && !interface.is_link_local()
+    if down {
+        Some("down")
+    } else if interface.is_p2p() {
+        Some("point-to-point")
+    } else if interface.is_link_local() {
+        Some("no address was given to it")
+    } else {
+        None
+    }
+}
+
+/// The interfaces this server announces on, and the ones it set aside with why, so a server
+/// nobody finds can say at startup where it is not.
+pub struct Interfaces {
+    pub announced: Vec<(String, Ipv4Addr)>,
+    pub set_aside: Vec<String>,
+}
+
+pub fn interfaces() -> Interfaces {
+    sorted(if_addrs::get_if_addrs().into_iter().flatten())
+}
+
+fn sorted(found: impl IntoIterator<Item = if_addrs::Interface>) -> Interfaces {
+    let mut announced = Vec::new();
+    let mut software = Vec::new();
+    let mut set_aside = Vec::new();
+    for interface in found {
+        let std::net::IpAddr::V4(address) = interface.ip() else {
+            continue;
+        };
+        if interface.is_loopback() {
+            continue;
+        }
+        if let Some(why) = set_aside_because(&interface) {
+            set_aside.push(format!("{} {address}: {why}", interface.name));
+        } else if made_by_software(&interface.name) {
+            software.push((interface.name, address));
+        } else {
+            announced.push((interface.name, address));
+        }
+    }
+    // A host with nothing else announces where it can: inside a container, the bridge is the network.
+    if announced.is_empty() {
+        announced = software;
+    } else {
+        set_aside.extend(
+            software
+                .into_iter()
+                .map(|(name, address)| format!("{name} {address}: made by software")),
+        );
+    }
+    Interfaces {
+        announced,
+        set_aside,
+    }
 }
 
 pub fn local_addresses() -> Vec<Ipv4Addr> {
-    let found: Vec<(String, Ipv4Addr)> = if_addrs::get_if_addrs()
+    interfaces()
+        .announced
         .into_iter()
-        .flatten()
-        .filter(|interface| !interface.is_loopback())
-        .filter(carries_announcements)
-        .filter_map(|interface| match interface.ip() {
-            std::net::IpAddr::V4(address) => Some((interface.name, address)),
-            std::net::IpAddr::V6(_) => None,
-        })
-        .collect();
-    let real: Vec<Ipv4Addr> = found
-        .iter()
-        .filter(|(name, _)| !made_by_software(name))
-        .map(|(_, address)| *address)
-        .collect();
-    // A host with nothing else announces where it can: inside a container, the bridge is the network.
-    if real.is_empty() {
-        return found.into_iter().map(|(_, address)| address).collect();
-    }
-    real
+        .map(|(_, address)| address)
+        .collect()
 }
 
 fn local_address_towards(peer: SocketAddr) -> Option<Ipv4Addr> {
@@ -633,30 +672,66 @@ mod tests {
         use if_addrs::IfOperStatus;
 
         let up = interface("eth0", [192, 168, 8, 227], IfOperStatus::Up);
-        assert!(carries_announcements(&up));
+        assert!(set_aside_because(&up).is_none());
 
         let quiet = interface("eth1", [192, 168, 9, 1], IfOperStatus::Unknown);
         assert!(
-            carries_announcements(&quiet),
+            set_aside_because(&quiet).is_none(),
             "Unix reports Unknown for an interface without IFF_RUNNING, and refusing that \
              silences a server on a platform that reports nothing"
         );
 
         let unplugged = interface("eth2", [192, 168, 10, 1], IfOperStatus::Down);
-        assert!(!carries_announcements(&unplugged));
+        assert_eq!(set_aside_because(&unplugged), Some("down"));
 
         let nothing_answered = interface("eth3", [169, 254, 3, 7], IfOperStatus::Up);
         assert!(
-            !carries_announcements(&nothing_answered),
+            set_aside_because(&nothing_answered).is_some(),
             "an address a host gave itself when no DHCP answered reaches no client"
         );
 
         let mut tunnel = interface("tun9", [10, 8, 0, 2], IfOperStatus::Up);
         tunnel.is_p2p = true;
         assert!(
-            !carries_announcements(&tunnel),
+            set_aside_because(&tunnel).is_some(),
             "multicast does not travel a link with one peer at the far end"
         );
+    }
+
+    #[test]
+    fn the_interfaces_set_aside_are_named_with_why() {
+        use if_addrs::IfOperStatus;
+
+        let mut tunnel = interface("tun9", [10, 8, 0, 2], IfOperStatus::Up);
+        tunnel.is_p2p = true;
+        let seen = sorted([
+            interface("eth0", [192, 168, 8, 227], IfOperStatus::Up),
+            interface("utun3", [100, 64, 0, 2], IfOperStatus::Up),
+            interface("eth2", [192, 168, 10, 1], IfOperStatus::Down),
+            interface("eth3", [169, 254, 3, 7], IfOperStatus::Up),
+            tunnel,
+        ]);
+        assert_eq!(
+            seen.announced,
+            [("eth0".to_owned(), Ipv4Addr::new(192, 168, 8, 227))]
+        );
+        assert_eq!(
+            seen.set_aside,
+            [
+                "eth2 192.168.10.1: down",
+                "eth3 169.254.3.7: no address was given to it",
+                "tun9 10.8.0.2: point-to-point",
+                "utun3 100.64.0.2: made by software",
+            ]
+        );
+
+        let alone = sorted([interface("docker0", [172, 17, 0, 1], IfOperStatus::Up)]);
+        assert_eq!(
+            alone.announced.len(),
+            1,
+            "with nothing else, the bridge is the network"
+        );
+        assert!(alone.set_aside.is_empty());
     }
 
     #[tokio::test]

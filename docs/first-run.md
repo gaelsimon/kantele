@@ -45,6 +45,10 @@ Linux has the same limit, `fs.inotify.max_user_watches`, and uses the timed chec
 |---|---|---|---|
 | Configuration | `/var/packages/kantele/var/kantele.toml` | `~/Library/Application Support/Kantele/kantele.toml` | `/etc/kantele/kantele.toml` |
 | Saved index | the same folder | the same folder | `/var/lib/kantele` |
-| Log | the same folder, `kantele.log` | `~/Library/Logs/kantele.log` | `journalctl -u kantele` |
+| Log | the same folder, `kantele.log` | the same folder, `kantele.log` | `/var/lib/kantele/kantele.log`, and `journalctl -u kantele` |
+
+The server keeps the log itself, two files of a few megabytes at most, and the Settings tab shows
+the end of it, which is where a start that went wrong says why. Beside the saved index sits a copy
+of it, taken after each full pass that wrote, which is what serves the day the index will not open.
 
 The server never writes inside your music folder.

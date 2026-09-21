@@ -87,16 +87,6 @@ fn refused_by_derivation(files: &[Scanned], tracks: &[Track], albums: &[Album]) 
         if track.rule == Rule::Path && identity::identifies_itself(&file.tags) {
             refusals.refuse(Cause::TrackKeyedOnPath, track.relative.clone(), None);
         }
-        if credits::holds_placeholder(
-            &file.tags.album_artists,
-            &file.tags.musicbrainz_album_artist_ids,
-        ) {
-            refusals.refuse(
-                Cause::PlaceholderCredit,
-                track.relative.clone(),
-                Some(file.tags.album_artists.join("; ")),
-            );
-        }
     }
     refusals
 }
@@ -118,6 +108,7 @@ pub struct Track {
     pub artists: Vec<Credit>,
     pub album_artists: Vec<Credit>,
     pub composers: Vec<Credit>,
+    pub conductors: Vec<Credit>,
     pub album: Option<String>,
     pub genres: Vec<String>,
     pub date: Option<String>,
@@ -500,7 +491,7 @@ fn track_from(
         album_id: release.map(|release| release.id.clone()),
         album_inherited: placement.inherited,
         compilation: tags.compilation
-            || credits::holds_placeholder(&tags.album_artists, &tags.musicbrainz_album_artist_ids),
+            || credits::credits_various(&tags.album_artists, &tags.musicbrainz_album_artist_ids),
         title: display_title(tags, &file.path),
         title_tagged: tagged_title(tags).is_some(),
         artists: credits::paired(&tags.artists, &tags.artist_sorts),
@@ -511,6 +502,7 @@ fn track_from(
             &tags.musicbrainz_album_artist_ids,
         ),
         composers: credits::paired(&tags.composers, &tags.composer_sorts),
+        conductors: credits::paired(&tags.conductors, &[]),
         album: release
             .map(|release| release.title.clone())
             .or_else(|| tags.album.clone()),
@@ -947,23 +939,26 @@ mod tests {
     }
 
     #[test]
-    fn a_placeholder_credit_is_refused_by_the_derivation_stage_alone() {
-        let mut placeholder = tags("Compiled", "One", None, 1);
-        placeholder.album_artists = vec!["Various Artists".to_owned()];
-        let files = [scanned("a/1.flac", placeholder)];
+    fn a_various_artists_credit_is_kept_and_raises_nothing() {
+        let mut compiled = tags("Compiled", "One", None, 1);
+        compiled.album_artists = vec!["VA".to_owned()];
+        let files = [scanned("a/1.flac", compiled)];
         let grouping = group(&files, &Default::default());
         let tracks = mint_tracks(&files, &grouping);
         let albums = albums_from(&grouping.releases, &tracks, &fold::Ignored::default());
 
-        let refusals = refused_by_derivation(&files, &tracks, &albums);
-        assert_eq!(refusals.total_of(Cause::PlaceholderCredit), 1);
         assert_eq!(
-            refusals.held(Cause::PlaceholderCredit)[0].subject,
-            "a/1.flac"
+            tracks[0].album_artists,
+            vec![credits::Credit::new(credits::VARIOUS_ARTISTS)],
+            "the credit is served under one spelling rather than dropped"
         );
-        assert_eq!(
-            refusals.held(Cause::PlaceholderCredit)[0].detail.as_deref(),
-            Some("Various Artists")
+        assert!(
+            tracks[0].compilation,
+            "and the release is still known to have no one artist"
+        );
+        assert!(
+            refused_by_derivation(&files, &tracks, &albums).is_empty(),
+            "naming a release Various Artists is how a compilation is tagged, not a fault"
         );
     }
 

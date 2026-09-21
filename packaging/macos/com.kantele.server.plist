@@ -19,9 +19,7 @@
   <true/>
   <key>KeepAlive</key>
   <true/>
-  <key>StandardOutPath</key>
-  <string>__LOGS__/kantele.log</string>
   <key>StandardErrorPath</key>
-  <string>__LOGS__/kantele.log</string>
+  <string>__LOGS__/kantele.err</string>
 </dict>
 </plist>

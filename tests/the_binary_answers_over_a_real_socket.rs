@@ -332,6 +332,8 @@ fn a_control_point_is_answered_by_the_binary_over_a_socket() {
         "the root offers menus"
     );
 
+    // The port opens before the walk, so the tracks arrive a moment after the menus do.
+    server.wait_for_tracks(3);
     let media = first_media_path(server.port);
     let whole = ask(server.port, "GET", &media, &[], b"");
     assert_eq!(whole.status, 200);
@@ -479,4 +481,28 @@ fn a_music_folder_that_is_not_mounted_yet_does_not_stop_the_server_starting() {
         server.said()
     );
     server.stop();
+}
+
+#[test]
+fn a_server_under_a_service_manager_keeps_its_own_log_beside_the_index() {
+    let tree = library("e2e-logfile");
+    let state = Scratch::new("e2e-logfile");
+    let server = Running::start(&tree, &state, &[]);
+    server.wait_for_tracks(3);
+
+    let kept = std::fs::read_to_string(kantele::log::path(&state.0)).expect("the server's own log");
+    assert!(
+        kept.contains("http listening"),
+        "the line the port was announced on is in the file the page reads:\n{kept}"
+    );
+    assert!(!kept.contains('\u{1b}'), "no colour in a file:\n{kept}");
+
+    let tail = ask(server.port, "GET", "/api/log?lines=5", &[], b"");
+    assert_eq!(tail.status, 200);
+    let shown = String::from_utf8_lossy(&tail.body);
+    assert_eq!(shown.lines().count(), 5, "five asked, five given:\n{shown}");
+    assert!(
+        kept.ends_with(&*shown) || kept.contains(shown.lines().next().expect("a line")),
+        "the tail is the end of the file"
+    );
 }

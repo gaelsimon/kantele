@@ -30,6 +30,28 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v2
       - run: cargo test
 
+  # The packages are musl, x86_64 for a DS218+ and aarch64 for the armv8 models, and the suite
+  # above runs against glibc. Native runners for both, and the linker the release builds with.
+  musl:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          target: ${{ matrix.target }}
+          build-warnings: allow
+      - uses: mlugg/setup-zig@v2
+      - run: cargo install cargo-zigbuild --locked
+      - run: cargo zigbuild test --target ${{ matrix.target }}
+
   page:
     runs-on: ubuntu-latest
     steps:

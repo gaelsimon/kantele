@@ -33,6 +33,7 @@ fn track(n: u32, title: &str, millis: u64, size: u64) -> Track {
         artists: vec![Credit::new("Sierra Maestra")],
         album_artists: vec![Credit::new("Sierra Maestra")],
         composers: Vec::new(),
+        conductors: Vec::new(),
         album: Some("!Dundunbanza!".to_owned()),
         genres: vec!["Latin".to_owned()],
         date: Some("1994".to_owned()),

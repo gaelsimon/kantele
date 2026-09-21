@@ -278,3 +278,24 @@ fn a_picture_inside_the_file_reaches_the_index_and_is_served_from_it() {
     let bytes = kantele::index::artwork::read(&shown.source).expect("the bytes are readable");
     assert_eq!(bytes, fixtures::jpeg(), "and they are the picture written");
 }
+
+#[test]
+fn a_conductor_is_read_from_the_file() {
+    let tree = Tree::new("tags-conductor");
+    std::fs::write(
+        tree.path("karajan.flac"),
+        fixtures::flac(
+            &[
+                ("TITLE", "Symphonie Nr. 9, IV. Presto"),
+                ("COMPOSER", "Ludwig van Beethoven"),
+                ("CONDUCTOR", "Herbert von Karajan"),
+            ],
+            false,
+        ),
+    )
+    .expect("writing it");
+
+    let (read, _) = tags::read(&tree.path("karajan.flac")).expect("a flac parses");
+    assert_eq!(read.conductors, ["Herbert von Karajan"]);
+    assert_eq!(read.composers, ["Ludwig van Beethoven"]);
+}

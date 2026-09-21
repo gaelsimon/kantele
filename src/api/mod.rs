@@ -16,6 +16,7 @@ use serde::Serialize;
 pub mod describe;
 pub mod files;
 pub mod folders;
+pub mod log;
 pub mod menu;
 pub mod settings;
 pub mod shares;
@@ -96,6 +97,7 @@ pub fn router(control: Shared) -> Router {
     Router::new()
         .route("/config", get(page))
         .route("/api/status", get(status::status))
+        .route("/api/log", get(log::tail))
         .route("/api/progress", get(progress))
         .route(
             "/api/config",

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getFolders, getShares, rescan, writeConfiguration } from './api';
+import { getFolders, getLog, getShares, rescan, writeConfiguration } from './api';
 
 /// The last request the page made, and a body of the caller's choosing in reply.
 function answering(body: unknown, ok = true, text?: string) {
@@ -104,5 +104,18 @@ describe('when the server refuses', () => {
   it('falls back to the status where the server said nothing', async () => {
     answering(null, false, '   ');
     await expect(writeConfiguration({})).rejects.toThrow('400 Bad Request');
+  });
+});
+
+describe('asking for the end of the log', () => {
+  it('asks for two hundred lines unless told otherwise', async () => {
+    const fetch = answering({ path: '/var/kantele.log', lines: [] });
+    await getLog();
+    expect(asked(fetch)).toBe('/api/log?lines=200');
+  });
+
+  it('passes the server\'s own sentence on when there is no file', async () => {
+    answering({}, false, 'no log file: this server writes to the terminal it was started from');
+    await expect(getLog(50)).rejects.toThrow('no log file');
   });
 });

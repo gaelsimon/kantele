@@ -27,6 +27,9 @@ pub struct FileTags {
     pub composer_sorts: Vec<String>,
     pub album: Option<String>,
     pub composers: Vec<String>,
+    /// `TPE3` in ID3, `CONDUCTOR` in Vorbis. Served as a role rather than as an axis: a control
+    /// point with a classical mode builds its own list from it.
+    pub conductors: Vec<String>,
     pub genres: Vec<String>,
     pub date: Option<String>,
     pub track_number: Option<u32>,
@@ -84,6 +87,7 @@ impl FileTags {
             &mut self.album_artist_sorts,
             &mut self.composers,
             &mut self.composer_sorts,
+            &mut self.conductors,
             &mut self.genres,
         ] {
             list.iter_mut().for_each(composed);
@@ -101,6 +105,7 @@ impl FileTags {
             ],
         );
         drop_blank(&mut self.composers, &mut [&mut self.composer_sorts]);
+        drop_blank(&mut self.conductors, &mut []);
         self
     }
 }
@@ -196,9 +201,19 @@ fn read_as_written(
 
 /// The first picture a file carries, whichever tag holds it.
 fn first_picture(tagged: &lofty::file::TaggedFile) -> Option<Vec<u8>> {
-    use lofty::file::TaggedFileExt;
-    let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
-    Some(tag.pictures().first()?.data().to_vec())
+    containers(tagged)
+        .into_iter()
+        .find_map(|tag| tag.pictures().first())
+        .map(|picture| picture.data().to_vec())
+}
+
+/// Every tag the file carries, the format's own first. A file tagged twice over the years, ID3v2
+/// and APEv2 in an MP3 or an id3 chunk and LIST/INFO in a WAV, keeps what only the other holds.
+fn containers(tagged: &lofty::file::TaggedFile) -> Vec<&lofty::tag::Tag> {
+    let primary = tagged.primary_tag();
+    let mut tags: Vec<&lofty::tag::Tag> = tagged.tags().iter().collect();
+    tags.sort_by_key(|tag| !primary.is_some_and(|first| std::ptr::eq(*tag, first)));
+    tags
 }
 
 /// One file's tags, with the ones the tag crate discards read from the container. `GROUP` names
@@ -293,12 +308,22 @@ fn properties_of(tagged: &lofty::file::TaggedFile) -> AudioProperties {
 }
 
 fn tags_of(tagged: &lofty::file::TaggedFile) -> FileTags {
-    let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) else {
+    let tags = containers(tagged);
+    if tags.is_empty() {
         return FileTags::default();
-    };
+    }
 
-    let many = |key: ItemKey| -> Vec<String> { once_each(tag.get_strings(key)) };
-    let one = |key: ItemKey| -> Option<String> { tag.get_string(key).map(str::to_owned) };
+    // Field by field, the first container that says anything is believed.
+    let many = |key: ItemKey| -> Vec<String> {
+        tags.iter()
+            .map(|tag| once_each(tag.get_strings(key)))
+            .find(|values| !values.is_empty())
+            .unwrap_or_default()
+    };
+    let one = |key: ItemKey| -> Option<String> {
+        tags.iter()
+            .find_map(|tag| tag.get_string(key).map(str::to_owned))
+    };
 
     FileTags {
         title: one(ItemKey::TrackTitle),
@@ -309,6 +334,7 @@ fn tags_of(tagged: &lofty::file::TaggedFile) -> FileTags {
         composer_sorts: many(ItemKey::ComposerSortOrder),
         album: one(ItemKey::AlbumTitle),
         composers: many(ItemKey::Composer),
+        conductors: many(ItemKey::Conductor),
         genres: many(ItemKey::Genre),
         date: one(ItemKey::RecordingDate).or_else(|| one(ItemKey::Year)),
         track_number: one(ItemKey::TrackNumber).and_then(|v| leading_number(&v)),

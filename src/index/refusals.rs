@@ -32,7 +32,6 @@ pub enum Cause {
     RepeatedEntry,
     AlbumKeyedOnPath,
     TrackKeyedOnPath,
-    PlaceholderCredit,
 }
 
 impl Cause {
@@ -47,7 +46,6 @@ impl Cause {
         Self::RepeatedEntry,
         Self::AlbumKeyedOnPath,
         Self::TrackKeyedOnPath,
-        Self::PlaceholderCredit,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -62,7 +60,6 @@ impl Cause {
             Self::RepeatedEntry => "repeated-entry",
             Self::AlbumKeyedOnPath => "album-keyed-on-path",
             Self::TrackKeyedOnPath => "track-keyed-on-path",
-            Self::PlaceholderCredit => "placeholder-credit",
         }
     }
 
@@ -89,12 +86,9 @@ impl Cause {
         )
     }
 
-    /// The other three are how a library is tagged, not faults in it.
+    /// The other two are how a library is tagged, not faults in it.
     pub fn is_problem(self) -> bool {
-        !matches!(
-            self,
-            Self::AlbumKeyedOnPath | Self::TrackKeyedOnPath | Self::PlaceholderCredit
-        )
+        !matches!(self, Self::AlbumKeyedOnPath | Self::TrackKeyedOnPath)
     }
 
     pub fn origin(self) -> Origin {
@@ -108,8 +102,7 @@ impl Cause {
             | Self::UnpublishedPlaylist
             | Self::RepeatedEntry
             | Self::AlbumKeyedOnPath
-            | Self::TrackKeyedOnPath
-            | Self::PlaceholderCredit => Origin::Index,
+            | Self::TrackKeyedOnPath => Origin::Index,
         }
     }
 }

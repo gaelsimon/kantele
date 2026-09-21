@@ -66,11 +66,10 @@ the identity with it. Start the second one on an empty state folder, and it make
 Almost always, this is what the tags say and not what the server did. The page tells you which. It
 separates **problems**, which are failures, from **notes**, which are what your tags decided.
 
-Three are notes:
+Two are notes:
 
 | On the page | What it means |
 |---|---|
-| No album artist | Every file credits a different artist and none is set for the album, so it files under no artist. Usual on a compilation tagged `Various Artists` |
 | Identical album tags | Two folders carry the same album tags, so the server tells one of them apart by its path instead |
 | Identical track tags | The same, for two tracks |
 

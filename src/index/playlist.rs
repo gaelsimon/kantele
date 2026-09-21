@@ -744,6 +744,7 @@ mod tests {
             artists: Vec::new(),
             album_artists: Vec::new(),
             composers: Vec::new(),
+            conductors: Vec::new(),
             album: None,
             genres: Vec::new(),
             date: None,

@@ -23,4 +23,4 @@ launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$agents/$label.plist"
 
 echo "Kantele is running. Open http://localhost:8200/config and choose a music folder."
-echo "The log is $logs/kantele.log"
+echo "The log is $support/kantele.log, and the page shows the end of it."

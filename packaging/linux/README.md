@@ -24,6 +24,9 @@ Without read access every folder comes back empty.
     journalctl -u kantele -f
     sudo ./uninstall.sh
 
+The server also keeps its own log, `/var/lib/kantele/kantele.log`, rolled by itself, and the
+Settings tab of the page shows the end of it.
+
 `uninstall.sh` leaves the configuration and the index where they are.
 
 ## A large library and folder watches

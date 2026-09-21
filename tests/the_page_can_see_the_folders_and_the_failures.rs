@@ -590,3 +590,43 @@ async fn a_folder_lists_what_is_directly_in_it_and_a_row_offers_a_cover() {
     let missing = ask(&server, get_json("/api/files?folder=nowhere")).await;
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn the_end_of_the_log_is_read_on_the_page_rather_than_over_ssh() {
+    let tree = a_library("log-tail");
+    let server = serving(&tree, None);
+    let state = tree.0.join("state");
+    std::fs::create_dir_all(&state).expect("a state folder");
+    let mut operation = (*server.control.operation()).clone();
+    operation.config.config.state_dir = Some(state.clone());
+    server.control.set_operation(operation);
+
+    let missing = ask(&server, get_json("/api/log")).await;
+    assert_eq!(
+        missing.status(),
+        StatusCode::NOT_FOUND,
+        "a terminal run has no file, and the page is told so"
+    );
+
+    std::fs::write(kantele::log::path(&state), "one\ntwo\nthree\nfour\n").expect("a log");
+    let plain = ask(
+        &server,
+        Request::builder()
+            .uri("/api/log?lines=2")
+            .body(Body::empty())
+            .expect("a request"),
+    )
+    .await;
+    assert_eq!(plain.status(), StatusCode::OK);
+    assert_eq!(body_of(plain).await, "three\nfour\n");
+
+    let tail = json(&server, "/api/log?lines=3").await;
+    assert_eq!(tail["lines"], serde_json::json!(["two", "three", "four"]));
+    assert_eq!(
+        tail["path"],
+        kantele::log::path(&state).display().to_string()
+    );
+
+    let whole = json(&server, "/api/log").await;
+    assert_eq!(whole["lines"].as_array().expect("lines").len(), 4);
+}

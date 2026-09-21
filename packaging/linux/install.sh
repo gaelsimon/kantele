@@ -23,6 +23,6 @@ systemctl daemon-reload
 systemctl enable --now kantele
 
 echo "Kantele is running. Open http://localhost:8200/config and choose a music folder."
-echo "The log is journalctl -u kantele."
+echo "The log is /var/lib/kantele/kantele.log, also in journalctl -u kantele."
 echo
 echo "The server runs as the kantele user, so that user needs read access to your music."

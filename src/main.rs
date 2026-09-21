@@ -132,14 +132,34 @@ async fn main() -> Result<()> {
         None => {}
     }
 
+    let sink = kantele::log::Sink::default();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "kantele=info".into()),
         )
         .with_ansi(colour_wanted())
+        .with_writer(sink.clone())
         .init();
+    kantele::log::catch_panics();
 
+    // The reason a start failed belongs in the log a page can show, not only on a stderr a
+    // service manager sent nowhere.
+    let ran = run(arguments, &sink).await;
+    if let Err(error) = &ran {
+        tracing::error!(error = %format!("{error:#}"), "kantele stopped");
+    }
+    ran
+}
+
+/// Whether the log goes to a file beside the index as well: under a service manager, yes; at a
+/// terminal, the terminal is the log.
+fn file_wanted() -> bool {
+    use std::io::IsTerminal;
+    !std::io::stdout().is_terminal()
+}
+
+async fn run(arguments: Arguments, sink: &kantele::log::Sink) -> Result<()> {
     let resolved = configure(&arguments, env_config_path())?;
     let config = resolved.config.clone();
     let indexing = Indexing::of_config(&config, Arc::default())?;
@@ -176,6 +196,17 @@ async fn main() -> Result<()> {
             None
         }
     };
+    if file_wanted() {
+        let log_path = kantele::log::path(&state_dir);
+        if let Err(error) = sink.open(log_path.clone()) {
+            tracing::warn!(
+                path = %log_path.display(), %error,
+                "no log file: the page cannot show what this server said"
+            );
+        }
+    } else {
+        sink.off();
+    }
 
     let store_path = config::store_path(&state_dir);
     let mut store = match Store::open_or_replace(&store_path) {
@@ -366,11 +397,16 @@ async fn serve(
         .with_context(|| format!("binding {address}"))?;
     let bound = listener.local_addr()?;
     tracing::info!(%bound, "http listening");
-    for interface in ssdp::local_addresses() {
+    let interfaces = ssdp::interfaces();
+    for (name, address) in &interfaces.announced {
         tracing::info!(
-            "description at http://{interface}:{}/description.xml",
+            interface = %name,
+            "description at http://{address}:{}/description.xml",
             bound.port()
         );
+    }
+    if !interfaces.set_aside.is_empty() {
+        tracing::info!(interfaces = ?interfaces.set_aside, "not announcing on these");
     }
 
     let underway = indexing.underway.clone();

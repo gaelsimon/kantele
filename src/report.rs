@@ -19,7 +19,6 @@ pub fn label(cause: Cause) -> &'static str {
         Cause::RepeatedEntry => "Repeated playlist link",
         Cause::AlbumKeyedOnPath => "Identical album tags",
         Cause::TrackKeyedOnPath => "Identical track tags",
-        Cause::PlaceholderCredit => "No album artist",
     }
 }
 
@@ -111,7 +110,7 @@ pub fn subject(cause: Cause, count: usize) -> &'static str {
         Cause::LinkedOutside | Cause::MissingEntry | Cause::RepeatedEntry => ("link", "links"),
         Cause::UnreadablePlaylist | Cause::UnpublishedPlaylist => ("playlist", "playlists"),
         Cause::AlbumKeyedOnPath => ("album", "albums"),
-        Cause::TrackKeyedOnPath | Cause::PlaceholderCredit => ("track", "tracks"),
+        Cause::TrackKeyedOnPath => ("track", "tracks"),
     };
     if count == 1 { one } else { many }
 }

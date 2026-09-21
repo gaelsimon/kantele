@@ -159,6 +159,13 @@ export type Configuration = { file?: string; settings: Setting[] };
 
 export type Rescan = { started: boolean; says: string };
 
+/// The end of the server's own log, oldest line first.
+export type LogTail = { path: string; lines: string[] };
+
+export async function getLog(lines = 200): Promise<LogTail> {
+  return ask(`/api/log?lines=${lines}`);
+}
+
 /// The body, or the server's own words as the error, which are written to be read.
 async function ask<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {

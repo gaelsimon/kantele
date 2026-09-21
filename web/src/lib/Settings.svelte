@@ -1,8 +1,10 @@
 <script lang="ts">
   import {
+    getLog,
     getMenu,
     writeConfiguration,
     type Configuration,
+    type LogTail,
     type Menu,
     type Setting,
     type Status,
@@ -24,6 +26,19 @@
   let failed = $state('');
   let saving = $state(false);
   let root = $state<Menu | null>(null);
+  let log = $state<LogTail | null>(null);
+  let logSaid = $state('');
+
+  /// The last lines the server wrote, asked for when somebody wants them and not before.
+  async function readLog() {
+    try {
+      log = await getLog();
+      logSaid = '';
+    } catch (error) {
+      log = null;
+      logSaid = error instanceof Error ? error.message : String(error);
+    }
+  }
 
   const settings = $derived(configuration?.settings ?? []);
   const sections = $derived(arrange(settings));
@@ -175,6 +190,23 @@
     </section>
   {/each}
 
+  <section class="card sect">
+    <div class="bhead">
+      <div class="stitle">What the server said</div>
+      <button class="button" onclick={readLog}>{log ? 'Refresh' : 'Show the last lines'}</button>
+    </div>
+    {#if logSaid}
+      <div class="dim foot">{logSaid}</div>
+    {:else if log}
+      <pre class="log">{log.lines.join('\n')}</pre>
+      <div class="dim foot">The file is <span class="mono">{log.path}</span>.</div>
+    {:else}
+      <div class="dim foot">
+        The end of the server's own log, which is where a start that went wrong says why.
+      </div>
+    {/if}
+  </section>
+
   <div class="dim file">
     {#if configuration?.file}
       Settings file: <span class="mono">{configuration.file}</span>
@@ -251,6 +283,20 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+  }
+
+  .log {
+    margin: 0 0 8px;
+    padding: 12px;
+    max-height: 320px;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre;
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    border-radius: 6px;
   }
 
   .foot {
