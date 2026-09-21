@@ -106,15 +106,17 @@ async fn an_album_copied_in_is_a_change_over_that_album_alone() {
     }
 
     let change = all_of(&mut watcher).await;
+    // inotify watches a new folder only once notify has seen it, so files written in the same
+    // instant may go unreported; the folder itself is then the whole signal, and the pass that
+    // follows reads what is in it.
     assert!(
         change
             .paths
             .iter()
-            .filter(|path| path.starts_with(root.join("Jazz/Arriving")))
-            .count()
-            >= 2,
-        "the burst names the album's files, not one at a time: {change:?}"
+            .all(|path| path.starts_with(root.join("Jazz/Arriving"))),
+        "the burst names the album and nothing else: {change:?}"
     );
+    assert!(!change.paths.is_empty(), "{change:?}");
     assert!(!change.whole_tree, "{change:?}");
     let scope = within(&root, &change);
     assert!(scope.covers(Path::new("Jazz/Arriving")), "{scope:?}");
