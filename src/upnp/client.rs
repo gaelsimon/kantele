@@ -74,6 +74,10 @@ pub fn conservative() -> &'static Profile {
 /// shown the folder view under another name. Measured on a Denon amplifier, September 2026.
 pub const HEOS_FOLDER_VIEW: &str = "📁 Directories";
 
+/// Client names kept for the log's sake at most; a caller writing a new `User-Agent` on every
+/// request must not grow this.
+const NAMED: usize = 64;
+
 /// The clients answered specially out of the box. A configured profile naming the same client
 /// replaces its built-in one whole.
 fn built_in() -> Vec<Profile> {
@@ -132,6 +136,9 @@ impl Profiles {
         };
         if named.iter().any(|seen| seen == said) {
             return;
+        }
+        if named.len() >= NAMED {
+            named.remove(0);
         }
         named.push(said.to_owned());
         tracing::info!(client = %said, "no profile names this client; answering conservatively");
@@ -220,6 +227,21 @@ mod tests {
         profiles.resolve(&asking("Another/1.0"));
         let named = profiles.named.lock().expect("the lock");
         assert_eq!(named.len(), 2, "one line per client, not one per request");
+    }
+
+    #[test]
+    fn a_caller_writing_a_new_name_on_every_request_does_not_grow_the_list_for_ever() {
+        let profiles = Profiles::default();
+        for at in 0..NAMED * 2 {
+            profiles.resolve(&asking(&format!("Renderer/{at}")));
+        }
+        let named = profiles.named.lock().expect("the lock");
+        assert_eq!(named.len(), NAMED);
+        assert_eq!(
+            named.last().map(String::as_str),
+            Some("renderer/127"),
+            "the newest is kept and the oldest is dropped"
+        );
     }
 
     #[test]
