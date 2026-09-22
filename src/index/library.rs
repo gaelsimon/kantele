@@ -972,6 +972,43 @@ mod tests {
     }
 
     #[test]
+    fn a_grouping_shared_by_the_whole_album_is_not_a_run() {
+        let grouped = |title: &str, grouping: Option<&str>| FileTags {
+            title: Some(title.to_owned()),
+            album: Some("Corre Riba Corre Baxo / Nos Maos".to_owned()),
+            album_artists: vec!["Abel Lima E Les Sofas".to_owned()],
+            grouping: grouping.map(str::to_owned),
+            ..FileTags::default()
+        };
+        let whole = [
+            scanned("a/1.flac", grouped("Corre Riba Corre Baxo", Some("4"))),
+            scanned("a/2.flac", grouped("Nos Maos", Some("4"))),
+        ];
+        let grouping = group(&whole, &Default::default());
+        let tracks = mint_tracks(&whole, &grouping);
+        let albums = albums_from(&grouping.releases, &tracks, &fold::Ignored::default());
+        assert!(
+            albums[0].runs.is_empty(),
+            "the album opens on its tracks, not on one container named 4: {:?}",
+            albums[0].runs
+        );
+
+        let part = [
+            scanned("b/1.flac", grouped("A", Some("Suite"))),
+            scanned("b/2.flac", grouped("B", Some("Suite"))),
+            scanned("b/3.flac", grouped("C", None)),
+        ];
+        let grouping = group(&part, &Default::default());
+        let tracks = mint_tracks(&part, &grouping);
+        let albums = albums_from(&grouping.releases, &tracks, &fold::Ignored::default());
+        assert_eq!(
+            albums[0].runs.len(),
+            1,
+            "a run over part of the album stays"
+        );
+    }
+
+    #[test]
     fn two_runs_of_one_name_on_unnumbered_files_are_two_containers() {
         let grouped = |title: &str, grouping: Option<&str>| FileTags {
             title: Some(title.to_owned()),
