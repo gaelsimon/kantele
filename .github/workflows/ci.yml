@@ -85,7 +85,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - run: cargo install cargo-fuzz --locked
-      - run: cargo fuzz build
+      # The repository pins stable; the sanitizer flags exist on nightly alone.
+      - run: cargo +nightly fuzz build
         working-directory: fuzz
 
   page:
