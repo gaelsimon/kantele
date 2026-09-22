@@ -72,7 +72,7 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
     let path = operation.config.file_path().map(Path::to_path_buf).ok_or_else(|| {
         refuse(StatusCode::CONFLICT, "no configuration file was read at startup, so there is nothing to write: start with --config".to_owned())
     })?;
-    let text = std::fs::read_to_string(&path).map_err(|error| {
+    let text = tokio::fs::read_to_string(&path).await.map_err(|error| {
         refuse(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("reading {}: {error}", path.display()),
@@ -96,14 +96,16 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
     };
     // Named for this process: two servers sharing a settings file must not stage over each other.
     let staged = path.with_extension(format!("toml.writing.{}", std::process::id()));
-    std::fs::write(&staged, &rewritten)
-        .and_then(|()| std::fs::rename(&staged, &path))
-        .map_err(|error| {
-            refuse(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("writing {}: {error}", path.display()),
-            )
-        })?;
+    let replaced = async {
+        tokio::fs::write(&staged, &rewritten).await?;
+        tokio::fs::rename(&staged, &path).await
+    };
+    replaced.await.map_err(|error| {
+        refuse(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("writing {}: {error}", path.display()),
+        )
+    })?;
     let reloaded = operation.config.reload().map_err(|error| {
         refuse(
             StatusCode::INTERNAL_SERVER_ERROR,
