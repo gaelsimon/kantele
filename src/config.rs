@@ -547,6 +547,7 @@ mod tests {
             roles = "both"
             join = ", "
             rate_cap = 2.0
+            folder_view = "Directories"
 
             [clients.formats."audio/x-dsf"]
             mime = "audio/dsf"
@@ -561,6 +562,7 @@ mod tests {
         assert_eq!(profile.roles, crate::upnp::client::Roles::Both);
         assert_eq!(profile.join.as_deref(), Some(", "));
         assert_eq!(profile.rate_cap, Some(2.0));
+        assert_eq!(profile.folder_view.as_deref(), Some("Directories"));
         assert_eq!(profile.mime_for("audio/x-dsf"), "audio/dsf");
         assert_eq!(profile.claim_for("audio/x-dsf"), Some(None));
     }

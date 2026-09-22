@@ -201,7 +201,7 @@ fn root_children<'a>(
                 browse::root::Opens::Folders => menus.folders.clone(),
             };
             let spec = match entry.opens {
-                browse::root::Opens::Folders => didl::ContainerSpec::folder,
+                browse::root::Opens::Folders => didl::ContainerSpec::folder_view,
                 _ => didl::ContainerSpec::menu,
             };
             didl::Child::Container(spec(id, menus.root.clone(), entry.title, entry.children))
@@ -414,7 +414,7 @@ pub(super) fn metadata<'a>(
             RECENT_TITLE,
             view.recent().len(),
         )),
-        Named::Folders => menu(didl::ContainerSpec::folder(
+        Named::Folders => menu(didl::ContainerSpec::folder_view(
             menus.folders.clone(),
             menus.root.clone(),
             FOLDERS_TITLE,
@@ -535,6 +535,7 @@ pub(super) fn album_like<'a>(
         date: album.date.as_deref(),
         artists: &album.artists,
         credited: album.credited,
+        folder_view: false,
     }
 }
 

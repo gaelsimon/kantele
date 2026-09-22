@@ -33,6 +33,8 @@ pub struct Profile {
     pub join: Option<String>,
     pub formats: HashMap<String, Format>,
     pub rate_cap: Option<f32>,
+    /// What the folder view is called at the root for this client, instead of its own title.
+    pub folder_view: Option<String>,
 }
 
 impl Profile {
@@ -68,17 +70,40 @@ pub fn conservative() -> &'static Profile {
     PROFILE.get_or_init(Profile::conservative)
 }
 
-#[derive(Debug, Default)]
+/// HEOS opens a root entry whose title contains "folder" on its own, without a press, so it is
+/// shown the folder view under another name. Measured on a Denon amplifier, September 2026.
+pub const HEOS_FOLDER_VIEW: &str = "📁 Directories";
+
+/// The clients answered specially out of the box. A configured profile naming the same client
+/// replaces its built-in one whole.
+fn built_in() -> Vec<Profile> {
+    vec![Profile {
+        name: "heos".to_owned(),
+        matches: vec!["Denon-Heos".to_owned()],
+        folder_view: Some(HEOS_FOLDER_VIEW.to_owned()),
+        ..Profile::default()
+    }]
+}
+
+#[derive(Debug)]
 pub struct Profiles {
     configured: Vec<Profile>,
+    built_in: Vec<Profile>,
     fallback: Profile,
     named: Mutex<Vec<String>>,
+}
+
+impl Default for Profiles {
+    fn default() -> Self {
+        Self::new(Vec::new())
+    }
 }
 
 impl Profiles {
     pub fn new(configured: Vec<Profile>) -> Self {
         Self {
             configured,
+            built_in: built_in(),
             fallback: Profile::conservative(),
             named: Mutex::default(),
         }
@@ -86,7 +111,12 @@ impl Profiles {
 
     pub fn resolve(&self, headers: &HeaderMap) -> &Profile {
         let said = said_by(headers);
-        if let Some(profile) = self.configured.iter().find(|it| it.claims(&said)) {
+        if let Some(profile) = self
+            .configured
+            .iter()
+            .chain(&self.built_in)
+            .find(|it| it.claims(&said))
+        {
             return profile;
         }
         self.note(&said);
@@ -143,6 +173,19 @@ mod tests {
         let profiles = Profiles::new(vec![profile("heos", &["Denon-Heos"])]);
         let matched = profiles.resolve(&asking("LINUX UPnP/1.0 Denon-Heos/f44fe3c8"));
         assert_eq!(matched.name, "heos");
+    }
+
+    #[test]
+    fn a_heos_client_is_known_out_of_the_box_and_a_configured_profile_replaces_that() {
+        let nothing_configured = Profiles::default();
+        let built_in = nothing_configured.resolve(&asking("LINUX UPnP/1.0 Denon-Heos/2d74b8"));
+        assert_eq!(built_in.name, "heos");
+        assert_eq!(built_in.folder_view.as_deref(), Some(HEOS_FOLDER_VIEW));
+
+        let configured = Profiles::new(vec![profile("mine", &["Denon-Heos"])]);
+        let replaced = configured.resolve(&asking("LINUX UPnP/1.0 Denon-Heos/2d74b8"));
+        assert_eq!(replaced.name, "mine");
+        assert_eq!(replaced.folder_view, None);
     }
 
     #[test]

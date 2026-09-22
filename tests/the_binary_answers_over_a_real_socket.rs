@@ -244,8 +244,25 @@ fn parse(answer: &[u8]) -> Answer {
     }
 }
 
-/// A SOAP call shaped the way a control point sends one.
-fn soap(port: u16, action: &str, arguments: &str) -> Answer {
+fn browse(port: u16, object: &str, count: usize) -> Answer {
+    browse_as(port, object, count, "kantele-test/0")
+}
+
+fn browse_as(port: u16, object: &str, count: usize, agent: &str) -> Answer {
+    soap_as(
+        port,
+        "Browse",
+        &format!(
+            "<ObjectID>{object}</ObjectID><BrowseFlag>BrowseDirectChildren</BrowseFlag>\
+             <Filter>*</Filter><StartingIndex>0</StartingIndex>\
+             <RequestedCount>{count}</RequestedCount><SortCriteria></SortCriteria>"
+        ),
+        agent,
+    )
+}
+
+/// A SOAP call shaped the way a control point sends one, by a client calling itself `agent`.
+fn soap_as(port: u16, action: &str, arguments: &str, agent: &str) -> Answer {
     let body = format!(
         r#"<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
 <s:Body><u:{action} xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">{arguments}</u:{action}>
@@ -261,20 +278,9 @@ fn soap(port: u16, action: &str, arguments: &str) -> Answer {
                 "SOAPAction",
                 "\"urn:schemas-upnp-org:service:ContentDirectory:1#Browse\"",
             ),
+            ("User-Agent", agent),
         ],
         body.as_bytes(),
-    )
-}
-
-fn browse(port: u16, object: &str, count: usize) -> Answer {
-    soap(
-        port,
-        "Browse",
-        &format!(
-            "<ObjectID>{object}</ObjectID><BrowseFlag>BrowseDirectChildren</BrowseFlag>\
-             <Filter>*</Filter><StartingIndex>0</StartingIndex>\
-             <RequestedCount>{count}</RequestedCount><SortCriteria></SortCriteria>"
-        ),
     )
 }
 
@@ -478,6 +484,28 @@ fn a_port_the_environment_names_badly_is_said_to_be_ignored() {
         said.contains("KANTELE_PORT is not a port number"),
         "a port nobody is listening on is not a silence: {said}"
     );
+}
+
+#[test]
+fn a_heos_client_is_shown_a_folder_view_it_does_not_open_by_itself() {
+    let tree = library("e2e-heos");
+    let state = Scratch::new("e2e-heos");
+    let server = Running::start(&tree, &state, &[]);
+    server.wait_for_tracks(3);
+
+    let anyone = browse(server.port, "0", 50).text();
+    assert!(anyone.contains("[folder view]"), "{anyone}");
+
+    let heos = browse_as(
+        server.port,
+        "0",
+        50,
+        "LINUX UPnP/1.0 Denon-Heos/2d74b8386164808d32375282aa4874ce3eeac4b6",
+    )
+    .text();
+    assert!(heos.contains("📁 Directories"), "{heos}");
+    assert!(!heos.contains("[folder view]"), "{heos}");
+    server.stop();
 }
 
 #[test]
