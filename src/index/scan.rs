@@ -148,6 +148,9 @@ impl Progress {
 pub struct Partial {
     hook: Mutex<Option<Hook>>,
     schedule: Mutex<Schedule>,
+    /// Which folder each published album key was awarded to, so the publications of one read and
+    /// the index it ends with agree on who holds a key two folders derive.
+    awarded: Mutex<crate::index::identity::Claims>,
 }
 
 /// The folders a first read has finished, each with its place in the walk, shared rather than
@@ -190,6 +193,7 @@ impl Partial {
 
     fn arm_at(&self, hook: Hook, first: Duration, now: Instant) {
         *unpoisoned(&self.hook) = Some(hook);
+        *unpoisoned(&self.awarded) = crate::index::identity::Claims::new();
         *unpoisoned(&self.schedule) = Schedule {
             next: Some(now + first),
             interval: first,
@@ -199,6 +203,15 @@ impl Partial {
     pub fn disarm(&self) {
         *unpoisoned(&self.hook) = None;
         *unpoisoned(&self.schedule) = Schedule::default();
+    }
+
+    /// The awards the last publication made, empty where a read has published nothing.
+    pub fn awarded(&self) -> crate::index::identity::Claims {
+        unpoisoned(&self.awarded).clone()
+    }
+
+    pub fn award(&self, claims: crate::index::identity::Claims) {
+        *unpoisoned(&self.awarded) = claims;
     }
 
     pub fn is_armed(&self) -> bool {

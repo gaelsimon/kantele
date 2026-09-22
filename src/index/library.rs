@@ -255,8 +255,16 @@ impl Library {
             "a walk recorded a refusal the index build derives for itself"
         );
 
+        // A first read has no stored awards, and what it published as it went is what the index
+        // it ends with has to agree with: an album that changed identifier between the two is one
+        // a control point holds a dead identifier for.
+        let awarded = cache
+            .claims()
+            .is_empty()
+            .then(|| underway.partial.awarded());
+        let held = awarded.as_ref().unwrap_or(cache.claims());
         let library = if scope.is_whole_tree() {
-            Self::build_holding(roots.name(), &files, &playlists, ignored, cache.claims())
+            Self::build_holding(roots.name(), &files, &playlists, ignored, held)
         } else {
             let mut all = cache.remembered_outside(scope);
             all.extend(files.iter().cloned());
@@ -264,7 +272,7 @@ impl Library {
             let mut every = cache.remembered_playlists_outside(scope);
             every.extend(playlists.iter().cloned());
             every.sort_by(|left, right| left.relative.cmp(&right.relative));
-            Self::build_holding(roots.name(), &all, &every, ignored, cache.claims())
+            Self::build_holding(roots.name(), &all, &every, ignored, held)
         };
         Ok(Scan {
             library,

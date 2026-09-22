@@ -1093,18 +1093,17 @@ fn publishing_as_it_goes(
     let name = indexing.roots.name();
     let ignored = indexing.menus.ignored();
     let menus = indexing.menus.clone();
+    let underway = indexing.underway.clone();
     let task = tokio::spawn(async move {
         while let Some(finished) = snapshots.recv().await {
             let (name, ignored, menus) = (name.clone(), ignored.clone(), menus.clone());
+            // What the last publication awarded, so an album keeps the identifier it was
+            // published under rather than one settled afresh by what has been read so far.
+            let (underway, held) = (underway.clone(), underway.partial.awarded());
             let built = tokio::task::spawn_blocking(move || {
                 let files = scan::in_walk_order(finished);
-                let library = Library::build_holding(
-                    name,
-                    &files,
-                    &[],
-                    &ignored,
-                    &crate::index::identity::Claims::new(),
-                );
+                let library = Library::build_holding(name, &files, &[], &ignored, &held);
+                underway.partial.award(library.claims().clone());
                 browse::Served::new(library, menus)
             })
             .await;
