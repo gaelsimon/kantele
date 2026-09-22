@@ -28,7 +28,7 @@ pub fn read(path: &Path) -> Option<Dsd> {
 }
 
 /// The same from a file already open, left at its start when the bytes are not DSD.
-pub fn read_from(file: &mut File) -> Option<Dsd> {
+pub fn read_from<R: Read + Seek>(file: &mut R) -> Option<Dsd> {
     file.seek(SeekFrom::Start(0)).ok()?;
     let mut magic = [0u8; 4];
     file.read_exact(&mut magic).ok()?;
@@ -41,7 +41,7 @@ pub fn read_from(file: &mut File) -> Option<Dsd> {
 }
 
 /// `DSF`: a fixed 80-byte prologue of three chunks, then the samples.
-fn dsf(file: &mut File) -> Option<Dsd> {
+fn dsf<R: Read + Seek>(file: &mut R) -> Option<Dsd> {
     let mut head = [0u8; 80];
     file.read_exact(&mut head).ok()?;
     if &head[0..4] != b"DSD " || &head[28..32] != b"fmt " {
@@ -61,7 +61,7 @@ fn dsf(file: &mut File) -> Option<Dsd> {
     })
 }
 
-fn dsdiff(file: &mut File) -> Option<Dsd> {
+fn dsdiff<R: Read + Seek>(file: &mut R) -> Option<Dsd> {
     let mut header = [0u8; 16];
     file.read_exact(&mut header).ok()?;
     if &header[0..4] != b"FRM8" || &header[12..16] != b"DSD " {
@@ -102,7 +102,13 @@ fn dsdiff(file: &mut File) -> Option<Dsd> {
 }
 
 /// The `SND ` property chunk, which is where the rate and the channel count live.
-fn sound(file: &mut File, payload: u64, size: u64, rate: &mut u32, channels: &mut u32) {
+fn sound<R: Read + Seek>(
+    file: &mut R,
+    payload: u64,
+    size: u64,
+    rate: &mut u32,
+    channels: &mut u32,
+) {
     let mut kind = [0u8; 4];
     if read_at(file, payload, &mut kind).is_none() || &kind != b"SND " {
         return;
@@ -141,7 +147,7 @@ fn after(payload: u64, size: u64) -> Option<u64> {
 }
 
 /// One `IFF` chunk header at `at`: its identifier, its length, and where its body starts.
-fn chunk(file: &mut File, at: u64) -> Option<([u8; 4], u64, u64)> {
+fn chunk<R: Read + Seek>(file: &mut R, at: u64) -> Option<([u8; 4], u64, u64)> {
     let mut header = [0u8; 12];
     read_at(file, at, &mut header)?;
     let id: [u8; 4] = header[0..4].try_into().ok()?;
@@ -149,13 +155,13 @@ fn chunk(file: &mut File, at: u64) -> Option<([u8; 4], u64, u64)> {
     Some((id, size, at + 12))
 }
 
-fn read_at(file: &mut File, at: u64, into: &mut [u8]) -> Option<()> {
+fn read_at<R: Read + Seek>(file: &mut R, at: u64, into: &mut [u8]) -> Option<()> {
     file.seek(SeekFrom::Start(at)).ok()?;
     file.read_exact(into).ok()
 }
 
-fn id3_at(file: &mut File, at: u64) -> Option<TaggedFile> {
-    let end = file.metadata().ok()?.len();
+fn id3_at<R: Read + Seek>(file: &mut R, at: u64) -> Option<TaggedFile> {
+    let end = file.seek(SeekFrom::End(0)).ok()?;
     if at >= end || end - at > LARGEST_TAG {
         return None;
     }

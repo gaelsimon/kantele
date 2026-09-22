@@ -1,7 +1,7 @@
 //! Reading what is on disk, and nothing else.
 
 pub mod dsd;
-mod vorbis;
+pub mod vorbis;
 
 use std::fs::File;
 use std::io::{BufReader, Seek};

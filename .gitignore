@@ -29,3 +29,6 @@ __pycache__/
 
 # Working notes and deployment scratch.
 /_internal/
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/

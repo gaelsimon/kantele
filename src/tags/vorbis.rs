@@ -1,6 +1,5 @@
 //! The Vorbis comments lofty's generic tag drops.
 
-use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 
 /// The metadata block that holds the comments.
@@ -9,7 +8,7 @@ const VORBIS_COMMENT: u8 = 4;
 const LARGEST: u32 = 4 * 1024 * 1024;
 
 /// The bytes of the comment block, or nothing where this is not a `FLAC` that carries one.
-pub fn block(file: &mut File) -> Option<Vec<u8>> {
+pub fn block<R: Read + Seek>(file: &mut R) -> Option<Vec<u8>> {
     file.seek(SeekFrom::Start(0)).ok()?;
     let mut marker = [0u8; 4];
     file.read_exact(&mut marker).ok()?;
