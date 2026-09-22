@@ -1,11 +1,12 @@
 name: ci
 
+# A publish is a pull request into main, which runs everything here; the merge runs it again on
+# main itself; the tag on that merge fires the release workflow.
 on:
-  push:
-    # `ci` is where a publish candidate goes first: `git push origin public:ci`, wait for green,
-    # then `public:main`. Nothing else than the Mac has compiled the tree before that.
-    branches: [main, master, ci]
   pull_request:
+    branches: [main]
+  push:
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
