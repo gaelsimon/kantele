@@ -2,7 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use rayon::prelude::*;
 
@@ -138,6 +139,108 @@ impl Progress {
             began: Some(self.began.load(order)).filter(|began| *began > 0),
         }
     }
+}
+
+/// What a first read has so far, handed out folder by folder while it runs, often at first and
+/// then less often. Armed only while nothing is served, since a half-read library replacing a
+/// whole one would be a loss.
+#[derive(Default)]
+pub struct Partial {
+    hook: Mutex<Option<Hook>>,
+    schedule: Mutex<Schedule>,
+}
+
+/// The folders a first read has finished, shared rather than copied: a publication flattens them
+/// on its own thread.
+pub type Finished = Vec<Arc<Read>>;
+
+/// Takes a snapshot, or says it could not: the next one is then due soon rather than an interval
+/// away.
+pub type Hook = Arc<dyn Fn(Finished) -> bool + Send + Sync>;
+
+#[derive(Default)]
+struct Schedule {
+    next: Option<Instant>,
+    interval: Duration,
+}
+
+impl Partial {
+    /// How long the first read runs before what it has is published.
+    pub const FIRST: Duration = Duration::from_secs(2);
+    /// The wait doubles after each publication, up to this. Every publication moves the update
+    /// id, and a control point that re-reads the tree on each one is better asked ten times
+    /// than thirty over a long first read.
+    pub const LONGEST: Duration = Duration::from_secs(10 * 60);
+
+    pub fn arm(&self, hook: Hook, first: Duration) {
+        self.arm_at(hook, first, Instant::now());
+    }
+
+    fn arm_at(&self, hook: Hook, first: Duration, now: Instant) {
+        *unpoisoned(&self.hook) = Some(hook);
+        *unpoisoned(&self.schedule) = Schedule {
+            next: Some(now + first),
+            interval: first,
+        };
+    }
+
+    pub fn disarm(&self) {
+        *unpoisoned(&self.hook) = None;
+        *unpoisoned(&self.schedule) = Schedule::default();
+    }
+
+    pub fn is_armed(&self) -> bool {
+        unpoisoned(&self.hook).is_some()
+    }
+
+    /// Whether a publication is due now, moving the next one further out when it is.
+    fn due(&self) -> bool {
+        self.due_at(Instant::now())
+    }
+
+    fn due_at(&self, now: Instant) -> bool {
+        let mut schedule = unpoisoned(&self.schedule);
+        let Some(next) = schedule.next else {
+            return false;
+        };
+        if now < next {
+            return false;
+        }
+        schedule.interval = (schedule.interval * 2).min(Self::LONGEST);
+        schedule.next = Some(now + schedule.interval);
+        true
+    }
+
+    fn publish(&self, files: Finished) {
+        let hook = unpoisoned(&self.hook).clone();
+        if let Some(hook) = hook
+            && !hook(files)
+        {
+            self.retry_soon(Instant::now());
+        }
+    }
+
+    /// A snapshot nobody took is not an interval lost: the next is due after the first wait.
+    fn retry_soon(&self, now: Instant) {
+        let mut schedule = unpoisoned(&self.schedule);
+        if schedule.next.is_some() {
+            schedule.next = Some(now + Self::FIRST);
+        }
+    }
+}
+
+impl std::fmt::Debug for Partial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Partial")
+            .field("armed", &self.is_armed())
+            .finish()
+    }
+}
+
+fn unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[derive(Clone, Debug)]
@@ -457,6 +560,7 @@ pub fn walk(root: &Path) -> std::io::Result<Walked> {
 pub struct Underway {
     pub stopping: Stopping,
     pub progress: Progress,
+    pub partial: Partial,
 }
 
 impl Underway {
@@ -464,6 +568,7 @@ impl Underway {
         Self {
             stopping,
             progress: Progress::default(),
+            partial: Partial::default(),
         }
     }
 
@@ -732,7 +837,8 @@ pub struct RefusedFile {
     pub remember: bool,
 }
 
-type Read = (Vec<Scanned>, Vec<RefusedFile>);
+/// What one folder's read produced: the files, and the ones that would not read.
+pub type Read = (Vec<Scanned>, Vec<RefusedFile>);
 
 /// Keeps the walk's order.
 pub fn read(
@@ -747,33 +853,55 @@ pub fn read(
         .files
         .chunk_by(|left, right| left.path.parent() == right.path.parent())
         .collect();
-    let read_all = || -> Vec<Read> {
-        folders
-            .par_iter()
-            .map(|folder| read_folder(roots, folder, walked, cache, underway, options.cover_art))
-            .collect()
+    // Folders land here as they finish, in whatever order the threads finish them; what a
+    // publication in flight sees is every folder finished so far, never part of one.
+    let done: Mutex<Vec<(usize, Arc<Read>)>> = Mutex::new(Vec::with_capacity(folders.len()));
+    let one = |index: usize, folder: &[Found]| {
+        let read = read_folder(roots, folder, walked, cache, underway, options.cover_art);
+        // Under the lock, pointers alone: the other threads wait for no copy.
+        let so_far = {
+            let mut done = unpoisoned(&done);
+            done.push((index, Arc::new(read)));
+            underway.partial.due().then(|| {
+                done.iter()
+                    .map(|(_, read)| read.clone())
+                    .collect::<Finished>()
+            })
+        };
+        if let Some(finished) = so_far {
+            underway.partial.publish(finished);
+        }
     };
 
-    let read = match rayon::ThreadPoolBuilder::new()
+    match rayon::ThreadPoolBuilder::new()
         .num_threads(options.threads.max(1))
         .build()
     {
-        Ok(pool) => pool.install(read_all),
+        Ok(pool) => pool.install(|| {
+            folders
+                .par_iter()
+                .enumerate()
+                .for_each(|(index, folder)| one(index, folder));
+        }),
         Err(error) => {
             tracing::warn!(%error, "no thread pool: scanning on one thread");
-            folders
-                .iter()
-                .map(|folder| {
-                    read_folder(roots, folder, walked, cache, underway, options.cover_art)
-                })
-                .collect()
+            for (index, folder) in folders.iter().enumerate() {
+                one(index, folder);
+            }
         }
-    };
+    }
+    let mut read = done
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Walk order, whatever order the threads finished in.
+    read.sort_by_key(|(index, _)| *index);
 
     let mut files: Vec<Scanned> = Vec::with_capacity(walked.files.len());
     let mut refused: Vec<RefusedFile> = Vec::new();
     let mut refusals = Refusals::default();
-    for (scanned, denied) in read {
+    for (_, read) in read {
+        // Nobody else holds the folder once the reads are over; a publication in flight does.
+        let (scanned, denied) = Arc::try_unwrap(read).unwrap_or_else(|shared| (*shared).clone());
         files.extend(scanned);
         for file in denied {
             refusals.refuse(
@@ -925,6 +1053,57 @@ pub fn mime_for(path: &Path) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_publication_falls_due_at_doubling_intervals_up_to_the_longest() {
+        let partial = Partial::default();
+        let start = Instant::now();
+        assert!(
+            !partial.due_at(start),
+            "nothing is due while nothing is armed"
+        );
+
+        partial.arm_at(Arc::new(|_| true), Duration::from_secs(2), start);
+        assert!(!partial.due_at(start + Duration::from_secs(1)));
+        assert!(partial.due_at(start + Duration::from_secs(2)));
+        assert!(
+            !partial.due_at(start + Duration::from_secs(5)),
+            "the wait doubled to four seconds"
+        );
+        assert!(partial.due_at(start + Duration::from_secs(6)));
+        assert!(
+            partial.due_at(start + Duration::from_secs(14)),
+            "eight more"
+        );
+        let mut at = start + Duration::from_secs(14);
+        for _ in 0..12 {
+            at += Partial::LONGEST;
+            assert!(partial.due_at(at), "never longer than the longest wait");
+        }
+        assert!(
+            !partial.due_at(at + Partial::LONGEST - Duration::from_secs(1)),
+            "and never shorter once it is reached"
+        );
+
+        partial.disarm();
+        assert!(
+            !partial.due_at(at + Partial::LONGEST * 2),
+            "disarmed is never due"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_nobody_took_falls_due_again_after_the_first_wait() {
+        let partial = Partial::default();
+        let start = Instant::now();
+        partial.arm_at(Arc::new(|_| false), Duration::from_secs(2), start);
+        assert!(partial.due_at(start + Duration::from_secs(2)));
+        partial.retry_soon(start + Duration::from_secs(2));
+        assert!(
+            partial.due_at(start + Duration::from_secs(4)),
+            "two seconds on, not the four the doubling would have asked"
+        );
+    }
     use super::*;
 
     #[test]

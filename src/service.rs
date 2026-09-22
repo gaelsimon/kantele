@@ -986,7 +986,7 @@ async fn next_request(asked: &mut Option<tokio::sync::mpsc::Receiver<()>>) -> Op
 
 /// One rescan, on a blocking thread, published if it is worth publishing.
 async fn rebuild(
-    device: &Device,
+    device: &Arc<Device>,
     passes: &Passes,
     indexing: &Indexing,
     store: Option<Store>,
@@ -1002,6 +1002,13 @@ async fn rebuild(
     let mut moved = store;
     let began = passes.begin();
     let serving_nothing = device.served().library.is_empty();
+    let underway = indexing.underway.clone();
+    let mut publisher = None;
+    if serving_nothing && scope.is_whole_tree() {
+        let (hook, task) = publishing_as_it_goes(device, &indexing);
+        underway.partial.arm(hook, scan::Partial::FIRST);
+        publisher = Some(task);
+    }
     let scanned = tokio::task::spawn_blocking(move || {
         // The store stays outside the guard.
         let derived = guarded(|| {
@@ -1019,6 +1026,14 @@ async fn rebuild(
         (moved, derived)
     })
     .await;
+    // Disarming closes the channel; the publisher drains what it holds and ends. Waiting for it
+    // is what keeps a publication of part of the tree from landing after the whole one.
+    underway.partial.disarm();
+    if let Some(publisher) = publisher
+        && let Err(error) = publisher.await
+    {
+        tracing::warn!(%error, "the publisher of the first read did not finish");
+    }
     if began {
         passes.end();
     }
@@ -1060,6 +1075,56 @@ async fn rebuild(
     }
     passes.record(fresh.pass);
     store
+}
+
+/// What a first read publishes as it goes: the folders finished so far, built into a library and
+/// served, so a device sees albums arrive rather than nothing for the length of the read. The
+/// scan thread hands the folders over and goes back to reading; one publication is built and
+/// served at a time, on a thread of its own, and a snapshot that finds one in flight is dropped,
+/// since the next one holds everything it held.
+fn publishing_as_it_goes(
+    device: &Arc<Device>,
+    indexing: &Indexing,
+) -> (scan::Hook, tokio::task::JoinHandle<()>) {
+    let (sender, mut snapshots) = mpsc::channel::<scan::Finished>(1);
+    let device = device.clone();
+    let name = indexing.roots.name();
+    let ignored = indexing.menus.ignored();
+    let menus = indexing.menus.clone();
+    let task = tokio::spawn(async move {
+        while let Some(finished) = snapshots.recv().await {
+            let (name, ignored, menus) = (name.clone(), ignored.clone(), menus.clone());
+            let built = tokio::task::spawn_blocking(move || {
+                let files: Vec<scan::Scanned> = finished
+                    .iter()
+                    .flat_map(|read| read.0.iter().cloned())
+                    .collect();
+                let library = Library::build_holding(
+                    name,
+                    &files,
+                    &[],
+                    &ignored,
+                    &crate::index::identity::Claims::new(),
+                );
+                browse::Served::new(library, menus)
+            })
+            .await;
+            match built {
+                Ok(served) => {
+                    let tracks = served.library.len();
+                    let id = device.publish(served).await;
+                    tracing::info!(
+                        tracks,
+                        system_update_id = id,
+                        "published what the first read has so far"
+                    );
+                }
+                Err(error) => tracing::warn!(%error, "a publication mid-read did not finish"),
+            }
+        }
+    });
+    let hook: scan::Hook = Arc::new(move |finished| sender.try_send(finished).is_ok());
+    (hook, task)
 }
 
 /// Keeps the update id, or a restart resumes below one a client holds and hands it a stale cache.
