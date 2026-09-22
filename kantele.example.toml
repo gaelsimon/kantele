@@ -37,9 +37,10 @@ threads = 4
 
 # Minutes between looks at the library for changes nothing announced. A Synology allows fewer
 # folder watches than a library has folders, so the watcher refuses there and this is how a new
-# album appears. A look walks the tree and compares it with what the store remembers; only the
-# folders that differ are read, and a look that finds nothing opens no file and writes nothing.
-# Zero turns it off.
+# album appears. Where the folders are watched, the look runs far less often, to catch what the
+# watch missed; the status says the interval in force. A look walks the tree and compares it with
+# what the store remembers; only the folders that differ are read, and a look that finds nothing
+# opens no file and writes nothing. Zero turns it off.
 sweep_minutes = 15
 
 # Names and paths never walked, on top of dotfiles and the platform's own folders, which never are.

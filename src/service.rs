@@ -32,6 +32,8 @@ pub struct Passes {
     pending: std::sync::Mutex<Option<Pass>>,
     /// When the run of passes that answered nothing began, or zero where the last one answered.
     failing_since: std::sync::atomic::AtomicI64,
+    /// Seconds between timed looks at the library as they run now, or zero where none run.
+    sweep_seconds: std::sync::atomic::AtomicU64,
 }
 
 impl Default for Passes {
@@ -44,11 +46,23 @@ impl Default for Passes {
             asked: std::sync::Mutex::new(Some(asked)),
             pending: std::sync::Mutex::new(None),
             failing_since: std::sync::atomic::AtomicI64::new(0),
+            sweep_seconds: std::sync::atomic::AtomicU64::new(0),
         }
     }
 }
 
 impl Passes {
+    /// The interval the timed looks run at now, stretched where the folders are watched.
+    pub fn sweep(&self) -> Option<Duration> {
+        let seconds = self.sweep_seconds.load(Ordering::Relaxed);
+        (seconds > 0).then(|| Duration::from_secs(seconds))
+    }
+
+    fn note_sweep(&self, every: Option<Duration>) {
+        self.sweep_seconds
+            .store(every.map_or(0, |every| every.as_secs()), Ordering::Relaxed);
+    }
+
     pub fn last(&self) -> Option<Arc<PassReport>> {
         self.last.load_full()
     }
@@ -705,7 +719,8 @@ pub async fn keep_fresh(
         ceiling_advice(&mut ceiling, &passes, &settings);
     }
     let mut asked = passes.requests_asked_for();
-    let mut sweeps = sweeps_every(settings.options.sweep, store.is_some());
+    let mut sweeps = sweeps_every(settings.options.sweep, store.is_some(), watcher.is_some());
+    passes.note_sweep(sweeps.as_ref().map(tokio::time::Interval::period));
     loop {
         let pass = tokio::select! {
             change = next_change(&mut watcher) => match change {
@@ -733,13 +748,15 @@ pub async fn keep_fresh(
             }
         };
         let fresh = indexing.now();
+        let was_watched = watcher.is_some();
         if fresh.roots != settings.roots {
             tracing::info!(folder = %fresh.roots.describe(), "the music folders changed");
             (watcher, ceiling) = watching(&fresh).await;
             store = repointed(store, fresh.roots.clone()).await;
         }
-        if fresh.options.sweep != settings.options.sweep {
-            sweeps = sweeps_every(fresh.options.sweep, store.is_some());
+        if fresh.options.sweep != settings.options.sweep || watcher.is_some() != was_watched {
+            sweeps = sweeps_every(fresh.options.sweep, store.is_some(), watcher.is_some());
+            passes.note_sweep(sweeps.as_ref().map(tokio::time::Interval::period));
         }
         settings = fresh;
         let Some(pass) = pass else { continue };
@@ -844,9 +861,17 @@ async fn repointed(store: Option<Store>, roots: Roots) -> Option<Store> {
     }
 }
 
+/// How many times longer a watched library waits between looks: the watch reports what changed,
+/// and a look there only catches what the watch missed.
+const WATCHED_STRETCH: u32 = 24;
+
 /// The timer a sweep runs on, or nothing where none is wanted or nothing remembers the tree.
-fn sweeps_every(every: Option<Duration>, remembered: bool) -> Option<tokio::time::Interval> {
-    let every = every?;
+fn sweeps_every(
+    every: Option<Duration>,
+    remembered: bool,
+    watched: bool,
+) -> Option<tokio::time::Interval> {
+    let every = sweep_period(every?, watched);
     if !remembered {
         tracing::warn!("no store: the library is not looked at for changes on a timer");
         return None;
@@ -855,9 +880,19 @@ fn sweeps_every(every: Option<Duration>, remembered: bool) -> Option<tokio::time
     sweeps.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     tracing::info!(
         minutes = every.as_secs() / 60,
+        watched,
         "looking at the library for changes on a timer"
     );
     Some(sweeps)
+}
+
+/// The interval the owner set, stretched where a watch already reports changes.
+fn sweep_period(every: Duration, watched: bool) -> Duration {
+    if watched {
+        every * WATCHED_STRETCH
+    } else {
+        every
+    }
 }
 
 /// The next time to look, or never where no timer runs.
@@ -1284,6 +1319,13 @@ mod tests {
             Some(applied),
             "a client was told {applied} and a restart would resume below it"
         );
+    }
+
+    #[test]
+    fn a_watched_library_is_looked_at_far_less_often_than_an_unwatched_one() {
+        let set = Duration::from_secs(15 * 60);
+        assert_eq!(sweep_period(set, false), set);
+        assert_eq!(sweep_period(set, true), Duration::from_secs(6 * 60 * 60));
     }
 
     #[test]
