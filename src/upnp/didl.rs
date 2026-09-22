@@ -416,11 +416,14 @@ fn stream_rate(track: &Track) -> Option<u32> {
 
 /// `res@bitrate` is bytes per second, not bits.
 fn byte_rate(track: &Track) -> Option<u32> {
+    let declared = || track.bitrate_bps.map(|bps| bps / 8);
     match (track.sample_rate, track.bit_depth, track.channels) {
-        (Some(rate), Some(bits), Some(channels)) => {
-            Some(rate * u32::from(bits) / 8 * u32::from(channels))
-        }
-        _ => track.bitrate_bps.map(|bps| bps / 8),
+        // A rate no arithmetic holds is a header that lies, and what it declared serves instead.
+        (Some(rate), Some(bits), Some(channels)) => rate
+            .checked_mul(u32::from(bits))
+            .and_then(|bits| (bits / 8).checked_mul(u32::from(channels)))
+            .or_else(declared),
+        _ => declared(),
     }
 }
 
@@ -473,6 +476,20 @@ mod tests {
             work: None,
             grouping: None,
         }
+    }
+
+    #[test]
+    fn a_header_claiming_a_rate_no_arithmetic_holds_falls_back_to_what_it_declared() {
+        let mut track = track();
+        assert_eq!(byte_rate(&track), Some(176_400));
+        track.sample_rate = Some(u32::MAX);
+        assert_eq!(
+            byte_rate(&track),
+            Some(1_411_000 / 8),
+            "the multiplication overflows, and the declared rate is the honest answer"
+        );
+        track.bitrate_bps = None;
+        assert_eq!(byte_rate(&track), None);
     }
 
     #[test]
