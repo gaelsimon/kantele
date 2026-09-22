@@ -12,7 +12,7 @@ use lofty::prelude::ItemKey;
 use lofty::probe::Probe;
 
 /// What one file says about itself, before any decision about identity or containment.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct FileTags {
     pub title: Option<String>,
@@ -133,7 +133,7 @@ fn drop_blank(names: &mut Vec<String>, aligned: &mut [&mut Vec<String>]) {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AudioProperties {
     pub duration: Duration,
     pub sample_rate: Option<u32>,

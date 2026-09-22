@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering::Relaxed;
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Statement, Transaction, params};
 
 use crate::index::artwork::{Artwork, Source};
 use crate::index::identity::IDENTITY_VERSION;
@@ -731,6 +731,16 @@ struct Covered<'a> {
     refused: HashSet<&'a Path>,
 }
 
+/// The one shape every table is written in: a row per file, replaced whole when it is there.
+fn upsert_into<'t>(transaction: &'t Transaction<'_>, table: &str) -> Result<Statement<'t>> {
+    Ok(transaction.prepare(&format!(
+        "INSERT INTO {table} (relative, size, mtime, payload, reader) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT (relative) DO UPDATE
+         SET size = excluded.size, mtime = excluded.mtime, payload = excluded.payload,
+             reader = excluded.reader"
+    ))?)
+}
+
 fn write_files<'a>(
     transaction: &Transaction<'_>,
     roots: &Roots,
@@ -744,12 +754,7 @@ fn write_files<'a>(
         .iter()
         .map(|found| (found.path.as_path(), found.fingerprint))
         .collect();
-    let mut upsert = transaction.prepare(
-        "INSERT INTO files (relative, size, mtime, payload, reader) VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT (relative) DO UPDATE
-         SET size = excluded.size, mtime = excluded.mtime, payload = excluded.payload,
-             reader = excluded.reader",
-    )?;
+    let mut upsert = upsert_into(transaction, "files")?;
     let mut covered: HashSet<&Path> = HashSet::with_capacity(files.len());
     for file in files {
         covered.insert(file.relative.as_path());
@@ -762,15 +767,22 @@ fn write_files<'a>(
         if fingerprint == Fingerprint::UNKNOWN {
             continue;
         }
-        let payload = serde_json::to_string(&Payload {
-            tags: file.tags.clone(),
-            properties: file.properties,
-            artwork: file.artwork.as_ref().map(|art| Image::of(art, roots)),
-        })?;
-        if cache.agrees(&file.relative, fingerprint, &payload) {
+        let artwork = file.artwork.as_ref().map(|art| Image::of(art, roots));
+        if cache.agrees(
+            &file.relative,
+            fingerprint,
+            &file.tags,
+            file.properties,
+            artwork.as_ref(),
+        ) {
             saved.unchanged += 1;
             continue;
         }
+        let payload = serde_json::to_string(&Payload {
+            tags: file.tags.clone(),
+            properties: file.properties,
+            artwork,
+        })?;
         upsert.execute(params![
             relative,
             fingerprint.size as i64,
@@ -789,12 +801,7 @@ fn write_refused<'a>(
     cache: &Cache,
     saved: &mut Saved,
 ) -> Result<HashSet<&'a Path>> {
-    let mut upsert = transaction.prepare(
-        "INSERT INTO refused (relative, size, mtime, payload, reader) VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT (relative) DO UPDATE
-         SET size = excluded.size, mtime = excluded.mtime, payload = excluded.payload,
-             reader = excluded.reader",
-    )?;
+    let mut upsert = upsert_into(transaction, "refused")?;
     let mut covered: HashSet<&Path> = HashSet::with_capacity(refused.len());
     for file in refused {
         // Left uncovered so any row it has is forgotten: the next pass tries the file again.
@@ -843,12 +850,7 @@ fn write_covers(
             }
         })
         .collect();
-    let mut upsert = transaction.prepare(
-        "INSERT INTO covers (relative, size, mtime, payload, reader) VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT (relative) DO UPDATE
-         SET size = excluded.size, mtime = excluded.mtime, payload = excluded.payload,
-             reader = excluded.reader",
-    )?;
+    let mut upsert = upsert_into(transaction, "covers")?;
     let mut covered: HashSet<PathBuf> = HashSet::with_capacity(walked.covers.len());
     for image in walked.covers.values() {
         let relative = relative(&image.path, roots);
@@ -885,12 +887,7 @@ fn write_playlists<'a>(
     cache: &Cache,
     saved: &mut Saved,
 ) -> Result<HashSet<&'a Path>> {
-    let mut upsert = transaction.prepare(
-        "INSERT INTO playlists (relative, size, mtime, payload, reader) VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT (relative) DO UPDATE
-         SET size = excluded.size, mtime = excluded.mtime, payload = excluded.payload,
-             reader = excluded.reader",
-    )?;
+    let mut upsert = upsert_into(transaction, "playlists")?;
     let mut covered: HashSet<&Path> = HashSet::with_capacity(playlists.len());
     for found in playlists {
         covered.insert(found.relative.as_path());
@@ -1437,6 +1434,29 @@ mod tests {
             (0, 1, 1)
         );
         assert_eq!(dates(&again), vec![Some(1_000)]);
+    }
+
+    #[test]
+    fn a_row_an_older_reader_wrote_is_written_again_though_its_values_agree() {
+        let mut store = Store::in_memory().expect("a store");
+        let files = [scanned("a/1.flac", "Juana Peña", None)];
+        let print = fingerprint(27, 1_700_000_000);
+        saved(&mut store, &files, print);
+        store
+            .connection
+            .execute("UPDATE files SET reader = reader - 1", [])
+            .expect("an older reader");
+
+        let again = saved(&mut store, &files, print);
+        assert_eq!((again.files, again.unchanged), (1, 0));
+        let reader: i64 = store
+            .connection
+            .query_row("SELECT reader FROM files", [], |row| row.get(0))
+            .expect("the row");
+        assert_eq!(
+            reader, READER_VERSION,
+            "or every pass after reads the file again"
+        );
     }
 
     #[test]
