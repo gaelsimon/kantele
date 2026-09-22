@@ -278,7 +278,7 @@ fn decode(bytes: Vec<u8>) -> String {
     text.strip_prefix('\u{feff}').unwrap_or(&text).to_owned()
 }
 
-fn parse_m3u(text: &str, roots: impl Into<Roots>, folder: &Path, stem: String) -> Contents {
+pub fn parse_m3u(text: &str, roots: impl Into<Roots>, folder: &Path, stem: String) -> Contents {
     let roots = &roots.into();
     let mut playlist = Contents {
         title: stem,
@@ -314,7 +314,7 @@ fn after_comma(information: &str) -> Option<String> {
     (!text.is_empty()).then(|| text.to_owned())
 }
 
-fn parse_pls(text: &str, roots: impl Into<Roots>, folder: &Path, stem: String) -> Contents {
+pub fn parse_pls(text: &str, roots: impl Into<Roots>, folder: &Path, stem: String) -> Contents {
     let roots = &roots.into();
     let mut title = stem;
     let mut entries: Vec<(u32, Entry)> = Vec::new();

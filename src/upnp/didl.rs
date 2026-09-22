@@ -53,6 +53,8 @@ pub struct ContainerSpec<'a> {
     pub date: Option<&'a str>,
     pub artists: &'a [Credit],
     pub credited: bool,
+    /// The root's folder view, which a client profile may call something else.
+    pub folder_view: bool,
 }
 
 pub const MENU: &str = "object.container";
@@ -73,6 +75,7 @@ impl<'a> ContainerSpec<'a> {
             date: None,
             artists: &[],
             credited: false,
+            folder_view: false,
         }
     }
 
@@ -87,6 +90,19 @@ impl<'a> ContainerSpec<'a> {
         Self {
             class: FOLDER,
             ..Self::menu(id, parent, title, children)
+        }
+    }
+
+    /// The folder view itself, the one entry of the root a profile may retitle.
+    pub fn folder_view(
+        id: ObjectId,
+        parent: ObjectId,
+        title: impl Into<String>,
+        children: usize,
+    ) -> Self {
+        Self {
+            folder_view: true,
+            ..Self::folder(id, parent, title, children)
         }
     }
 }
@@ -131,7 +147,11 @@ fn write_container(writer: &mut Writer<Cursor<Vec<u8>>>, spec: &ContainerSpec<'_
     start.push_attribute(("childCount", spec.child_count.to_string().as_str()));
     let _ = writer.write_event(Event::Start(start));
 
-    text_element(writer, "dc:title", &spec.title);
+    let title = match &to.profile.folder_view {
+        Some(called) if spec.folder_view => called,
+        _ => &spec.title,
+    };
+    text_element(writer, "dc:title", title);
     values(writer, "upnp:genre", spec.genres, to.profile);
     if let Some(date) = spec.date.map(iso_date) {
         text_element(writer, "dc:date", &date);
@@ -498,6 +518,42 @@ mod tests {
         assert!(adapted.contains("<upnp:artist>Duke Ellington, Johnny Hodges</upnp:artist>"));
         assert!(adapted.contains(r#"<upnp:artist role="Composer">Billy Strayhorn</upnp:artist>"#));
         assert!(adapted.contains(r#"<upnp:author role="Composer">Billy Strayhorn</upnp:author>"#));
+    }
+
+    #[test]
+    fn a_profile_retitles_the_folder_view_and_no_other_folder() {
+        let view = ContainerSpec::folder_view(
+            ObjectId::new("folders").unwrap(),
+            ObjectId::root(),
+            "[folder view]",
+            3,
+        );
+        let inside = ContainerSpec::folder(
+            ObjectId::new("f-1").unwrap(),
+            ObjectId::new("folders").unwrap(),
+            "Jazz",
+            2,
+        );
+        let both = [Child::Container(view), Child::Container(inside)];
+
+        let plain = children(&both, To::plain("http://h"));
+        assert!(
+            plain.contains("<dc:title>[folder view]</dc:title>"),
+            "{plain}"
+        );
+        assert!(plain.contains("<dc:title>Jazz</dc:title>"), "{plain}");
+
+        let client = Profile {
+            folder_view: Some("📁 Directories".to_owned()),
+            ..Profile::default()
+        };
+        let retitled = children(&both, To::new("http://h", &client));
+        assert!(
+            retitled.contains("<dc:title>📁 Directories</dc:title>"),
+            "{retitled}"
+        );
+        assert!(!retitled.contains("[folder view]"), "{retitled}");
+        assert!(retitled.contains("<dc:title>Jazz</dc:title>"), "{retitled}");
     }
 
     #[test]

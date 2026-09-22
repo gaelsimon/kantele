@@ -1,9 +1,12 @@
 name: ci
 
+# A publish is a pull request into main, which runs everything here; the merge runs it again on
+# main itself; the tag on that merge fires the release workflow.
 on:
-  push:
-    branches: [main, master]
   pull_request:
+    branches: [main]
+  push:
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -52,6 +55,39 @@ jobs:
       - run: cargo install cargo-zigbuild --locked
       # `cargo zigbuild` is the build alone; the other cargo verbs go through the binary itself.
       - run: cargo-zigbuild test --target ${{ matrix.target }}
+
+  # The server listens on every interface, parses SOAP from any device on the network and tags
+  # from any file in the music folder: what the dependencies are known to get wrong matters.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # The gate the standards ask for, so the figure cannot drift down unnoticed.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov --fail-under-lines 85
+
+  # The parsers that take hostile input build as fuzz targets; a target that no longer compiles
+  # is caught here, and `cargo fuzz run <target>` is a local pass, not a CI one.
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz --locked
+      # The repository pins stable; the sanitizer flags exist on nightly alone.
+      - run: cargo +nightly fuzz build
+        working-directory: fuzz
 
   page:
     runs-on: ubuntu-latest

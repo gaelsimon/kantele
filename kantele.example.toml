@@ -37,9 +37,10 @@ threads = 4
 
 # Minutes between looks at the library for changes nothing announced. A Synology allows fewer
 # folder watches than a library has folders, so the watcher refuses there and this is how a new
-# album appears. A look walks the tree and compares it with what the store remembers; only the
-# folders that differ are read, and a look that finds nothing opens no file and writes nothing.
-# Zero turns it off.
+# album appears. Where the folders are watched, the look runs far less often, to catch what the
+# watch missed; the status says the interval in force. A look walks the tree and compares it with
+# what the store remembers; only the folders that differ are read, and a look that finds nothing
+# opens no file and writes nothing. Zero turns it off.
 sweep_minutes = 15
 
 # Names and paths never walked, on top of dotfiles and the platform's own folders, which never are.
@@ -81,9 +82,12 @@ axes = ["genre", "artist", "all-artists", "composer", "date", "quality"]
 # always wins, and the letter index follows the same order. An empty list looks past nothing.
 sort_ignore = ["The"]
 
-# Control points that need an answer differing from the conservative one. There are no built-in
-# profiles: this file is where a new one is added, without waiting for a release. A client no
-# profile names is answered conservatively and written to the log once, by what it calls itself.
+# Control points that need an answer differing from the conservative one. One profile is built in,
+# for Denon HEOS, which opens a root entry titled with the word "folder" on its own: it is shown the
+# folder view as "📁 Directories". A profile here naming the same client replaces the built-in one
+# whole, keys included. This file is where a new one is added, without waiting for a release. A
+# client no profile names is answered conservatively and written to the log once, by what it calls
+# itself.
 #
 # [[clients]]
 # name = "example"
@@ -95,6 +99,8 @@ sort_ignore = ["The"]
 # join = ", "
 # # Hold a media stream to this multiple of the rate the file plays at.
 # rate_cap = 2.0
+# # What this client is shown as the title of the folder view at the root.
+# folder_view = "Directories"
 #
 # # Per format, keyed on the MIME type this server would otherwise send.
 # [clients.formats."audio/x-dsf"]

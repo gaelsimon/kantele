@@ -143,7 +143,7 @@ mod matching;
 mod objects;
 mod paging;
 mod parts;
-mod soap;
+pub mod soap;
 
 use matching::{Space, folded, indexed_matches, search_space};
 use objects::{children, metadata};

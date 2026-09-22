@@ -1,0 +1,57 @@
+[package]
+name = "kantele-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+kantele = { path = ".." }
+
+# Its own workspace, so `cargo` at the root never sees it.
+[workspace]
+
+[[bin]]
+name = "browse_request"
+path = "fuzz_targets/browse_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "search_criteria"
+path = "fuzz_targets/search_criteria.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vorbis_block"
+path = "fuzz_targets/vorbis_block.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dsd_header"
+path = "fuzz_targets/dsd_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "playlist_m3u"
+path = "fuzz_targets/playlist_m3u.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "playlist_pls"
+path = "fuzz_targets/playlist_pls.rs"
+test = false
+doc = false
+bench = false

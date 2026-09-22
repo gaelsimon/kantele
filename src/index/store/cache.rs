@@ -81,15 +81,29 @@ impl Cache {
         fingerprint: Fingerprint,
         payload: &str,
     ) -> bool {
-        match self.refused.get(relative) {
-            Some(row) => row.fingerprint == fingerprint && row.digest == digest(payload),
-            None => false,
-        }
+        self.refused
+            .get(relative)
+            .is_some_and(|row| row.agrees_with(fingerprint, payload))
     }
 
-    pub(super) fn agrees(&self, relative: &Path, fingerprint: Fingerprint, payload: &str) -> bool {
+    /// Compared value by value: on a pass that reads nothing, this is asked once per file. A row
+    /// an older reader wrote disagrees whatever it holds, so it is written again.
+    pub(super) fn agrees(
+        &self,
+        relative: &Path,
+        fingerprint: Fingerprint,
+        tags: &FileTags,
+        properties: AudioProperties,
+        artwork: Option<&Image>,
+    ) -> bool {
         match self.files.get(relative) {
-            Some(row) => row.fingerprint == fingerprint && row.digest == digest(payload),
+            Some(row) => {
+                row.fingerprint == fingerprint
+                    && row.reader == super::READER_VERSION
+                    && row.payload.tags == *tags
+                    && row.payload.properties == properties
+                    && row.payload.artwork.as_ref() == artwork
+            }
             None => false,
         }
     }
@@ -100,10 +114,9 @@ impl Cache {
         fingerprint: Fingerprint,
         payload: &str,
     ) -> bool {
-        match self.covers.get(relative) {
-            Some(row) => row.fingerprint == fingerprint && row.digest == digest(payload),
-            None => false,
-        }
+        self.covers
+            .get(relative)
+            .is_some_and(|row| row.agrees_with(fingerprint, payload))
     }
 
     /// Whether this cache was built for the folders a pass is about to cover.
@@ -178,10 +191,9 @@ impl Cache {
         fingerprint: Fingerprint,
         payload: &str,
     ) -> bool {
-        match self.playlists.get(relative) {
-            Some(row) => row.fingerprint == fingerprint && row.digest == digest(payload),
-            None => false,
-        }
+        self.playlists
+            .get(relative)
+            .is_some_and(|row| row.agrees_with(fingerprint, payload))
     }
 
     pub fn cover(&self, image: &Found) -> Option<Artwork> {
@@ -222,5 +234,10 @@ pub(super) struct Row<T> {
 impl<T> Row<T> {
     fn answers_for(&self, fingerprint: Fingerprint) -> bool {
         self.fingerprint == fingerprint && self.reader == super::READER_VERSION
+    }
+
+    /// Whether a pass may leave this row as it is: same file, same text, same reader.
+    fn agrees_with(&self, fingerprint: Fingerprint, payload: &str) -> bool {
+        self.answers_for(fingerprint) && self.digest == digest(payload)
     }
 }

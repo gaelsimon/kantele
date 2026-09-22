@@ -9,7 +9,7 @@ use crate::index::roots::Roots;
 use crate::tags::{AudioProperties, FileTags};
 
 /// `serde(default)` so an older row still reads back.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Payload {
     #[serde(deserialize_with = "tidied_tags")]
@@ -24,7 +24,7 @@ fn tidied_tags<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<File
 }
 
 /// Paths are relative to the root so a remount keeps the cache.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Image {
     /// None when the picture is embedded.

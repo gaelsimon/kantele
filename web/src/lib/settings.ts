@@ -58,7 +58,7 @@ const shapes: Record<string, Shape> = {
   'scan.sweep_minutes': {
     kind: 'number',
     after: 'min',
-    note: 'The server reads only the folders that changed. If the value is 0, the server does not scan on a timer.',
+    note: 'The server reads only the folders that changed. When it can watch the folders, it waits much longer between scans. If the value is 0, the server does not scan on a timer.',
   },
   'scan.threads': { kind: 'number', note: 'A high value makes a NAS slower.' },
   'scan.cover_art': {
