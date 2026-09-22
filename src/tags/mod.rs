@@ -3,6 +3,8 @@
 pub mod dsd;
 mod vorbis;
 
+use std::fs::File;
+use std::io::{BufReader, Seek};
 use std::path::Path;
 use std::time::Duration;
 
@@ -174,6 +176,7 @@ pub fn read_keeping(
     Ok((tags.tidied(), properties, picture))
 }
 
+/// The file is opened once: the DSD sniff, the tag parse and the comment block all read from it.
 fn read_as_written(
     path: &Path,
     cover: Cover,
@@ -182,20 +185,21 @@ fn read_as_written(
         Cover::Wanted => first_picture(tagged),
         Cover::Skipped => None,
     };
-    if let Some(dsd) = dsd::read(path) {
+    let mut file = File::open(path).map_err(|source| refusal(path, source.into()))?;
+    if let Some(dsd) = dsd::read_from(&mut file) {
         let tags = dsd.tagged.as_ref().map(tags_of).unwrap_or_default();
         let picture = dsd.tagged.as_ref().and_then(wanted);
         return Ok((tags, dsd.properties, picture));
     }
     // A picture nobody is going to look at is a megabyte read and decoded per file.
     let options = ParseOptions::new().read_cover_art(cover == Cover::Wanted);
-    match probe(path, options) {
+    match probe(&mut file, path, options) {
         Ok(tagged) => Ok((
-            tags_from(path, &tagged),
+            tags_from(&mut file, &tagged),
             properties_of(&tagged),
             wanted(&tagged),
         )),
-        Err(refused) => read_again(path, refused, options, &wanted),
+        Err(refused) => read_again(&mut file, path, refused, options, &wanted),
     }
 }
 
@@ -218,12 +222,12 @@ fn containers(tagged: &lofty::file::TaggedFile) -> Vec<&lofty::tag::Tag> {
 
 /// One file's tags, with the ones the tag crate discards read from the container. `GROUP` names
 /// the run a track belongs to, beside the `GROUPING` the crate reads.
-fn tags_from(path: &Path, tagged: &lofty::file::TaggedFile) -> FileTags {
+fn tags_from(file: &mut File, tagged: &lofty::file::TaggedFile) -> FileTags {
     let mut tags = tags_of(tagged);
     let wanted = tags.composer_sorts.is_empty() || tags.grouping.is_none();
     if wanted
         && tagged.file_type() == lofty::file::FileType::Flac
-        && let Some(block) = vorbis::block(path)
+        && let Some(block) = vorbis::block(file)
     {
         if tags.composer_sorts.is_empty() {
             tags.composer_sorts = vorbis::values(&block, "COMPOSERSORT");
@@ -237,19 +241,20 @@ fn tags_from(path: &Path, tagged: &lofty::file::TaggedFile) -> FileTags {
 
 /// Two things go wrong on a real library, and the file is worth serving after either.
 fn read_again(
+    file: &mut File,
     path: &Path,
     refused: TagError,
     options: ParseOptions,
     wanted: &dyn Fn(&lofty::file::TaggedFile) -> Option<Vec<u8>>,
 ) -> Result<(FileTags, AudioProperties, Option<Vec<u8>>), TagError> {
-    if let Ok(tagged) = probe_sniffed(path, options) {
+    if let Ok(tagged) = probe_sniffed(file, path, options) {
         tracing::warn!(
             path = %path.display(),
             found = ?tagged.file_type(),
             "the extension does not match the bytes; read as the format they say"
         );
         return Ok((
-            tags_from(path, &tagged),
+            tags_from(file, &tagged),
             properties_of(&tagged),
             wanted(&tagged),
         ));
@@ -259,24 +264,43 @@ fn read_again(
         cause = %causes(&refused),
         "tags will not parse; serving the file without them"
     );
-    let tagged = probe(path, ParseOptions::new().read_tags(false))?;
+    let tagged = probe(file, path, ParseOptions::new().read_tags(false))?;
     Ok((FileTags::default(), properties_of(&tagged), None))
 }
 
-fn probe(path: &Path, options: ParseOptions) -> Result<lofty::file::TaggedFile, TagError> {
-    Probe::open(path)
-        .and_then(|probe| probe.options(options).read())
-        .map_err(|source| refusal(path, source))
+/// A parse of the open file as the format its name says, from its first byte. Buffered, as
+/// `Probe::open` buffers, or every read the parser makes is a system call.
+fn probe(
+    file: &mut File,
+    path: &Path,
+    options: ParseOptions,
+) -> Result<lofty::file::TaggedFile, TagError> {
+    rewound(file, path)?;
+    let mut probe = Probe::new(BufReader::new(file)).options(options);
+    if let Some(kind) = lofty::file::FileType::from_path(path) {
+        probe = probe.set_file_type(kind);
+    }
+    probe.read().map_err(|source| refusal(path, source))
 }
 
 /// The same read with the format taken from the first bytes rather than from the name.
-fn probe_sniffed(path: &Path, options: ParseOptions) -> Result<lofty::file::TaggedFile, TagError> {
-    let probe = Probe::open(path).map_err(|source| refusal(path, source))?;
-    let probe = probe
+fn probe_sniffed(
+    file: &mut File,
+    path: &Path,
+    options: ParseOptions,
+) -> Result<lofty::file::TaggedFile, TagError> {
+    rewound(file, path)?;
+    let probe = Probe::new(BufReader::new(file))
         .options(options)
         .guess_file_type()
         .map_err(|source| refusal(path, lofty::error::FileParseError::from(source)))?;
     probe.read().map_err(|source| refusal(path, source))
+}
+
+fn rewound(file: &mut File, path: &Path) -> Result<(), TagError> {
+    file.seek(std::io::SeekFrom::Start(0))
+        .map(|_| ())
+        .map_err(|source| refusal(path, source.into()))
 }
 
 fn refusal(path: &Path, source: lofty::error::FileParseError) -> TagError {

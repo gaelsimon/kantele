@@ -24,13 +24,18 @@ pub struct Dsd {
 
 /// Reads a DSD file, or nothing when the bytes are not DSD.
 pub fn read(path: &Path) -> Option<Dsd> {
-    let mut file = File::open(path).ok()?;
+    read_from(&mut File::open(path).ok()?)
+}
+
+/// The same from a file already open, left at its start when the bytes are not DSD.
+pub fn read_from(file: &mut File) -> Option<Dsd> {
+    file.seek(SeekFrom::Start(0)).ok()?;
     let mut magic = [0u8; 4];
     file.read_exact(&mut magic).ok()?;
     file.seek(SeekFrom::Start(0)).ok()?;
     match &magic {
-        b"DSD " => dsf(&mut file),
-        b"FRM8" => dsdiff(&mut file),
+        b"DSD " => dsf(file),
+        b"FRM8" => dsdiff(file),
         _ => None,
     }
 }
