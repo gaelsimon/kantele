@@ -103,21 +103,25 @@ const SAYS_NOT_FRONT: &[&str] = &[
 ];
 
 pub fn preferred_cover(entries: &[PathBuf]) -> Option<PathBuf> {
+    // By name rather than in the order the file system listed them: that order is not the same
+    // on two boxes and changes when a folder is reorganised, and the cover would change with it.
+    let mut entries: Vec<&PathBuf> = entries.iter().collect();
+    entries.sort_by_key(|path| path.as_os_str().to_ascii_lowercase());
     for wanted in FOLDER_IMAGES {
-        for path in entries {
+        for path in &entries {
             let matches = path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.eq_ignore_ascii_case(wanted));
             if matches {
-                return Some(path.clone());
+                return Some((*path).clone());
             }
         }
     }
     let named_front = entries.iter().find(|path| says_front(path));
     named_front
         .or_else(|| entries.first().filter(|_| entries.len() == 1))
-        .cloned()
+        .map(|path| (*path).clone())
 }
 
 /// Whole words: `disc` is inside `disco`.
@@ -393,6 +397,26 @@ mod tests {
             .map(|name| PathBuf::from("/x").join(name))
             .collect();
         preferred_cover(&paths).map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn the_cover_is_the_same_whatever_order_the_folder_was_listed_in() {
+        let names = [
+            "the sea and cake.sleeve.jpg",
+            "the sea and cake.front.jpg",
+            "the sea and cake.jpg",
+        ];
+        let mut reversed = names;
+        reversed.reverse();
+        assert_eq!(
+            cover_of(&names),
+            cover_of(&reversed),
+            "`read_dir` hands a folder over in the file system's order, not the library's"
+        );
+        assert_eq!(
+            cover_of(&names),
+            Some("the sea and cake.front.jpg".to_owned())
+        );
     }
 
     #[test]
