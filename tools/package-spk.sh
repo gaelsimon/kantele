@@ -7,6 +7,10 @@ cd "$(dirname "$0")/.."
 # macOS tar writes an AppleDouble ._file beside every file it stores, which would ship to every NAS.
 export COPYFILE_DISABLE=1
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)-1"
+# Between releases the crate says -dev; a package under that name would not say which tree it is.
+case "$VERSION" in
+  *-dev-*) echo "Cargo.toml says $VERSION: set the release version and tag it before packaging" >&2; exit 1 ;;
+esac
 SRC=packaging/synology
 OUT=dist
 mkdir -p "$OUT"
