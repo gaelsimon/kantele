@@ -1097,10 +1097,7 @@ fn publishing_as_it_goes(
         while let Some(finished) = snapshots.recv().await {
             let (name, ignored, menus) = (name.clone(), ignored.clone(), menus.clone());
             let built = tokio::task::spawn_blocking(move || {
-                let files: Vec<scan::Scanned> = finished
-                    .iter()
-                    .flat_map(|read| read.0.iter().cloned())
-                    .collect();
+                let files = scan::in_walk_order(finished);
                 let library = Library::build_holding(
                     name,
                     &files,

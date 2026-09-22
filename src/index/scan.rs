@@ -150,13 +150,25 @@ pub struct Partial {
     schedule: Mutex<Schedule>,
 }
 
-/// The folders a first read has finished, shared rather than copied: a publication flattens them
-/// on its own thread.
-pub type Finished = Vec<Arc<Read>>;
+/// The folders a first read has finished, each with its place in the walk, shared rather than
+/// copied: a publication puts them back in that order and flattens them on its own thread.
+pub type Finished = Vec<(usize, Arc<Read>)>;
 
 /// Takes a snapshot, or says it could not: the next one is then due soon rather than an interval
 /// away.
 pub type Hook = Arc<dyn Fn(Finished) -> bool + Send + Sync>;
+
+/// A snapshot as a library is built from it: the folders back in the order the walk found them,
+/// flattened. That order settles which of two folders deriving one album key keeps it, and which
+/// of two files deriving one track key keeps it, so a snapshot built in the order the reading
+/// threads happened to finish would mint identifiers the next publication moves.
+pub fn in_walk_order(mut finished: Finished) -> Vec<Scanned> {
+    finished.sort_by_key(|(at, _)| *at);
+    finished
+        .iter()
+        .flat_map(|(_, read)| read.0.iter().cloned())
+        .collect()
+}
 
 #[derive(Default)]
 struct Schedule {
@@ -853,20 +865,17 @@ pub fn read(
         .files
         .chunk_by(|left, right| left.path.parent() == right.path.parent())
         .collect();
-    // Folders land here as they finish, in whatever order the threads finish them; what a
-    // publication in flight sees is every folder finished so far, never part of one.
-    let done: Mutex<Vec<(usize, Arc<Read>)>> = Mutex::new(Vec::with_capacity(folders.len()));
+    // Folders land here as they finish, in whatever order the threads finish them, each keeping
+    // its place in the walk; what a publication in flight sees is every folder finished so far,
+    // never part of one.
+    let done: Mutex<Finished> = Mutex::new(Vec::with_capacity(folders.len()));
     let one = |index: usize, folder: &[Found]| {
         let read = read_folder(roots, folder, walked, cache, underway, options.cover_art);
         // Under the lock, pointers alone: the other threads wait for no copy.
         let so_far = {
             let mut done = unpoisoned(&done);
             done.push((index, Arc::new(read)));
-            underway.partial.due().then(|| {
-                done.iter()
-                    .map(|(_, read)| read.clone())
-                    .collect::<Finished>()
-            })
+            underway.partial.due().then(|| done.clone())
         };
         if let Some(finished) = so_far {
             underway.partial.publish(finished);
@@ -1105,6 +1114,40 @@ mod tests {
         );
     }
     use super::*;
+
+    #[test]
+    fn a_snapshot_is_built_in_the_order_the_walk_found_the_folders() {
+        let read = |name: &str| {
+            let file = Scanned {
+                path: PathBuf::from(format!("/music/{name}")),
+                relative: PathBuf::from(name),
+                tags: crate::tags::FileTags::default(),
+                properties: crate::tags::AudioProperties::default(),
+                size: 1,
+                artwork: None,
+            };
+            Arc::new((vec![file], Vec::new()))
+        };
+        // The reading threads finish in their own order, which is not the walk's.
+        let finished: Finished = vec![
+            (2, read("c/1.flac")),
+            (0, read("a/1.flac")),
+            (1, read("b/1.flac")),
+        ];
+        let names: Vec<PathBuf> = in_walk_order(finished)
+            .into_iter()
+            .map(|file| file.relative)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                PathBuf::from("a/1.flac"),
+                PathBuf::from("b/1.flac"),
+                PathBuf::from("c/1.flac")
+            ],
+            "the order settles which of two folders keeps an album key it shares"
+        );
+    }
 
     #[test]
     fn only_a_file_that_opens_is_refused_for_a_reason_worth_remembering() {

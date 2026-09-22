@@ -15,8 +15,12 @@ fn read_publishing(tree: &Tree, first: Duration) -> (Vec<usize>, usize) {
     let recorded = seen.clone();
     underway.partial.arm(
         Arc::new(move |finished| {
-            let files: usize = finished.iter().map(|read| read.0.len()).sum();
-            recorded.lock().expect("the record").push(files);
+            let files = kantele::index::scan::in_walk_order(finished);
+            assert!(
+                files.windows(2).all(|pair| pair[0].path <= pair[1].path),
+                "a publication is built in walk order, whatever order the threads finished in"
+            );
+            recorded.lock().expect("the record").push(files.len());
             true
         }),
         first,
