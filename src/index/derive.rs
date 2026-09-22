@@ -81,8 +81,15 @@ fn discs_of(album: &crate::object::ObjectId, members: &[usize], tracks: &[Track]
 }
 
 /// Consecutive members sharing a grouping tag on one disc. A track without one ends the run, so
-/// a name used twice is two runs.
+/// a name used twice is two runs. A run that covers every track of its disc is no run at all: the
+/// tag names the disc, and a container holding the whole album under one more title is a step a
+/// player has to take for nothing, or refuses to show.
 fn runs_of(album: &crate::object::ObjectId, members: &[usize], tracks: &[Track]) -> Vec<Run> {
+    let mut on_disc: std::collections::HashMap<Option<u32>, usize> =
+        std::collections::HashMap::new();
+    for at in members {
+        *on_disc.entry(tracks[*at].disc_number).or_default() += 1;
+    }
     let mut candidates: Vec<(String, Option<u32>, Vec<usize>)> = Vec::new();
     for at in members {
         let track = &tracks[*at];
@@ -99,7 +106,7 @@ fn runs_of(album: &crate::object::ObjectId, members: &[usize], tracks: &[Track])
     let mut named: Vec<(Option<u32>, String, Option<u32>)> = Vec::new();
     candidates
         .into_iter()
-        .filter(|(key, _, run)| !key.is_empty() && run.len() > 1)
+        .filter(|(key, disc, run)| !key.is_empty() && run.len() > 1 && run.len() < on_disc[disc])
         .map(|(key, disc, run)| {
             let first = tracks[run[0]].track_number;
             let again = named
