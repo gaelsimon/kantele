@@ -1,7 +1,7 @@
 //! Wiring only: everything that does work lives in the library.
 
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -179,55 +179,11 @@ async fn run(arguments: Arguments, sink: &kantele::log::Sink) -> Result<()> {
     // Before the store, because two servers on one state folder share the persisted device
     // identity and then write the same index. Held for the whole run.
     let state_dir = config.state_dir();
-    let _state_lock = match state::lock(&state_dir) {
-        state::Lock::Taken(held) => Some(held),
-        state::Lock::Busy(path) => anyhow::bail!(
-            "another kantele is serving {}: two of them share a device identity and write the \
-             same index. Give this one its own state folder, with state_dir or KANTELE_STATE.\n\
-             The lock is {}",
-            state_dir.display(),
-            path.display()
-        ),
-        state::Lock::Skipped(error) => {
-            tracing::warn!(
-                %error, dir = %state_dir.display(),
-                "the state folder was not locked: nothing stops a second server sharing it"
-            );
-            None
-        }
-    };
-    if file_wanted() {
-        let log_path = kantele::log::path(&state_dir);
-        if let Err(error) = sink.open(log_path.clone()) {
-            tracing::warn!(
-                path = %log_path.display(), %error,
-                "no log file: the page cannot show what this server said"
-            );
-        }
-    } else {
-        sink.off();
-    }
+    let _state_lock = lock_state(&state_dir)?;
+    open_log(sink, &state_dir);
 
     let store_path = config::store_path(&state_dir);
-    let mut store = match Store::open_or_replace(&store_path) {
-        Ok(mut store) => {
-            // With no folder chosen the store is left saying which library it holds, or a start
-            // before anyone has chosen would drop what the last one wrote.
-            if !roots.is_empty()
-                && let Err(error) = store.serving(&roots)
-            {
-                tracing::warn!(%error, "the store was not told which library it is serving");
-            }
-            Some(store)
-        }
-        Err(error) => {
-            tracing::warn!(
-                path = %store_path.display(), %error,
-                "no store: every file will be read on every start, and dates added are not kept"
-            );
-            None
-        }
-    };
+    let mut store = open_store(&store_path, &roots);
     let remembered = match arguments.start {
         Start::Reread => None,
         _ if arguments.report_only => None,
@@ -239,39 +195,8 @@ async fn run(arguments: Arguments, sink: &kantele::log::Sink) -> Result<()> {
         arguments.start,
         arguments.report_only || arguments.album_list.is_some(),
     );
-    let mut first_pass = None;
-    let library = match remembered {
-        Some(library) => library,
-        None if roots.is_empty() => kantele::index::Library::default(),
-        None if !opening.walk_here => {
-            if arguments.start == Start::Remembered {
-                tracing::warn!(
-                    "nothing is remembered about this folder, so it is walked despite --no-scan"
-                );
-            }
-            tracing::info!(
-                folder = %roots.describe(),
-                "serving nothing yet: the page and the network answer now, and the library is \
-                 read in the background"
-            );
-            kantele::index::Library::default()
-        }
-        None => {
-            let pass = if arguments.start == Start::Reread {
-                Pass::Reread
-            } else {
-                Pass::Whole
-            };
-            let indexed = service::index(&indexing, &mut store, pass)
-                .with_context(|| format!("scanning {}", roots.describe()))?;
-            // This index is the one served from here, which nothing else is left to decide.
-            first_pass = Some(kantele::service::PassReport {
-                outcome: kantele::service::Outcome::Published,
-                ..indexed.pass
-            });
-            indexed.library
-        }
-    };
+    let (library, first_pass) =
+        first_library(remembered, &arguments, &opening, &indexing, &mut store)?;
     if library.is_empty() && !roots.is_empty() && !opening.verify {
         tracing::warn!("nothing playable found: a player will show an empty folder");
     }
@@ -306,6 +231,112 @@ async fn run(arguments: Arguments, sink: &kantele::log::Sink) -> Result<()> {
         },
     )
     .await
+}
+
+/// The lock on the state folder, or nothing where the platform gave none; a second server on the
+/// same folder is refused.
+fn lock_state(state_dir: &Path) -> Result<Option<state::StateLock>> {
+    match state::lock(state_dir) {
+        state::Lock::Taken(held) => Ok(Some(held)),
+        state::Lock::Busy(path) => anyhow::bail!(
+            "another kantele is serving {}: two of them share a device identity and write the \
+             same index. Give this one its own state folder, with state_dir or KANTELE_STATE.\n\
+             The lock is {}",
+            state_dir.display(),
+            path.display()
+        ),
+        state::Lock::Skipped(error) => {
+            tracing::warn!(
+                %error, dir = %state_dir.display(),
+                "the state folder was not locked: nothing stops a second server sharing it"
+            );
+            Ok(None)
+        }
+    }
+}
+
+fn open_log(sink: &kantele::log::Sink, state_dir: &Path) {
+    if !file_wanted() {
+        sink.off();
+        return;
+    }
+    let log_path = kantele::log::path(state_dir);
+    if let Err(error) = sink.open(log_path.clone()) {
+        tracing::warn!(
+            path = %log_path.display(), %error,
+            "no log file: the page cannot show what this server said"
+        );
+    }
+}
+
+/// The store, told which library it holds, or nothing where it would not open.
+fn open_store(store_path: &Path, roots: &kantele::index::Roots) -> Option<Store> {
+    match Store::open_or_replace(store_path) {
+        Ok(mut store) => {
+            // With no folder chosen the store is left saying which library it holds, or a start
+            // before anyone has chosen would drop what the last one wrote.
+            if !roots.is_empty()
+                && let Err(error) = store.serving(roots)
+            {
+                tracing::warn!(%error, "the store was not told which library it is serving");
+            }
+            Some(store)
+        }
+        Err(error) => {
+            tracing::warn!(
+                path = %store_path.display(), %error,
+                "no store: every file will be read on every start, and dates added are not kept"
+            );
+            None
+        }
+    }
+}
+
+/// What is served from the first moment: the remembered library, nothing while the tree is read
+/// in the background, or the library a walk here produces, with the pass that produced it.
+fn first_library(
+    remembered: Option<kantele::index::Library>,
+    arguments: &Arguments,
+    opening: &Opening,
+    indexing: &Indexing,
+    store: &mut Option<Store>,
+) -> Result<(
+    kantele::index::Library,
+    Option<kantele::service::PassReport>,
+)> {
+    let roots = &indexing.roots;
+    match remembered {
+        Some(library) => Ok((library, None)),
+        None if roots.is_empty() => Ok((kantele::index::Library::default(), None)),
+        None if !opening.walk_here => {
+            if arguments.start == Start::Remembered {
+                tracing::warn!(
+                    "nothing is remembered about this folder, so it is walked despite --no-scan"
+                );
+            }
+            tracing::info!(
+                folder = %roots.describe(),
+                "serving nothing yet: the page and the network answer now, and the library is \
+                 read in the background"
+            );
+            Ok((kantele::index::Library::default(), None))
+        }
+        None => {
+            let pass = if arguments.start == Start::Reread {
+                Pass::Reread
+            } else {
+                Pass::Whole
+            };
+            let indexed = service::index(indexing, store, pass)
+                .with_context(|| format!("scanning {}", roots.describe()))?;
+            // This index is the one served from here, which nothing else is left to decide.
+            let first_pass = kantele::service::PassReport {
+                outcome: kantele::service::Outcome::Published,
+                ..indexed.pass
+            };
+            Ok((indexed.library, Some(first_pass)))
+        }
+    }
 }
 
 /// What a start knows that the index does not, handed to the server in one piece.
