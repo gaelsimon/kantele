@@ -28,4 +28,5 @@ pub use scan::{Fingerprint, Found, ScanOptions, Scanned, Stopping, Walked};
 pub(crate) use scan::{is_image, is_skipped};
 pub use searchable::Searchables;
 pub use store::Store;
+pub use store::copy_path as store_copy_path;
 pub use watch::Watcher;

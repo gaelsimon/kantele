@@ -21,6 +21,10 @@ struct Status {
     uptime_seconds: u64,
     system_update_id: u32,
     library: LibraryCounts,
+    /// Minutes between timed looks at the library as they run now, which is `scan.sweep_minutes`
+    /// stretched where the folders are watched, or nothing where none run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sweep_minutes_effective: Option<u64>,
     store: StoreStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     memory_bytes: Option<u64>,
@@ -111,6 +115,35 @@ struct StoreStatus {
     path: Option<String>,
     /// False where no store could be opened, which is every file read on every start.
     open: bool,
+    /// The copy made after a whole pass that stored, or nothing while none sits beside the store.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    copy: Option<StoreCopy>,
+}
+
+#[derive(Debug, Serialize)]
+struct StoreCopy {
+    path: String,
+    /// When it was written, in seconds since the epoch.
+    written: i64,
+    bytes: u64,
+}
+
+/// The copy beside the store, read from the disk when the page asks, off the runtime's threads
+/// since a sleeping disk answers late.
+async fn store_copy(store: Option<&std::path::Path>) -> Option<StoreCopy> {
+    let path = crate::index::store_copy_path(store?);
+    let metadata = tokio::fs::metadata(&path).await.ok()?;
+    let written = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
+    Some(StoreCopy {
+        path: path.display().to_string(),
+        written,
+        bytes: metadata.len(),
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -209,7 +242,9 @@ pub(super) async fn status(State(control): State<Shared>, headers: HeaderMap) ->
                 .as_ref()
                 .map(|path| path.display().to_string()),
             open: operation.store.is_some(),
+            copy: store_copy(operation.store.as_deref()).await,
         },
+        sweep_minutes_effective: control.passes.sweep().map(|every| every.as_secs() / 60),
         memory_bytes: resident_bytes(),
         last_pass: last.as_deref().map(|pass| LastPass {
             ended: pass.ended,
@@ -336,12 +371,25 @@ fn counted(status: &Status) -> Vec<(String, String)> {
         line("playlists", status.library.playlists.to_string()),
         line("untagged", status.library.untagged.to_string()),
         line(
+            "sweep_minutes_effective",
+            status
+                .sweep_minutes_effective
+                .map_or_else(|| "off".to_owned(), |minutes| minutes.to_string()),
+        ),
+        line(
             "store",
             status
                 .store
                 .path
                 .clone()
                 .unwrap_or_else(|| "none".to_owned()),
+        ),
+        line(
+            "store_copy",
+            match &status.store.copy {
+                Some(copy) => format!("{}\t{}\t{}", copy.path, copy.written, copy.bytes),
+                None => "none".to_owned(),
+            },
         ),
     ];
     for (field, count) in coverage.fields() {
@@ -468,9 +516,15 @@ mod tests {
                     ..Coverage::default()
                 },
             },
+            sweep_minutes_effective: Some(15),
             store: StoreStatus {
                 path: Some("/state/index.sqlite".to_owned()),
                 open: true,
+                copy: Some(StoreCopy {
+                    path: "/state/index.sqlite.copy".to_owned(),
+                    written: 1,
+                    bytes: 1,
+                }),
             },
             memory_bytes: Some(1),
             stopped: Vec::new(),

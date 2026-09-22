@@ -381,6 +381,12 @@ fn the_page_and_the_control_interface_are_served_by_the_binary() {
     let answered = server.wait_for_tracks(3);
     assert_eq!(answered["library"]["albums"], 1);
     assert_eq!(answered["store"]["open"], true);
+    assert!(
+        answered["store"]["copy"]["bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 0),
+        "the whole pass that stored left a copy the page can name: {answered}"
+    );
 
     // The pass that published is written down a moment after the library it published appears.
     let deadline = Instant::now() + PATIENCE;

@@ -645,7 +645,7 @@ fn beyond_reading(error: &anyhow::Error) -> bool {
 }
 
 /// `index.sqlite.copy`, beside the store it copies.
-fn copy_path(path: &Path) -> PathBuf {
+pub fn copy_path(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_owned();
     name.push(".copy");
     path.with_file_name(name)
