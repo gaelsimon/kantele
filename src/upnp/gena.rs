@@ -208,18 +208,16 @@ impl Subscriptions {
             let Some((callbacks, seq)) = self.next(&sid) else {
                 continue;
             };
-            for callback in callbacks {
-                // Taken inside the task: taken here, a slow subscriber stops the round being
-                // handed out at all, and the deadline below starts after the wait it bounds.
-                let permits = permits.clone();
-                let (subscriptions, sid, body) = (self.clone(), sid.clone(), body.clone());
-                sending.spawn(async move {
-                    let _held = permits.acquire_owned().await.expect("never closed");
-                    subscriptions
-                        .deliver_and_say_so(&callback, &sid, seq, &body)
-                        .await;
-                });
-            }
+            // Taken inside the task: taken here, a slow subscriber stops the round being
+            // handed out at all, and the deadline below starts after the wait it bounds.
+            let permits = permits.clone();
+            let (subscriptions, body) = (self.clone(), body.clone());
+            sending.spawn(async move {
+                let _held = permits.acquire_owned().await.expect("never closed");
+                subscriptions
+                    .deliver_once(&callbacks, &sid, seq, &body)
+                    .await;
+            });
         }
         // The pass that published the index waits on this, so slow subscribers are left to finish
         // on their own rather than holding it up.
@@ -238,25 +236,30 @@ impl Subscriptions {
             return;
         };
         let body = property_set(properties);
-        for callback in callbacks {
-            self.deliver_and_say_so(&callback, sid, seq, &body).await;
-        }
+        self.deliver_once(&callbacks, sid, seq, &body).await;
     }
 
-    async fn deliver_and_say_so(&self, callback: &str, sid: &str, seq: u32, body: &str) {
-        match deliver(callback, sid, seq, body).await {
-            Ok(()) => {
-                tracing::debug!(%sid, %callback, seq, "event delivered");
-                self.delivered(sid);
-            }
-            Err(error) => {
-                let missed = self.missed(sid);
-                tracing::warn!(%sid, %callback, seq, %error, missed, "event not delivered");
-                if missed >= MISSED {
-                    tracing::warn!(%sid, %callback, "nothing reached this subscriber: it is dropped");
-                    self.unsubscribe(sid);
+    /// The URLs a `CALLBACK` header holds are alternatives, not a list to fan out over: they are
+    /// tried in the order the subscriber wrote them, one event reaches it once, and an event no
+    /// URL carried counts against it once.
+    async fn deliver_once(&self, callbacks: &[String], sid: &str, seq: u32, body: &str) {
+        for callback in callbacks {
+            match deliver(callback, sid, seq, body).await {
+                Ok(()) => {
+                    tracing::debug!(%sid, %callback, seq, "event delivered");
+                    self.delivered(sid);
+                    return;
+                }
+                Err(error) => {
+                    tracing::warn!(%sid, %callback, seq, %error, "event not delivered")
                 }
             }
+        }
+        let missed = self.missed(sid);
+        tracing::warn!(%sid, seq, missed, "no callback of this subscriber took the event");
+        if missed >= MISSED {
+            tracing::warn!(%sid, "nothing reached this subscriber: it is dropped");
+            self.unsubscribe(sid);
         }
     }
 
@@ -735,6 +738,78 @@ mod tests {
             until_dropped(&subs).await;
             assert_eq!(!subs.is_empty(), kept, "answering {answer:?} at {callback}");
         }
+    }
+
+    /// A port bound then let go, which refuses every connection after that.
+    async fn refusing() -> String {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("a port");
+        let address = listener.local_addr().expect("bound");
+        drop(listener);
+        format!("http://{address}/notify")
+    }
+
+    #[tokio::test]
+    async fn the_second_callback_url_is_where_the_event_goes_when_the_first_refuses_it() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("a port");
+        let taken = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = taken.clone();
+        let alive = format!("http://{}/notify", listener.local_addr().expect("bound"));
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut seen = [0u8; 1024];
+                let _ = stream.read(&mut seen).await;
+                counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
+                let _ = stream.flush().await;
+            }
+        });
+        let subs = Subscriptions::default();
+        subs.subscribe(
+            Service::ContentDirectory,
+            &format!("<{}><{alive}>", refusing().await),
+            at("127.0.0.1"),
+            None,
+            None,
+        )
+        .expect("granted");
+
+        subs.notify(
+            Service::ContentDirectory,
+            &[("SystemUpdateID", "2".to_owned())],
+        )
+        .await;
+        assert_eq!(
+            taken.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "the alternative took the event"
+        );
+        assert!(
+            !subs.is_empty(),
+            "and the subscription is not held to blame"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subscriber_with_two_dead_callbacks_is_dropped_no_sooner_than_one_with_a_single_one()
+    {
+        let subs = Subscriptions::default();
+        subs.subscribe(
+            Service::ContentDirectory,
+            &format!("<{}><{}>", refusing().await, refusing().await),
+            at("127.0.0.1"),
+            None,
+            None,
+        )
+        .expect("granted");
+        until_dropped(&subs).await;
+        assert!(
+            subs.is_empty(),
+            "an event nothing carried is one failure, whatever the number of URLs tried"
+        );
     }
 
     #[test]
