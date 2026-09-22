@@ -6,6 +6,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
+use tokio::io::AsyncWriteExt;
 
 use crate::config::Apply;
 use crate::service::{Asked, Pass};
@@ -97,15 +98,22 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
     // Named for this process: two servers sharing a settings file must not stage over each other.
     let staged = path.with_extension(format!("toml.writing.{}", std::process::id()));
     let replaced = async {
-        tokio::fs::write(&staged, &rewritten).await?;
+        let mut file = tokio::fs::File::create(&staged).await?;
+        file.write_all(rewritten.as_bytes()).await?;
+        // Before the rename, not after: a rename the disk keeps without the bytes behind it
+        // leaves an empty file, and a settings file naming no music folder is a server with
+        // no library until somebody chooses one again on the page.
+        file.sync_all().await?;
+        drop(file);
         tokio::fs::rename(&staged, &path).await
     };
-    replaced.await.map_err(|error| {
-        refuse(
+    if let Err(error) = replaced.await {
+        let _ = tokio::fs::remove_file(&staged).await;
+        return Err(refuse(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("writing {}: {error}", path.display()),
-        )
-    })?;
+        ));
+    }
     let reloaded = operation.config.reload().map_err(|error| {
         refuse(
             StatusCode::INTERNAL_SERVER_ERROR,
