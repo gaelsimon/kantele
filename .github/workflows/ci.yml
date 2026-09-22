@@ -60,6 +60,10 @@ jobs:
   # from any file in the music folder: what the dependencies are known to get wrong matters.
   audit:
     runs-on: ubuntu-latest
+    # The action writes its findings as a check run, which a push's token may not do by default.
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v7
       - uses: rustsec/audit-check@v2
