@@ -77,14 +77,26 @@ impl Watcher {
     }
 
     pub async fn changed(&mut self) -> Option<Change> {
-        self.changes.recv().await?;
-        let mut pending = crate::held(&self.pending);
-        let taken = std::mem::take(&mut *pending);
-        Some(Change {
-            paths: taken.paths.into_iter().collect(),
-            whole_tree: taken.whole_tree,
-        })
+        loop {
+            self.changes.recv().await?;
+            if let Some(change) = taken(&self.pending) {
+                return Some(change);
+            }
+        }
     }
+}
+
+/// What has gathered since the last look, or nothing where a wake outlived what it pointed at:
+/// a change naming no path is read as the whole tree, which is a walk of every folder for nothing.
+fn taken(pending: &Mutex<Pending>) -> Option<Change> {
+    let held = std::mem::take(&mut *crate::held(pending));
+    if held.paths.is_empty() && !held.whole_tree {
+        return None;
+    }
+    Some(Change {
+        paths: held.paths.into_iter().collect(),
+        whole_tree: held.whole_tree,
+    })
 }
 
 /// True when a waiter needs waking.
@@ -203,6 +215,29 @@ mod tests {
             &Roots::one("/music"),
             &Exclusions::default(),
         )
+    }
+
+    #[test]
+    fn a_wake_with_nothing_behind_it_is_not_a_change_over_the_whole_tree() {
+        let held = pending();
+        assert!(collected(
+            &held,
+            batch(vec![(
+                EventKind::Create(CreateKind::File),
+                "/music/a/1.flac"
+            )])
+        ));
+        let first = taken(&held).expect("the file that was written");
+        assert_eq!(first.paths, [PathBuf::from("/music/a/1.flac")]);
+        assert!(
+            taken(&held).is_none(),
+            "a second wake over a drained set names no path, and a change naming none walks \
+             every folder"
+        );
+
+        // The backend losing track is still a change, though it names nothing.
+        assert!(collected(&held, Err(Vec::new())));
+        assert!(taken(&held).is_some_and(|change| change.whole_tree));
     }
 
     #[test]

@@ -123,9 +123,11 @@ impl Passes {
         }
     }
 
-    /// The pass that was asked for, which nothing is waiting on once it is taken.
-    pub fn taken(&self) -> Pass {
-        crate::held(&self.pending).take().unwrap_or(Pass::Whole)
+    /// The pass that was asked for, which nothing is waiting on once it is taken, or nothing
+    /// where a nudge outlived the pass it pointed at: taking none is not a reason to walk the
+    /// whole tree.
+    pub fn taken(&self) -> Option<Pass> {
+        crate::held(&self.pending).take()
     }
 
     /// The receiving end, handed out once to whoever runs the passes.
@@ -728,7 +730,7 @@ pub async fn keep_fresh(
                 None => return,
             },
             asked = next_request(&mut asked) => match asked {
-                Some(()) => Some(passes.taken()),
+                Some(()) => passes.taken(),
                 None => return,
             },
             () = next_sweep(&mut sweeps) => {
