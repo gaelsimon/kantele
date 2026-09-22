@@ -2,7 +2,9 @@ name: ci
 
 on:
   push:
-    branches: [main, master]
+    # `ci` is where a publish candidate goes first: `git push origin public:ci`, wait for green,
+    # then `public:main`. Nothing else than the Mac has compiled the tree before that.
+    branches: [main, master, ci]
   pull_request:
 
 env:
@@ -52,6 +54,38 @@ jobs:
       - run: cargo install cargo-zigbuild --locked
       # `cargo zigbuild` is the build alone; the other cargo verbs go through the binary itself.
       - run: cargo-zigbuild test --target ${{ matrix.target }}
+
+  # The server listens on every interface, parses SOAP from any device on the network and tags
+  # from any file in the music folder: what the dependencies are known to get wrong matters.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # The gate the standards ask for, so the figure cannot drift down unnoticed.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov --fail-under-lines 85
+
+  # The parsers that take hostile input build as fuzz targets; a target that no longer compiles
+  # is caught here, and `cargo fuzz run <target>` is a local pass, not a CI one.
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@cargo-fuzz
+      - run: cargo fuzz build
+        working-directory: fuzz
 
   page:
     runs-on: ubuntu-latest
