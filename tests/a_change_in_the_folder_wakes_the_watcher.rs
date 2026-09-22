@@ -27,9 +27,11 @@ fn watching(root: &Path, exclude: Exclusions) -> Watcher {
     Watcher::start(root, QUIET, exclude).expect("a watch on a folder that exists")
 }
 
-/// Whatever a backend says about the folder it was just pointed at, before the test acts.
+/// Whatever a backend says about the folder it was just pointed at, before the test acts. Drained
+/// until it goes quiet: inotify has been seen to report the tree's own creation in two changes,
+/// and the second would otherwise be read as the test's.
 async fn settled(watcher: &mut Watcher) {
-    let _ = timeout(QUIET * 4, watcher.changed()).await;
+    while timeout(QUIET * 4, watcher.changed()).await.is_ok() {}
 }
 
 async fn next(watcher: &mut Watcher) -> Change {
@@ -75,12 +77,13 @@ async fn a_file_written_under_the_root_is_a_change_naming_its_folder() {
 
     let change = next(&mut watcher).await;
     assert!(!change.whole_tree, "{change:?}");
+    // inotify sometimes hands the debouncer the folder alone for a file written into it; either
+    // name leads the pass to the same album, which is what is served.
     assert!(
-        change
-            .paths
-            .iter()
-            .any(|path| path.ends_with("Blue Note/Kremerata/02.wav")),
-        "the file itself is named: {change:?}"
+        change.paths.iter().any(|path| {
+            path.ends_with("Blue Note/Kremerata/02.wav") || path.ends_with("Blue Note/Kremerata")
+        }),
+        "the file or its folder is named: {change:?}"
     );
     let scope = within(&root, &change);
     assert!(
