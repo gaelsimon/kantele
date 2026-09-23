@@ -36,7 +36,10 @@ pub(super) fn albums_from(
                 artists: credit.names,
                 credited: credit.tagged,
                 date: most_common(members.iter().filter_map(|at| tracks[*at].date.as_deref())),
-                genres: distinct(members.iter().flat_map(|at| tracks[*at].genres.iter())),
+                genres: distinct(
+                    members.iter().flat_map(|at| tracks[*at].genres.iter()),
+                    String::as_str,
+                ),
                 disc_count: (discs.len() as u32).max(1),
                 musicbrainz_id: release.musicbrainz_id.clone(),
                 artwork: members.first().and_then(|at| tracks[*at].artwork.clone()),
@@ -155,7 +158,10 @@ fn album_artists(members: &[usize], tracks: &[Track]) -> AlbumCredit {
             tagged: true,
         };
     }
-    let unanimous = distinct_credits(members.iter().flat_map(|at| tracks[*at].artists.iter()));
+    let unanimous = distinct(
+        members.iter().flat_map(|at| tracks[*at].artists.iter()),
+        |credit| &credit.name,
+    );
     AlbumCredit {
         names: if unanimous.len() == 1 {
             unanimous
@@ -166,25 +172,15 @@ fn album_artists(members: &[usize], tracks: &[Track]) -> AlbumCredit {
     }
 }
 
-fn distinct_credits<'a>(credits: impl Iterator<Item = &'a Credit>) -> Vec<Credit> {
-    let mut seen: Vec<Credit> = Vec::new();
-    let mut folded: Vec<String> = Vec::new();
-    for credit in credits {
-        let key = fold(&credit.name);
-        if key.is_empty() || folded.contains(&key) {
-            continue;
-        }
-        folded.push(key);
-        seen.push(credit.clone());
-    }
-    seen
-}
-
-fn distinct<'a>(values: impl Iterator<Item = &'a String>) -> Vec<String> {
-    let mut seen: Vec<String> = Vec::new();
+/// Each value once, by its folded name, in the order met; a name that folds to nothing is dropped.
+fn distinct<'a, T: Clone + 'a>(
+    values: impl Iterator<Item = &'a T>,
+    name: fn(&T) -> &str,
+) -> Vec<T> {
+    let mut seen: Vec<T> = Vec::new();
     let mut folded: Vec<String> = Vec::new();
     for value in values {
-        let key = fold(value);
+        let key = fold(name(value));
         if key.is_empty() || folded.contains(&key) {
             continue;
         }
