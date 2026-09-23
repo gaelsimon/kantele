@@ -99,6 +99,7 @@ impl Arguments {
 /// The path an option was given, or the error naming the option that wanted one.
 fn path<'a>(rest: &mut impl Iterator<Item = &'a String>, option: &str) -> Result<PathBuf> {
     rest.next()
+        .filter(|value| !value.starts_with("--"))
         .map(PathBuf::from)
         .with_context(|| format!("{option} needs a path"))
 }
@@ -721,6 +722,14 @@ mod tests {
     fn an_option_that_needs_a_path_says_so_rather_than_swallowing_the_folder() {
         assert!(parse(&["--config"]).is_err());
         assert!(parse(&["--albums"]).is_err());
+        let swallowed = parse(&["--config", "--no-scan", "/music"])
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(
+            swallowed.as_deref(),
+            Some("--config needs a path"),
+            "the option after it is an option, and reading it as a file hides the real mistake"
+        );
         let ordered = parse(&["--config", "/etc/kantele.toml", "/music"]).expect("it parses");
         assert_eq!(
             ordered.config.as_deref(),
