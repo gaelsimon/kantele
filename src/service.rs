@@ -267,7 +267,6 @@ impl Live {
     }
 }
 
-/// An index built from what the store remembers, with no round trip to the library at all.
 /// What the store remembers, built from one reading of its rows: the cache stays with the store
 /// for the first pass, which would otherwise parse every payload a second time.
 pub fn remembered(indexing: &Indexing, store: &mut Option<Store>) -> Option<Library> {
@@ -1209,7 +1208,6 @@ fn keeping(library: &Library, complete: bool, device: &Device) -> Option<String>
     None
 }
 
-/// Where `SystemUpdateID` carries on from, which is never a value a client may already hold.
 /// The boot id this start announces, always above the last one's: a control point reads a boot id
 /// that did not rise as the same boot, and two starts inside one second share a clock reading.
 pub fn next_boot_id(store: &mut Option<Store>) -> u32 {
@@ -1230,6 +1228,7 @@ pub fn next_boot_id(store: &mut Option<Store>) -> u32 {
     minted
 }
 
+/// Where `SystemUpdateID` carries on from, which is never a value a client may already hold.
 pub fn resumed_update_id(store: &mut Option<Store>) -> u32 {
     match store.as_ref().map(Store::resumed_update_id) {
         Some(Ok(Some(held))) => return held,
