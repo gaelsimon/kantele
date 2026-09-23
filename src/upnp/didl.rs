@@ -401,7 +401,7 @@ pub fn format_duration(duration: Duration) -> String {
 
 /// Measured on the bytes, not `res@bitrate`, which carries the uncompressed rate.
 pub fn capped(track: &Track, multiple: f32) -> Option<u32> {
-    let playing = f64::from(stream_rate(track)?);
+    let playing = f64::from(stream_rate(track).filter(|rate| *rate > 0)?);
     let capped = playing * f64::from(multiple.max(1.0));
     Some(capped.min(f64::from(u32::MAX)) as u32)
 }
@@ -642,6 +642,18 @@ mod tests {
         let mut unmeasured = track();
         unmeasured.duration = Duration::ZERO;
         assert_eq!(stream_rate(&unmeasured), Some(176_400));
+    }
+
+    #[test]
+    fn a_rate_of_nothing_caps_nothing() {
+        let mut silent = track();
+        silent.duration = Duration::ZERO;
+        silent.sample_rate = Some(0);
+        assert_eq!(
+            capped(&silent, 1.0),
+            None,
+            "pacing at zero bytes a second divides by zero, and the stream task panics"
+        );
     }
 
     #[test]
