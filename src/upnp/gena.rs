@@ -115,7 +115,8 @@ impl Subscriptions {
                 service,
                 callbacks,
                 expires: Instant::now() + timeout,
-                seq: 0,
+                // Zero is the initial event's, sent from a task that may run after a change.
+                seq: 1,
                 user_agent,
                 peer,
                 since,
@@ -197,7 +198,13 @@ impl Subscriptions {
     }
 
     pub async fn send_initial(&self, sid: &str, properties: &[(&str, String)]) {
-        self.send(sid, properties).await;
+        let callbacks = crate::held(&self.inner)
+            .get(sid)
+            .map(|subscription| subscription.callbacks.clone());
+        if let Some(callbacks) = callbacks {
+            self.deliver_once(&callbacks, sid, 0, &property_set(properties))
+                .await;
+        }
     }
 
     pub async fn notify(&self, service: Service, properties: &[(&str, String)]) {
@@ -229,14 +236,6 @@ impl Subscriptions {
             tracing::warn!("some subscribers had not taken the event before the round was up");
             sending.detach_all();
         }
-    }
-
-    async fn send(&self, sid: &str, properties: &[(&str, String)]) {
-        let Some((callbacks, seq)) = self.next(sid) else {
-            return;
-        };
-        let body = property_set(properties);
-        self.deliver_once(&callbacks, sid, seq, &body).await;
     }
 
     /// The URLs a `CALLBACK` header holds are alternatives, not a list to fan out over: they are
@@ -616,7 +615,7 @@ mod tests {
             }
         });
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let handed = subs.listed().iter().filter(|held| held.events == 1).count();
+        let handed = subs.listed().iter().filter(|held| held.events == 2).count();
         round.await.expect("the round ends");
         quiet.abort();
 
@@ -636,7 +635,7 @@ mod tests {
                     service: Service::ContentDirectory,
                     callbacks: vec![callback.to_owned()],
                     expires: Instant::now() + DEFAULT_TIMEOUT,
-                    seq: 0,
+                    seq: 1,
                     user_agent: None,
                     peer: "127.0.0.1".parse().expect("an address"),
                     since: nth as u64,
@@ -906,10 +905,20 @@ mod tests {
     }
 
     #[test]
-    fn the_first_event_is_sequence_zero_and_later_ones_are_not() {
+    fn a_change_announced_before_the_initial_event_goes_out_does_not_take_its_sequence() {
         let subs = Subscriptions::default();
         let granted = subscribed(&subs, Service::ContentDirectory, 1);
-        assert_eq!(subs.next(&granted.sid).unwrap().1, 0);
+        assert_eq!(
+            subs.next(&granted.sid).unwrap().1,
+            1,
+            "zero is the event carrying every variable, and a subscriber reads a change as zero"
+        );
+    }
+
+    #[test]
+    fn the_events_after_the_initial_one_count_up_from_one() {
+        let subs = Subscriptions::default();
+        let granted = subscribed(&subs, Service::ContentDirectory, 1);
         assert_eq!(subs.next(&granted.sid).unwrap().1, 1);
         assert_eq!(subs.next(&granted.sid).unwrap().1, 2);
     }
