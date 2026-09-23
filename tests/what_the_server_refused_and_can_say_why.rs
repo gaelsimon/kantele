@@ -441,6 +441,26 @@ async fn a_pass_asked_for_from_another_site_is_refused() {
 }
 
 #[tokio::test]
+async fn the_page_carries_an_icon_rather_than_a_warning_on_every_open() {
+    let tree = library_with_a_broken_playlist("page-favicon");
+    let server = serving(&tree, None);
+    let response = ask(&server, get("/favicon.ico")).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "a browser asks for one unasked, and a 404 writes a warning into the log at every open"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("image/png"),
+    );
+    assert!(!body_of(response).await.is_empty());
+}
+
+#[tokio::test]
 async fn the_page_opens_without_credentials_and_is_html() {
     let tree = library_with_a_broken_playlist("page-route");
     let server = serving(&tree, None);

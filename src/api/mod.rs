@@ -96,6 +96,7 @@ fn refusals_now(control: &Control, library: &crate::index::Library) -> Refusals 
 pub fn router(control: Shared) -> Router {
     Router::new()
         .route("/config", get(page))
+        .route("/favicon.ico", get(favicon))
         .route("/api/status", get(status::status))
         .route("/api/log", get(log::tail))
         .route("/api/progress", get(progress))
@@ -116,6 +117,26 @@ pub fn router(control: Shared) -> Router {
 /// What the icon in a NAS application menu opens.
 async fn page() -> Response {
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], PAGE).into_response()
+}
+
+/// The picture a browser asks for on its own, which is the one a control point is offered.
+async fn favicon(State(control): State<Shared>) -> Response {
+    match control
+        .device
+        .identity
+        .icon
+        .served(crate::upnp::icon::PREFERRED)
+    {
+        Some((mime, bytes)) => (
+            [
+                (header::CONTENT_TYPE, mime),
+                (header::CACHE_CONTROL, "max-age=86400"),
+            ],
+            bytes.to_vec(),
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 /// How far the pass underway has got, on a route of its own: the status counts the whole library
