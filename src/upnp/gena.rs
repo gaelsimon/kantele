@@ -50,6 +50,8 @@ struct Subscription {
     peer: IpAddr,
     since: u64,
     missed: u8,
+    /// Held while an event goes out, so the next one cannot arrive before it.
+    turn: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -70,6 +72,8 @@ pub struct Subscriptions {
 pub struct Granted {
     pub sid: String,
     pub timeout: Duration,
+    /// The initial event's turn, taken with the grant and given up once it is sent.
+    pub first: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -109,21 +113,27 @@ impl Subscriptions {
             return Err(Refused::TooMany);
         }
         let since = held.values().map(|s| s.since).max().map_or(0, |n| n + 1);
+        let turn = Arc::new(tokio::sync::Mutex::new(()));
+        let first = turn.clone().try_lock_owned().ok();
         held.insert(
             sid.clone(),
             Subscription {
                 service,
                 callbacks,
                 expires: Instant::now() + timeout,
-                // Zero is the initial event's, sent from a task that may run after a change.
                 seq: 1,
                 user_agent,
                 peer,
                 since,
                 missed: 0,
+                turn,
             },
         );
-        Ok(Granted { sid, timeout })
+        Ok(Granted {
+            sid,
+            timeout,
+            first,
+        })
     }
 
     pub fn listed(&self) -> Vec<Listed> {
@@ -161,6 +171,7 @@ impl Subscriptions {
         Some(Granted {
             sid: sid.to_owned(),
             timeout,
+            first: None,
         })
     }
 
@@ -189,15 +200,21 @@ impl Subscriptions {
         Some((subscription.callbacks.clone(), seq))
     }
 
-    fn subscribers_of(&self, service: Service) -> Vec<String> {
+    fn subscribers_of(&self, service: Service) -> Vec<(String, Arc<tokio::sync::Mutex<()>>)> {
         crate::held(&self.inner)
             .iter()
             .filter(|(_, s)| s.service == service)
-            .map(|(sid, _)| sid.clone())
+            .map(|(sid, s)| (sid.clone(), s.turn.clone()))
             .collect()
     }
 
-    pub async fn send_initial(&self, sid: &str, properties: &[(&str, String)]) {
+    /// Sequence zero, which the grant kept for it, on the turn the grant took.
+    pub async fn send_initial(
+        &self,
+        sid: &str,
+        properties: &[(&str, String)],
+        _turn: Option<tokio::sync::OwnedMutexGuard<()>>,
+    ) {
         let callbacks = crate::held(&self.inner)
             .get(sid)
             .map(|subscription| subscription.callbacks.clone());
@@ -211,15 +228,18 @@ impl Subscriptions {
         let body = property_set(properties);
         let permits = Arc::new(tokio::sync::Semaphore::new(DELIVERIES_AT_ONCE));
         let mut sending = tokio::task::JoinSet::new();
-        for sid in self.subscribers_of(service) {
-            let Some((callbacks, seq)) = self.next(&sid) else {
-                continue;
-            };
+        for (sid, turn) in self.subscribers_of(service) {
             // Taken inside the task: taken here, a slow subscriber stops the round being
             // handed out at all, and the deadline below starts after the wait it bounds.
             let permits = permits.clone();
             let (subscriptions, body) = (self.clone(), body.clone());
             sending.spawn(async move {
+                // The number under the turn, so numbers count in the order events arrive; the
+                // permit after both, or a task waiting on a slow subscriber holds one for nothing.
+                let _turn = turn.lock_owned().await;
+                let Some((callbacks, seq)) = subscriptions.next(&sid) else {
+                    return;
+                };
                 let _held = permits.acquire_owned().await.expect("never closed");
                 subscriptions
                     .deliver_once(&callbacks, &sid, seq, &body)
@@ -640,6 +660,7 @@ mod tests {
                     peer: "127.0.0.1".parse().expect("an address"),
                     since: nth as u64,
                     missed: 0,
+                    turn: Arc::default(),
                 },
             );
         }
@@ -769,6 +790,32 @@ mod tests {
         (url, taken)
     }
 
+    /// A callback that answers every NOTIFY and keeps the sequence numbers in the order they came.
+    async fn recording() -> (String, Arc<Mutex<Vec<u32>>>) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("a port");
+        let url = format!("http://{}/notify", listener.local_addr().expect("bound"));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let kept = seen.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut request = Vec::new();
+                let _ = stream.read_to_end(&mut request).await;
+                let text = String::from_utf8_lossy(&request);
+                if let Some(seq) = text
+                    .lines()
+                    .find_map(|line| line.strip_prefix("SEQ: "))
+                    .and_then(|value| value.trim().parse().ok())
+                {
+                    kept.lock().expect("unpoisoned").push(seq);
+                }
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
+            }
+        });
+        (url, seen)
+    }
+
     fn took(counter: &std::sync::atomic::AtomicUsize) -> usize {
         counter.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -793,6 +840,43 @@ mod tests {
             &[("SystemUpdateID", "2".to_owned())],
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn a_change_announced_as_a_device_subscribes_reaches_it_after_the_initial_event() {
+        let (url, seen) = recording().await;
+        let subs = Subscriptions::default();
+        let granted = subs
+            .subscribe(
+                Service::ContentDirectory,
+                &format!("<{url}>"),
+                at("127.0.0.1"),
+                None,
+                None,
+            )
+            .expect("granted");
+        // The pass publishing an index does not wait for the task that sends the initial event.
+        let publishing = {
+            let subs = subs.clone();
+            tokio::spawn(async move { one_event(&subs).await })
+        };
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        subs.send_initial(
+            &granted.sid,
+            &[("SystemUpdateID", "1".to_owned())],
+            granted.first,
+        )
+        .await;
+        let _ = publishing.await;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while seen.lock().expect("unpoisoned").len() < 2 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            *seen.lock().expect("unpoisoned"),
+            [0, 1],
+            "a subscriber that meets one before zero has missed an event and subscribes again"
+        );
     }
 
     #[tokio::test]

@@ -418,15 +418,16 @@ async fn event(
                 timeout.as_deref(),
                 user_agent,
             ) {
-                Ok(granted) => {
+                Ok(mut granted) => {
                     tracing::info!(
                         sid = %granted.sid, %callback, ?service,
                         "subscribed"
                     );
                     let subscriptions = device.subscriptions.clone();
                     let sid = granted.sid.clone();
+                    let turn = granted.first.take();
                     tokio::spawn(async move {
-                        subscriptions.send_initial(&sid, &state).await;
+                        subscriptions.send_initial(&sid, &state, turn).await;
                     });
                     granted_response(&granted)
                 }
