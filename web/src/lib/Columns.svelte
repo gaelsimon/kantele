@@ -21,7 +21,7 @@
     /// What fills one column. `first` marks the column the listing opens on, which is where a
     /// search or a filter applies.
     load: (path: string, first: boolean) => Promise<Level<T>>;
-    /// Anything that makes every column stale. A new value empties them and fills them again.
+    /// Anything that makes every column stale. A new value reads the open ones again.
     reload?: number;
     /// A path to open down to when the columns first appear.
     start?: string;
@@ -42,11 +42,8 @@
     bounded?: Snippet<[number]>;
   } = $props();
 
-  /// Another source, or another library, is another walk. The columns empty and fill again.
-  const walk = $derived.by(() => {
-    reload;
-    return new Walk(load);
-  });
+  /// Another source is another walk: the columns empty and fill again from the top.
+  const walk = $derived(new Walk(load));
 
   let active = $state<{ column: number; index: number } | null>(null);
   let buttons: Record<string, HTMLButtonElement | undefined> = {};
@@ -102,6 +99,14 @@
         if (start) return walking.revealTo(start);
       });
     });
+  });
+
+  let refreshed = untrack(() => reload);
+  $effect(() => {
+    const asked = reload;
+    if (asked === refreshed) return;
+    refreshed = asked;
+    untrack(() => void walk.refresh());
   });
 
   // A column opened to the right is a column to scroll to.
