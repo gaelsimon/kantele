@@ -93,7 +93,11 @@
           type="number"
           min="0"
           value={typeof value === 'number' ? value : 0}
-          oninput={(event) => onchange(Number(event.currentTarget.value))}
+          oninput={(event) => {
+            // An empty box is a number being typed, and zero turns several of these off.
+            const typed = event.currentTarget.valueAsNumber;
+            if (Number.isInteger(typed) && typed >= 0) onchange(typed);
+          }}
         />
         {#if shape.after}<span class="dim word">{shape.after}</span>{/if}
       </div>
