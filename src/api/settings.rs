@@ -100,6 +100,8 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
     let replaced = async {
         let mut file = tokio::fs::File::create(&staged).await?;
         file.write_all(rewritten.as_bytes()).await?;
+        // Flushed here rather than left to `sync_all`, which drops the error the flush returns.
+        file.flush().await?;
         // Before the rename, not after: a rename the disk keeps without the bytes behind it
         // leaves an empty file, and a settings file naming no music folder is a server with
         // no library until somebody chooses one again on the page.
