@@ -264,8 +264,22 @@ fn read_bounded(path: &Path) -> std::io::Result<Vec<u8>> {
     std::fs::read(path)
 }
 
-/// UTF-8, falling back to Latin-1.
+/// UTF-16 where a byte order mark says so, else UTF-8, falling back to Latin-1.
 fn decode(bytes: Vec<u8>) -> String {
+    let unit: Option<fn([u8; 2]) -> u16> = match bytes.get(..2) {
+        Some([0xff, 0xfe]) => Some(u16::from_le_bytes),
+        Some([0xfe, 0xff]) => Some(u16::from_be_bytes),
+        _ => None,
+    };
+    if let Some(unit) = unit {
+        let units: Vec<u16> = bytes[2..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| unit(*pair))
+            .collect();
+        return String::from_utf16_lossy(&units);
+    }
     let text = match String::from_utf8(bytes) {
         Ok(text) => text,
         Err(refused) => refused
@@ -695,6 +709,23 @@ mod tests {
     fn latin_1_bytes_are_read_rather_than_refused() {
         let bytes = vec![b'C', b'a', b'f', 0xe9, b'\n'];
         assert_eq!(decode(bytes), "Café\n");
+    }
+
+    #[test]
+    fn a_list_written_in_utf_16_is_read_as_the_text_its_mark_says() {
+        let text = "Café/01.flac\n";
+        let little: Vec<u8> = [0xfeff_u16]
+            .into_iter()
+            .chain(text.encode_utf16())
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        assert_eq!(decode(little), text, "PowerShell writes a list this way");
+        let big: Vec<u8> = [0xfeff_u16]
+            .into_iter()
+            .chain(text.encode_utf16())
+            .flat_map(u16::to_be_bytes)
+            .collect();
+        assert_eq!(decode(big), text);
     }
 
     fn named(relative: &str, title: &str) -> Playlist {
