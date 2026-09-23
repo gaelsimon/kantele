@@ -684,6 +684,22 @@ mod tests {
             &[("SystemUpdateID", "2".to_owned())],
         )
         .await;
+        settled(subs).await;
+    }
+
+    /// Until no delivery is in flight. A round is bounded and a slow one is left to finish on its
+    /// own: on Windows a refused connection takes seconds, so two dead callbacks outlast a round.
+    async fn settled(subs: &Subscriptions) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            let busy = crate::held(&subs.inner)
+                .values()
+                .any(|subscription| subscription.turn.try_lock().is_err());
+            if !busy {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 
     /// A subscriber listening on a port, answering each NOTIFY with the line it was given.
