@@ -421,7 +421,7 @@ fn byte_rate(track: &Track) -> Option<u32> {
         // A rate no arithmetic holds is a header that lies, and what it declared serves instead.
         (Some(rate), Some(bits), Some(channels)) => rate
             .checked_mul(u32::from(bits))
-            .and_then(|bits| (bits / 8).checked_mul(u32::from(channels)))
+            .and_then(|per_channel| (per_channel / 8).checked_mul(u32::from(channels)))
             .or_else(declared),
         _ => declared(),
     }
