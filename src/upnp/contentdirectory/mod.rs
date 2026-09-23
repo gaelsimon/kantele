@@ -1142,6 +1142,45 @@ mod tests {
     }
 
     #[test]
+    fn a_search_inside_an_album_reaches_the_tracks_its_discs_and_runs_hold() {
+        let items = r#"upnp:class derivedfrom "object.item""#;
+        let discs = serving(cantatas(&[
+            (1, Some("Studio"), 1, None),
+            (1, Some("Studio"), 2, None),
+            (2, Some("Live"), 1, None),
+        ]));
+        let album = &discs.library.albums()[0];
+        assert!(album.separate_discs);
+        let found = look_for(&discs, album.id.as_str(), items);
+        assert_eq!(found.total_matches, 3, "{}", found.result);
+        assert!(
+            found
+                .result
+                .contains(&format!(r#"parentID="{}""#, album.discs[0].id)),
+            "a track is named under the disc it opens from: {}",
+            found.result
+        );
+
+        let runs = serving(cantatas(&[
+            (1, None, 1, Some("Symphony No. 5")),
+            (1, None, 2, Some("Symphony No. 5")),
+            (1, None, 3, None),
+        ]));
+        let album = &runs.library.albums()[0];
+        assert_eq!(album.runs.len(), 1);
+        assert_eq!(look_for(&runs, album.id.as_str(), items).total_matches, 3);
+        let disc = look_for(
+            &discs,
+            discs.library.albums()[0].discs[0].id.as_str(),
+            items,
+        );
+        assert_eq!(
+            disc.total_matches, 2,
+            "a disc holds its own tracks and no others"
+        );
+    }
+
+    #[test]
     fn an_object_appears_once_even_though_two_containers_hold_it() {
         let served = serving(library());
         let found = look_for(

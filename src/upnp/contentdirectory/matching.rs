@@ -7,6 +7,7 @@ use crate::upnp::{didl, search};
 
 use super::objects::{album_child, artist_child, children, playlist_child, track_parent};
 use super::paging::{Listing, Window};
+use super::parts;
 use super::{ALBUMS, ARTISTS, MUSIC, Menus, PLAYLISTS};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,8 +44,10 @@ pub(super) fn search_space<'a>(
         ARTISTS => Some(Space::Whole(&[Kind::Artists])),
         MUSIC => Some(Space::Whole(&[Kind::Tracks])),
         PLAYLISTS => Some(Space::Whole(&[Kind::Playlists])),
-        minted => children(library, view, menus, minted, Window::ALL)
-            .map(|listing| Space::Children(listing.into_all())),
+        // An album opens into discs and runs, and a search inside it is after the tracks they hold.
+        minted => parts::tracks_under(library, minted)
+            .or_else(|| children(library, view, menus, minted, Window::ALL).map(Listing::into_all))
+            .map(Space::Children),
     }
 }
 
