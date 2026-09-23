@@ -121,16 +121,12 @@
     return `${ran} ${became}`.trim();
   });
 
-  /// When the server next looks of its own accord, where it does.
+  /// How often the server looks of its own accord. A look that finds nothing records no check, so
+  /// when the next one falls cannot be told from the last.
   const nextCheck = $derived.by(() => {
-    const minutes = configuration?.settings.find(
-      (setting) => setting.key === 'scan.sweep_minutes',
-    )?.as_written;
-    if (typeof minutes !== 'number' || minutes === 0) return 'It only looks when something changes.';
-    const last = status?.last_pass?.ended;
-    if (!last) return `It looks every ${minutes} min.`;
-    const due = Math.round((last + minutes * 60 - Date.now() / 1000) / 60);
-    return due > 0 ? `Next in ${due} min.` : 'Next check is due.';
+    if (!status) return '';
+    const minutes = status.sweep_minutes_effective;
+    return minutes ? `It looks every ${took(minutes * 60)}.` : 'It only looks when something changes.';
   });
 
   /// The tags a listener will miss, counted against the whole library. Each one narrows the tree

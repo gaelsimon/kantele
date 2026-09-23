@@ -63,6 +63,8 @@ export type Status = {
   state: 'serving' | 'indexing';
   uptime_seconds: number;
   system_update_id: number;
+  /// Minutes between the timed looks as they run, stretched where the folders are watched.
+  sweep_minutes_effective?: number;
   library: {
     tracks: number;
     albums: number;
