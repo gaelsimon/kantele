@@ -13,6 +13,9 @@ use crate::upnp::client::Profile;
 /// Port for content and control; nothing is standard, it just has to be free.
 pub const DEFAULT_PORT: u16 = 8200;
 
+/// Thousands of years, and short of where the timer's arithmetic overflows.
+const MOST_SWEEP_MINUTES: u64 = u32::MAX as u64;
+
 /// The music folder, or several, each told apart by its name, which every relative path under it
 /// then starts with.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -130,6 +133,15 @@ impl Config {
             && words.iter().any(|word| word.trim().is_empty())
         {
             anyhow::bail!("menus.sort_ignore holds an empty word, which would mean nothing");
+        }
+        if self
+            .scan
+            .sweep_minutes
+            .is_some_and(|minutes| minutes > MOST_SWEEP_MINUTES)
+        {
+            anyhow::bail!(
+                "scan.sweep_minutes is longer than the timer can hold; zero turns the look off"
+            );
         }
         Ok(())
     }
@@ -686,6 +698,17 @@ mod tests {
             Config::parse("[menus]\naxes = [\"nonsense\"]\n").is_err(),
             "an axis nobody has"
         );
+    }
+
+    #[test]
+    fn an_interval_no_timer_can_hold_is_refused_rather_than_started() {
+        assert!(
+            Config::parse("[scan]\nsweep_minutes = 43200\n").is_ok(),
+            "a month, which a file may already say"
+        );
+        let refused = Config::parse("[scan]\nsweep_minutes = 10000000000000000\n")
+            .expect_err("stretched for a watched library, that many minutes overflow the timer");
+        assert!(refused.to_string().contains("sweep_minutes"), "{refused}");
     }
 
     #[test]
