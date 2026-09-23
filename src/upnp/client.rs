@@ -75,7 +75,7 @@ pub fn conservative() -> &'static Profile {
 pub const HEOS_FOLDER_VIEW: &str = "📁 Directories";
 
 /// Client names kept for the log's sake at most; a caller writing a new `User-Agent` on every
-/// request must not grow this.
+/// request must not grow this, nor fill the log with a line for each one.
 const NAMED: usize = 64;
 
 /// The clients answered specially out of the box. A configured profile naming the same client
@@ -138,7 +138,7 @@ impl Profiles {
             return;
         }
         if named.len() >= NAMED {
-            named.remove(0);
+            return;
         }
         named.push(said.to_owned());
         tracing::info!(client = %said, "no profile names this client; answering conservatively");
@@ -239,8 +239,8 @@ mod tests {
         assert_eq!(named.len(), NAMED);
         assert_eq!(
             named.last().map(String::as_str),
-            Some("renderer/127"),
-            "the newest is kept and the oldest is dropped"
+            Some("renderer/63"),
+            "what is already known is kept, and nothing past the ceiling is noted or logged"
         );
     }
 
