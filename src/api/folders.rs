@@ -296,6 +296,7 @@ pub fn tracks_lacking_artwork(
             shown.push(crate::index::Refusal {
                 subject: track.relative.clone(),
                 detail: None,
+                folder: None,
             });
         }
     }
