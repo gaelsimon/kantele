@@ -793,6 +793,11 @@ fn unreadable(
             tracing::info!(folder = %folder.display(), "gone: its files are forgotten");
             return None;
         }
+        // A change is taken for a folder when its name has no extension, and a file can be named so.
+        if folder.is_file() {
+            tracing::debug!(file = %folder.display(), "a file named like a folder: nothing to walk");
+            return None;
+        }
         return Some(error);
     }
     tracing::warn!(folder = %folder.display(), %error, "skipping unreadable folder");
