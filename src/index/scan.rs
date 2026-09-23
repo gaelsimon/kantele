@@ -332,7 +332,8 @@ pub struct Found {
 
 #[derive(Clone, Debug, Default)]
 pub struct Walked {
-    /// Sorted by path, so one folder's files are adjacent.
+    /// Sorted by path, component by component: a subfolder whose name sorts between two files of
+    /// its folder splits them, and the folder is read as two.
     pub files: Vec<Found>,
     pub covers: HashMap<PathBuf, Found>,
     /// Sorted by path.
