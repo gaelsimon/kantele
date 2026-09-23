@@ -247,7 +247,7 @@ pub fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
         return None;
     }
     let mut i = 2;
-    while i + 9 < bytes.len() {
+    while i + 8 < bytes.len() {
         if bytes[i] != 0xFF {
             i += 1;
             continue;
@@ -275,6 +275,15 @@ mod tests {
         assert_eq!(image_mime(b"\x89PNG\r\n\x1a\n"), Some("image/png"));
         assert_eq!(image_mime(b"RIFF____WEBPVP8 "), None);
         assert_eq!(image_mime(b""), None);
+    }
+
+    #[test]
+    fn a_frame_header_ending_on_the_last_byte_read_is_still_read() {
+        // Start of image, then a baseline frame header: length, precision, height, width.
+        let jpeg = [
+            0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x01, 0xF4, 0x02, 0x58,
+        ];
+        assert_eq!(dimensions(&jpeg), Some((600, 500)));
     }
 
     #[test]
