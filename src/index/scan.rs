@@ -149,7 +149,9 @@ pub struct Partial {
     hook: Mutex<Option<Hook>>,
     schedule: Mutex<Schedule>,
     /// Which folder each published album key was awarded to, so the publications of one read and
-    /// the index it ends with agree on who holds a key two folders derive.
+    /// the index it ends with agree on who holds a key two folders derive. Kept past the disarm,
+    /// and cleared when a read arms a new one: every pass after a first read has to agree with
+    /// what that read published, for as long as no store holds the awards itself.
     awarded: Mutex<crate::index::identity::Claims>,
 }
 

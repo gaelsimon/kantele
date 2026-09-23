@@ -1309,6 +1309,91 @@ mod tests {
         }
     }
 
+    /// One track of one album, in the folder named, as a first read hands its folder over.
+    fn in_folder(folder: &str) -> Arc<scan::Read> {
+        let file = Scanned {
+            path: PathBuf::from(format!("/music/{folder}/01.flac")),
+            relative: PathBuf::from(format!("{folder}/01.flac")),
+            tags: crate::tags::FileTags {
+                title: Some("Juana Peña".to_owned()),
+                album: Some("Dundunbanza".to_owned()),
+                artists: vec!["Sierra Maestra".to_owned()],
+                ..Default::default()
+            },
+            properties: crate::tags::AudioProperties::default(),
+            size: 27,
+            artwork: None,
+        };
+        Arc::new((vec![file], Vec::new()))
+    }
+
+    /// The identifier of the album whose tracks all sit in `folder`.
+    fn album_in(served: &browse::Served, folder: &str) -> String {
+        let library = &served.library;
+        library
+            .albums()
+            .iter()
+            .find(|album| {
+                album
+                    .tracks
+                    .iter()
+                    .all(|at| library.tracks()[*at].relative.starts_with(folder))
+            })
+            .unwrap_or_else(|| panic!("an album of its own in {folder}"))
+            .id
+            .as_str()
+            .to_owned()
+    }
+
+    async fn published_after(device: &Device, id: u32) -> Arc<browse::Served> {
+        for _ in 0..400 {
+            if device.system_update_id() != id {
+                return device.served();
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("nothing was published");
+    }
+
+    /// The publisher of a first read is the one that has to agree with itself: the folder read
+    /// second is published alone before the one read first arrives beside it.
+    #[tokio::test]
+    async fn an_album_published_mid_read_keeps_its_identifier_in_the_next_publication() {
+        let device = Arc::new(device(Library::default()));
+        let indexing = Indexing::default();
+        let (hook, task) = publishing_as_it_goes(&device, &indexing);
+        indexing.underway.partial.arm(hook.clone(), Duration::ZERO);
+
+        let before = device.system_update_id();
+        assert!(
+            hook(vec![(1, in_folder("Second"))]),
+            "the snapshot is taken"
+        );
+        let first = published_after(&device, before).await;
+        let as_published = album_in(&first, "Second");
+        assert!(
+            !indexing.underway.partial.awarded().is_empty(),
+            "the publisher records what it awarded, or the next build settles it afresh"
+        );
+
+        let id = device.system_update_id();
+        assert!(hook(vec![
+            (1, in_folder("Second")),
+            (0, in_folder("First")),
+        ]));
+        let second = published_after(&device, id).await;
+        assert_eq!(
+            album_in(&second, "Second"),
+            as_published,
+            "the folder read first would take the key on walk order alone, and a device holding \
+             the identifier it was handed would be left with a dead one"
+        );
+
+        indexing.underway.partial.disarm();
+        drop(hook);
+        task.await.expect("the publisher ends with the channel");
+    }
+
     /// Libraries built through the real rules, so the identifiers are the ones the server mints.
     fn one_track() -> Library {
         Library::build("Music".to_owned(), &[track("Juana Peña")])
