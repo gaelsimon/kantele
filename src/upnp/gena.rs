@@ -750,14 +750,14 @@ mod tests {
         format!("http://{address}/notify")
     }
 
-    #[tokio::test]
-    async fn the_second_callback_url_is_where_the_event_goes_when_the_first_refuses_it() {
+    /// A callback that answers every NOTIFY, and the count of those it took.
+    async fn counting() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
             .expect("a port");
+        let url = format!("http://{}/notify", listener.local_addr().expect("bound"));
         let taken = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counted = taken.clone();
-        let alive = format!("http://{}/notify", listener.local_addr().expect("bound"));
         tokio::spawn(async move {
             while let Ok((mut stream, _)) = listener.accept().await {
                 let mut seen = [0u8; 1024];
@@ -767,26 +767,57 @@ mod tests {
                 let _ = stream.flush().await;
             }
         });
+        (url, taken)
+    }
+
+    fn took(counter: &std::sync::atomic::AtomicUsize) -> usize {
+        counter.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    async fn subscribed_to(callbacks: &[&str]) -> Subscriptions {
+        let header: String = callbacks.iter().map(|url| format!("<{url}>")).collect();
         let subs = Subscriptions::default();
         subs.subscribe(
             Service::ContentDirectory,
-            &format!("<{}><{alive}>", refusing().await),
+            &header,
             at("127.0.0.1"),
             None,
             None,
         )
         .expect("granted");
+        subs
+    }
 
+    async fn one_event(subs: &Subscriptions) {
         subs.notify(
             Service::ContentDirectory,
             &[("SystemUpdateID", "2".to_owned())],
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn an_event_reaches_a_subscriber_once_though_it_gave_two_callback_urls() {
+        let (first, to_first) = counting().await;
+        let (second, to_second) = counting().await;
+        let subs = subscribed_to(&[&first, &second]).await;
+
+        one_event(&subs).await;
+        assert_eq!(took(&to_first), 1);
         assert_eq!(
-            taken.load(std::sync::atomic::Ordering::Relaxed),
-            1,
-            "the alternative took the event"
+            took(&to_second),
+            0,
+            "the URLs are alternatives, so the second is not written to at all"
         );
+    }
+
+    #[tokio::test]
+    async fn the_second_callback_url_takes_the_event_when_the_first_refuses_it() {
+        let (alive, taken) = counting().await;
+        let subs = subscribed_to(&[&refusing().await, &alive]).await;
+
+        one_event(&subs).await;
+        assert_eq!(took(&taken), 1, "the alternative took the event");
         assert!(
             !subs.is_empty(),
             "and the subscription is not held to blame"
@@ -796,15 +827,7 @@ mod tests {
     #[tokio::test]
     async fn a_subscriber_with_two_dead_callbacks_is_dropped_no_sooner_than_one_with_a_single_one()
     {
-        let subs = Subscriptions::default();
-        subs.subscribe(
-            Service::ContentDirectory,
-            &format!("<{}><{}>", refusing().await, refusing().await),
-            at("127.0.0.1"),
-            None,
-            None,
-        )
-        .expect("granted");
+        let subs = subscribed_to(&[&refusing().await, &refusing().await]).await;
         until_dropped(&subs).await;
         assert!(
             subs.is_empty(),
