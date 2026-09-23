@@ -2,7 +2,7 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Library from './Library.svelte';
-import type { FolderFiles, FolderListing, FolderRow } from './api';
+import type { Configuration, FolderFiles, FolderListing, FolderRow, Status } from './api';
 
 function folder(path: string, name: string, tracks: number): FolderRow {
   return {
@@ -57,6 +57,26 @@ describe('the library page', () => {
     });
     expect(screen.getByPlaceholderText('Search folders')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Rescan all' })).toBeTruthy();
+  });
+
+  it('says the interval the timed looks run at, which a look that finds nothing leaves no trace of', async () => {
+    const hours = 2 * 3_600;
+    const status = {
+      library: { tracks: 5, albums: 2, artists: 2, playlists: 0, untagged: 0 },
+      sweep_minutes_effective: 360,
+      last_pass: {
+        ended: Date.now() / 1000 - hours,
+        seconds: 4,
+        whole_tree: true,
+        outcome: 'agreed',
+      },
+    } as unknown as Status;
+    const configuration = {
+      settings: [{ key: 'scan.sweep_minutes', as_written: 15 }],
+    } as unknown as Configuration;
+    render(Library, { props: { status, configuration, onrescanned: () => {} } });
+    expect(screen.getByText(/It looks every 6 h\./)).toBeTruthy();
+    expect(screen.queryByText(/Next check is due/)).toBeNull();
   });
 
   it('asks the server for the top of the tree first', async () => {

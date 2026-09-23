@@ -311,3 +311,30 @@ async fn two_saves_at_once_both_land_and_the_menus_agree_with_the_file() {
     assert_eq!(server.device.served().view.settings.alpha_group, Some(70));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn a_menu_setting_saved_beside_one_for_the_next_check_still_applies_at_once() {
+    let dir = std::env::temp_dir().join(format!("kantele-mixed-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a folder");
+    let file = dir.join("kantele.toml");
+    std::fs::write(&file, "[menus]\nalbum_threshold = 24\n").expect("writing the file");
+    let server = serving_from(&file);
+
+    let (status, body) = put(
+        &server,
+        r#"{"menus.album_threshold": 3, "scan.threads": 2}"#,
+        &[("Accept", "application/json")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        server.device.served().view.settings.album_threshold,
+        3,
+        "the menus change now, and waiting for a check that finds nothing new is waiting for ever"
+    );
+    assert!(
+        body.contains("the menus were applied"),
+        "and the answer says so rather than only the slower key's news: {body}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

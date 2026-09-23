@@ -401,7 +401,7 @@ pub fn format_duration(duration: Duration) -> String {
 
 /// Measured on the bytes, not `res@bitrate`, which carries the uncompressed rate.
 pub fn capped(track: &Track, multiple: f32) -> Option<u32> {
-    let playing = f64::from(stream_rate(track)?);
+    let playing = f64::from(stream_rate(track).filter(|rate| *rate > 0)?);
     let capped = playing * f64::from(multiple.max(1.0));
     Some(capped.min(f64::from(u32::MAX)) as u32)
 }
@@ -416,11 +416,14 @@ fn stream_rate(track: &Track) -> Option<u32> {
 
 /// `res@bitrate` is bytes per second, not bits.
 fn byte_rate(track: &Track) -> Option<u32> {
+    let declared = || track.bitrate_bps.map(|bps| bps / 8);
     match (track.sample_rate, track.bit_depth, track.channels) {
-        (Some(rate), Some(bits), Some(channels)) => {
-            Some(rate * u32::from(bits) / 8 * u32::from(channels))
-        }
-        _ => track.bitrate_bps.map(|bps| bps / 8),
+        // A rate no arithmetic holds is a header that lies, and what it declared serves instead.
+        (Some(rate), Some(bits), Some(channels)) => rate
+            .checked_mul(u32::from(bits))
+            .and_then(|per_channel| (per_channel / 8).checked_mul(u32::from(channels)))
+            .or_else(declared),
+        _ => declared(),
     }
 }
 
@@ -473,6 +476,20 @@ mod tests {
             work: None,
             grouping: None,
         }
+    }
+
+    #[test]
+    fn a_header_claiming_a_rate_no_arithmetic_holds_falls_back_to_what_it_declared() {
+        let mut track = track();
+        assert_eq!(byte_rate(&track), Some(176_400));
+        track.sample_rate = Some(u32::MAX);
+        assert_eq!(
+            byte_rate(&track),
+            Some(1_411_000 / 8),
+            "the multiplication overflows, and the declared rate is the honest answer"
+        );
+        track.bitrate_bps = None;
+        assert_eq!(byte_rate(&track), None);
     }
 
     #[test]
@@ -625,6 +642,18 @@ mod tests {
         let mut unmeasured = track();
         unmeasured.duration = Duration::ZERO;
         assert_eq!(stream_rate(&unmeasured), Some(176_400));
+    }
+
+    #[test]
+    fn a_rate_of_nothing_caps_nothing() {
+        let mut silent = track();
+        silent.duration = Duration::ZERO;
+        silent.sample_rate = Some(0);
+        assert_eq!(
+            capped(&silent, 1.0),
+            None,
+            "pacing at zero bytes a second divides by zero, and the stream task panics"
+        );
     }
 
     #[test]

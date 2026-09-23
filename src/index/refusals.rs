@@ -113,6 +113,9 @@ pub struct Refusal {
     pub subject: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Where it happened, which a subject naming an album by title cannot say.
+    #[serde(skip)]
+    pub folder: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -168,10 +171,10 @@ impl Refusals {
         detail: Option<String>,
         folder: Option<String>,
     ) {
-        if let Some(folder) = folder {
+        if let Some(folder) = &folder {
             *self
                 .by_folder
-                .entry(folder)
+                .entry(folder.clone())
                 .or_default()
                 .entry(cause)
                 .or_default() += 1;
@@ -179,7 +182,11 @@ impl Refusals {
         let kept = self.by_cause.entry(cause).or_default();
         kept.total += 1;
         if kept.held.len() < Self::KEPT {
-            kept.held.push(Refusal { subject, detail });
+            kept.held.push(Refusal {
+                subject,
+                detail,
+                folder,
+            });
         }
     }
 
@@ -218,7 +225,9 @@ impl Refusals {
         self.held(cause)
             .iter()
             .filter(|refusal| {
-                folder_of(cause, &refusal.subject)
+                refusal
+                    .folder
+                    .as_deref()
                     .is_some_and(|at| at == folder || at.starts_with(&with_slash(folder)))
             })
             .collect()
@@ -323,6 +332,23 @@ fn folder_of(cause: Cause, subject: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_named_by_title_is_found_under_the_folder_it_was_made_in() {
+        let mut refusals = Refusals::default();
+        refusals.refuse_in(Cause::AlbumKeyedOnPath, "Sonatas", None, "Bach/Sonatas");
+        assert_eq!(refusals.total_under(Cause::AlbumKeyedOnPath, "Bach"), 1);
+        assert_eq!(
+            refusals.held_under(Cause::AlbumKeyedOnPath, "Bach").len(),
+            1,
+            "the page counts one and has to be able to show it"
+        );
+        assert!(
+            refusals
+                .held_under(Cause::AlbumKeyedOnPath, "Mozart")
+                .is_empty()
+        );
+    }
 
     #[test]
     fn a_record_keeps_the_first_hundred_of_a_cause_and_the_real_total() {

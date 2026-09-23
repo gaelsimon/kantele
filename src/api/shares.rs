@@ -60,7 +60,15 @@ fn refused(path: &str, error: &std::io::Error) -> Refused {
 pub fn shares(serving: &Roots) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = mounted();
     found.extend(std::env::var_os("HOME").map(PathBuf::from));
+    among(found, serving)
+}
+
+fn among(found: Vec<PathBuf>, serving: &Roots) -> Vec<PathBuf> {
     // Resolved, because every path asked for is, and a share that is not would match none of them.
+    let mut found: Vec<PathBuf> = found
+        .into_iter()
+        .map(|share| share.canonicalize().unwrap_or(share))
+        .collect();
     for root in serving.paths() {
         let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         if !found.iter().any(|share| root.starts_with(share)) {
@@ -197,7 +205,9 @@ mod tests {
     #[test]
     fn the_home_folder_is_offered_beside_whatever_is_mounted() {
         let offered = shares(&Roots::one("/srv/music"));
-        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.canonicalize().unwrap_or(home));
         if let Some(home) = home {
             assert!(
                 offered.contains(&home),
@@ -208,6 +218,27 @@ mod tests {
             !offered.iter().any(|share| share == Path::new("/")),
             "the whole disk is never a share: {offered:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_share_reached_through_a_link_holds_the_folders_under_it() {
+        let dir = std::env::temp_dir().join("kantele-shares-linked");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("disk/music")).expect("a folder");
+        std::os::unix::fs::symlink(dir.join("disk"), dir.join("mounted")).expect("a link");
+
+        let shares = among(vec![dir.join("mounted")], &Roots::default());
+        let asked = dir
+            .join("mounted/music")
+            .canonicalize()
+            .expect("it is there");
+        assert!(
+            shares.iter().any(|share| asked.starts_with(share)),
+            "a listing resolves what it is asked, so a share that is not resolved holds nothing: \
+             {shares:?} against {asked:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

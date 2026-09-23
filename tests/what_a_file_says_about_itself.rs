@@ -299,3 +299,21 @@ fn a_conductor_is_read_from_the_file() {
     assert_eq!(read.conductors, ["Herbert von Karajan"]);
     assert_eq!(read.composers, ["Ludwig van Beethoven"]);
 }
+
+#[test]
+fn a_header_claiming_a_millisecond_of_a_large_stream_reads_without_a_bitrate() {
+    let tree = Tree::new("tags-lying-duration");
+    let mut file = fixtures::flac(&[("TITLE", "Short")], false);
+    // The low 36 bits of the packed STREAMINFO word are the sample count: 45 at 44.1 kHz is 1 ms.
+    let packed = u64::from_be_bytes(file[18..26].try_into().expect("eight bytes"));
+    let lying = (packed & !((1u64 << 36) - 1)) | 45;
+    file[18..26].copy_from_slice(&lying.to_be_bytes());
+    file.extend(std::iter::repeat_n(0u8, 1 << 20));
+    std::fs::write(tree.path("short.flac"), file).expect("writing it");
+
+    let (_, properties) = tags::read(&tree.path("short.flac")).expect("the file parses");
+    assert_eq!(
+        properties.bitrate_bps, None,
+        "eight million kbps is past what bits per second can hold, and a wrapped value is a lie"
+    );
+}

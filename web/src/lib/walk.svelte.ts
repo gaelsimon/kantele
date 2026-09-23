@@ -69,6 +69,22 @@ export class Walk<T> {
     await this.read('');
   }
 
+  /// Reads every open column again, keeping the trail as far as it still leads.
+  async refresh(): Promise<void> {
+    const trail = this.trail;
+    await this.read('');
+    const kept: string[] = [];
+    for (const path of trail) {
+      if (!this.entries(kept.at(-1) ?? '').some((entry) => entry.path === path)) break;
+      await this.read(path);
+      kept.push(path);
+    }
+    this.trail = kept;
+    this.levels = Object.fromEntries(
+      Object.entries(this.levels).filter(([path]) => path === '' || kept.includes(path)),
+    );
+  }
+
   /// Opens down to a path the page arrived with, so an owner sees where they already are.
   async revealTo(start: string): Promise<void> {
     const under = this.entries('').find(

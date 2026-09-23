@@ -123,9 +123,11 @@ impl Passes {
         }
     }
 
-    /// The pass that was asked for, which nothing is waiting on once it is taken.
-    pub fn taken(&self) -> Pass {
-        crate::held(&self.pending).take().unwrap_or(Pass::Whole)
+    /// The pass that was asked for, which nothing is waiting on once it is taken, or nothing
+    /// where a nudge outlived the pass it pointed at: taking none is not a reason to walk the
+    /// whole tree.
+    pub fn taken(&self) -> Option<Pass> {
+        crate::held(&self.pending).take()
     }
 
     /// The receiving end, handed out once to whoever runs the passes.
@@ -265,7 +267,6 @@ impl Live {
     }
 }
 
-/// An index built from what the store remembers, with no round trip to the library at all.
 /// What the store remembers, built from one reading of its rows: the cache stays with the store
 /// for the first pass, which would otherwise parse every payload a second time.
 pub fn remembered(indexing: &Indexing, store: &mut Option<Store>) -> Option<Library> {
@@ -728,7 +729,7 @@ pub async fn keep_fresh(
                 None => return,
             },
             asked = next_request(&mut asked) => match asked {
-                Some(()) => Some(passes.taken()),
+                Some(()) => passes.taken(),
                 None => return,
             },
             () = next_sweep(&mut sweeps) => {
@@ -1091,21 +1092,17 @@ fn publishing_as_it_goes(
     let name = indexing.roots.name();
     let ignored = indexing.menus.ignored();
     let menus = indexing.menus.clone();
+    let underway = indexing.underway.clone();
     let task = tokio::spawn(async move {
         while let Some(finished) = snapshots.recv().await {
             let (name, ignored, menus) = (name.clone(), ignored.clone(), menus.clone());
+            // What the last publication awarded, so an album keeps the identifier it was
+            // published under rather than one settled afresh by what has been read so far.
+            let (underway, held) = (underway.clone(), underway.partial.awarded());
             let built = tokio::task::spawn_blocking(move || {
-                let files: Vec<scan::Scanned> = finished
-                    .iter()
-                    .flat_map(|read| read.0.iter().cloned())
-                    .collect();
-                let library = Library::build_holding(
-                    name,
-                    &files,
-                    &[],
-                    &ignored,
-                    &crate::index::identity::Claims::new(),
-                );
+                let files = scan::in_walk_order(finished);
+                let library = Library::build_holding(name, &files, &[], &ignored, &held);
+                underway.partial.award(library.claims().clone());
                 browse::Served::new(library, menus)
             })
             .await;
@@ -1211,7 +1208,6 @@ fn keeping(library: &Library, complete: bool, device: &Device) -> Option<String>
     None
 }
 
-/// Where `SystemUpdateID` carries on from, which is never a value a client may already hold.
 /// The boot id this start announces, always above the last one's: a control point reads a boot id
 /// that did not rise as the same boot, and two starts inside one second share a clock reading.
 pub fn next_boot_id(store: &mut Option<Store>) -> u32 {
@@ -1232,6 +1228,7 @@ pub fn next_boot_id(store: &mut Option<Store>) -> u32 {
     minted
 }
 
+/// Where `SystemUpdateID` carries on from, which is never a value a client may already hold.
 pub fn resumed_update_id(store: &mut Option<Store>) -> u32 {
     match store.as_ref().map(Store::resumed_update_id) {
         Some(Ok(Some(held))) => return held,
@@ -1309,6 +1306,91 @@ mod tests {
             size: 27,
             artwork: None,
         }
+    }
+
+    /// One track of one album, in the folder named, as a first read hands its folder over.
+    fn in_folder(folder: &str) -> Arc<scan::Read> {
+        let file = Scanned {
+            path: PathBuf::from(format!("/music/{folder}/01.flac")),
+            relative: PathBuf::from(format!("{folder}/01.flac")),
+            tags: crate::tags::FileTags {
+                title: Some("Juana Peña".to_owned()),
+                album: Some("Dundunbanza".to_owned()),
+                artists: vec!["Sierra Maestra".to_owned()],
+                ..Default::default()
+            },
+            properties: crate::tags::AudioProperties::default(),
+            size: 27,
+            artwork: None,
+        };
+        Arc::new((vec![file], Vec::new()))
+    }
+
+    /// The identifier of the album whose tracks all sit in `folder`.
+    fn album_in(served: &browse::Served, folder: &str) -> String {
+        let library = &served.library;
+        library
+            .albums()
+            .iter()
+            .find(|album| {
+                album
+                    .tracks
+                    .iter()
+                    .all(|at| library.tracks()[*at].relative.starts_with(folder))
+            })
+            .unwrap_or_else(|| panic!("an album of its own in {folder}"))
+            .id
+            .as_str()
+            .to_owned()
+    }
+
+    async fn published_after(device: &Device, id: u32) -> Arc<browse::Served> {
+        for _ in 0..400 {
+            if device.system_update_id() != id {
+                return device.served();
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("nothing was published");
+    }
+
+    /// The publisher of a first read is the one that has to agree with itself: the folder read
+    /// second is published alone before the one read first arrives beside it.
+    #[tokio::test]
+    async fn an_album_published_mid_read_keeps_its_identifier_in_the_next_publication() {
+        let device = Arc::new(device(Library::default()));
+        let indexing = Indexing::default();
+        let (hook, task) = publishing_as_it_goes(&device, &indexing);
+        indexing.underway.partial.arm(hook.clone(), Duration::ZERO);
+
+        let before = device.system_update_id();
+        assert!(
+            hook(vec![(1, in_folder("Second"))]),
+            "the snapshot is taken"
+        );
+        let first = published_after(&device, before).await;
+        let as_published = album_in(&first, "Second");
+        assert!(
+            !indexing.underway.partial.awarded().is_empty(),
+            "the publisher records what it awarded, or the next build settles it afresh"
+        );
+
+        let id = device.system_update_id();
+        assert!(hook(vec![
+            (1, in_folder("Second")),
+            (0, in_folder("First")),
+        ]));
+        let second = published_after(&device, id).await;
+        assert_eq!(
+            album_in(&second, "Second"),
+            as_published,
+            "the folder read first would take the key on walk order alone, and a device holding \
+             the identifier it was handed would be left with a dead one"
+        );
+
+        indexing.underway.partial.disarm();
+        drop(hook);
+        task.await.expect("the publisher ends with the channel");
     }
 
     /// Libraries built through the real rules, so the identifiers are the ones the server mints.

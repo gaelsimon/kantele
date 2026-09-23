@@ -370,3 +370,24 @@ fn a_pass_with_no_store_at_all_still_serves_the_library() {
         "no store answered, so there is no date to claim"
     );
 }
+
+#[test]
+fn a_file_with_no_extension_beside_a_new_album_does_not_cost_the_album_its_pass() {
+    let tree = Tree::new("incremental-extensionless");
+    tree.album("Sierra Maestra", &["01.wav", "02.wav"], true);
+    tree.album("Kremerata", &["01.wav"], false);
+    let mut store = remembering(&tree);
+
+    tree.album("New Arrival", &["01.wav", "02.wav"], true);
+    tree.text("Sierra Maestra/Credits", "liner notes");
+    let pass = within(&["New Arrival", "Sierra Maestra/Credits"]);
+    let outcome = service::index(&Indexing::of(&tree.0), &mut store, pass);
+
+    assert_eq!(
+        outcome
+            .expect("a name with no dot is taken for a folder, and a file named so is none")
+            .library
+            .len(),
+        5
+    );
+}

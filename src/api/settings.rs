@@ -6,12 +6,13 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
+use tokio::io::AsyncWriteExt;
 
 use crate::config::Apply;
 use crate::service::{Asked, Pass};
 
 use super::describe::{self, Effective, Setting};
-use super::{Control, Operation, Shared, answer, same_origin};
+use super::{Control, Operation, Shared, answer, from_elsewhere};
 
 pub(super) async fn configuration(State(control): State<Shared>, headers: HeaderMap) -> Response {
     let effective = describe::effective(&control.operation().config);
@@ -33,17 +34,12 @@ pub(super) async fn write_configuration(
     headers: HeaderMap,
     body: String,
 ) -> Response {
-    if !same_origin(&headers) {
-        tracing::warn!(
-            origin = ?headers.get(axum::http::header::ORIGIN).and_then(|value| value.to_str().ok()),
-            host = ?headers.get(axum::http::header::HOST).and_then(|value| value.to_str().ok()),
-            "refusing settings written from another site"
-        );
-        return (
-            StatusCode::FORBIDDEN,
-            "settings may only be written from this server's own page\n",
-        )
-            .into_response();
+    if let Some(refused) = from_elsewhere(
+        &headers,
+        "settings written",
+        "settings may only be written from this server's own page\n",
+    ) {
+        return refused;
     }
     match write_settings(&control, &body).await {
         Ok(written) => answer(&headers, &written, || {
@@ -68,7 +64,7 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
                 format!("the body is not a JSON object of settings: {error}"),
             )
         })?;
-    let mode = writable(&describe::effective(&operation.config), &changes)?;
+    let (mode, menus_now) = writable(&describe::effective(&operation.config), &changes)?;
     let path = operation.config.file_path().map(Path::to_path_buf).ok_or_else(|| {
         refuse(StatusCode::CONFLICT, "no configuration file was read at startup, so there is nothing to write: start with --config".to_owned())
     })?;
@@ -97,15 +93,24 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
     // Named for this process: two servers sharing a settings file must not stage over each other.
     let staged = path.with_extension(format!("toml.writing.{}", std::process::id()));
     let replaced = async {
-        tokio::fs::write(&staged, &rewritten).await?;
+        let mut file = tokio::fs::File::create(&staged).await?;
+        file.write_all(rewritten.as_bytes()).await?;
+        // Flushed here rather than left to `sync_all`, which drops the error the flush returns.
+        file.flush().await?;
+        // Before the rename, not after: a rename the disk keeps without the bytes behind it
+        // leaves an empty file, and a settings file naming no music folder is a server with
+        // no library until somebody chooses one again on the page.
+        file.sync_all().await?;
+        drop(file);
         tokio::fs::rename(&staged, &path).await
     };
-    replaced.await.map_err(|error| {
-        refuse(
+    if let Err(error) = replaced.await {
+        let _ = tokio::fs::remove_file(&staged).await;
+        return Err(refuse(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("writing {}: {error}", path.display()),
-        )
-    })?;
+        ));
+    }
     let reloaded = operation.config.reload().map_err(|error| {
         refuse(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -127,7 +132,7 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
         config: reloaded,
     });
     let written: Vec<String> = changes.keys().cloned().collect();
-    let says = applied(control, mode, &path, settings).await;
+    let says = applied(control, mode, menus_now, &path, settings).await;
     tracing::info!(keys = ?written, mode = mode.as_str(), "settings written");
     Ok(Written {
         written,
@@ -137,12 +142,14 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
     })
 }
 
-/// Every key the page may write now, and the strongest mode among them, or the refusal.
+/// Every key the page may write now, the strongest mode among them and whether one of them applies
+/// at once, or the refusal.
 fn writable(
     effective: &Effective,
     changes: &serde_json::Map<String, serde_json::Value>,
-) -> Result<Apply, (StatusCode, String)> {
+) -> Result<(Apply, bool), (StatusCode, String)> {
     let mut mode = Apply::Never;
+    let mut immediate = false;
     for key in changes.keys() {
         let Some(setting) = effective.settings.iter().find(|setting| setting.key == key) else {
             return Err((
@@ -167,19 +174,27 @@ fn writable(
             ));
         }
         mode = mode.max(setting.apply);
+        immediate |= setting.apply == Apply::Immediate;
     }
-    Ok(mode)
+    Ok((mode, immediate))
 }
 
 /// Carries out what the mode asks for, and says what happened in the owner's words.
 async fn applied(
     control: &Control,
     mode: Apply,
+    menus_now: bool,
     path: &Path,
     settings: crate::browse::Settings,
 ) -> String {
     let file = path.display();
-    match mode {
+    // A pass that finds nothing new publishes nothing, so a menu key saved beside a slower one
+    // would wait for a change in the library.
+    let menus_first = menus_now && mode != Apply::Immediate;
+    if menus_first {
+        control.device.apply_settings(settings.clone()).await;
+    }
+    let said = match mode {
         Apply::Immediate => {
             let id = control.device.apply_settings(settings).await;
             tracing::info!(system_update_id = id, "the menus were rebuilt");
@@ -188,7 +203,9 @@ async fn applied(
         Apply::Reread => match control.passes.request(Pass::Whole) {
             Asked::NobodyIsListening => {
                 // No pass will carry it, so what the menus can take now they take now.
-                control.device.apply_settings(settings).await;
+                if !menus_now {
+                    control.device.apply_settings(settings).await;
+                }
                 format!(
                     "saved to {file}, but nothing in this process is watching the library, so it \
                      cannot be read again"
@@ -198,8 +215,12 @@ async fn applied(
         },
         Apply::NextPass => format!("saved to {file} and used at the next check"),
         Apply::Restart => format!("saved to {file}; it takes effect when the server starts again"),
-        // Refused before anything was written.
+        // Only an empty save gets here, and the file was written back as it was.
         Apply::Never => format!("saved to {file}"),
+    };
+    match menus_first {
+        true => format!("{said}; the menus were applied now"),
+        false => said,
     }
 }
 

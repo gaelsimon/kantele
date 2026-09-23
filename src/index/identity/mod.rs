@@ -16,7 +16,7 @@ use crate::tags::FileTags;
 use discs::folder_disc;
 
 /// Bump whenever a rule below changes.
-pub const IDENTITY_VERSION: u16 = 3;
+pub const IDENTITY_VERSION: u16 = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rule {
@@ -605,8 +605,8 @@ fn prepare(file: &FileFacts) -> Option<Prepared> {
     let (scope, folder_disc) = grouping_scope(file.relative_path, file.tags);
     Some(Prepared {
         scope,
-        folded_title: fold(title),
-        title: title.to_owned(),
+        folded_title: fold(&title),
+        title: title.into_owned(),
         disc: file.tags.disc_number.or(title_disc).or(folder_disc),
     })
 }
@@ -655,12 +655,7 @@ pub fn most_common<'a>(values: impl Iterator<Item = &'a str>) -> Option<String> 
             *counts.entry(value).or_default() += 1;
         }
     }
-    counts
-        .into_iter()
-        .max_by(|(left, left_count), (right, right_count)| {
-            left_count.cmp(right_count).then(right.cmp(left))
-        })
-        .map(|(value, _)| value.to_owned())
+    winner(counts).map(str::to_owned)
 }
 
 pub fn most_common_of(values: impl Iterator<Item = String>) -> Option<String> {
@@ -670,6 +665,11 @@ pub fn most_common_of(values: impl Iterator<Item = String>) -> Option<String> {
             *counts.entry(value).or_default() += 1;
         }
     }
+    winner(counts)
+}
+
+/// The value counted most, and the smallest of those tied, whatever order the map yields them in.
+fn winner<V: Ord>(counts: HashMap<V, usize>) -> Option<V> {
     counts
         .into_iter()
         .max_by(|(left, left_count), (right, right_count)| {
@@ -892,6 +892,24 @@ mod tests {
         let grouping = group_releases(&facts(&files));
         assert_eq!(grouping.releases.len(), 1);
         assert_eq!(grouping.releases[0].title, "Symphonies");
+        assert_eq!(grouping.placement[1].disc, Some(2));
+    }
+
+    #[test]
+    fn a_disc_marker_before_another_bracket_merges_the_discs_into_one_album() {
+        let files = vec![
+            (
+                PathBuf::from("Brahms/01.flac"),
+                tags("Symphonies (Disc 1) (Remastered)", "Allegro", 1),
+            ),
+            (
+                PathBuf::from("Brahms/02.flac"),
+                tags("Symphonies (Disc 2) (Remastered)", "Andante", 1),
+            ),
+        ];
+        let grouping = group_releases(&facts(&files));
+        assert_eq!(grouping.releases.len(), 1);
+        assert_eq!(grouping.releases[0].title, "Symphonies (Remastered)");
         assert_eq!(grouping.placement[1].disc, Some(2));
     }
 

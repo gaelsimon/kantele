@@ -136,6 +136,14 @@ async fn progress(State(control): State<Shared>, headers: HeaderMap) -> Response
     })
 }
 
+fn not_in_library(asked: &str, kind: &str) -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        format!("{asked} is no {kind} of this library\n"),
+    )
+        .into_response()
+}
+
 async fn menu_level(
     State(control): State<Shared>,
     headers: HeaderMap,
@@ -143,11 +151,7 @@ async fn menu_level(
 ) -> Response {
     let served = control.device.served();
     let Some(level) = menu::level(&served, &asked) else {
-        return (
-            StatusCode::NOT_FOUND,
-            format!("{} is no menu of this library\n", asked.at),
-        )
-            .into_response();
+        return not_in_library(&asked.at, "menu");
     };
     answer(&headers, &level, || menu::lines(&level))
 }
@@ -159,11 +163,7 @@ async fn folder_files(
 ) -> Response {
     let served = control.device.served();
     let Some(listing) = files::listing(&served, &asked) else {
-        return (
-            StatusCode::NOT_FOUND,
-            format!("{} is no folder of this library\n", asked.folder),
-        )
-            .into_response();
+        return not_in_library(&asked.folder, "folder");
     };
     answer(&headers, &listing, || files::lines(&listing))
 }
@@ -175,11 +175,7 @@ async fn track_detail(
 ) -> Response {
     let served = control.device.served();
     let Some(found) = track::found(&served, &asked) else {
-        return (
-            StatusCode::NOT_FOUND,
-            format!("{} is no track of this library\n", asked.path),
-        )
-            .into_response();
+        return not_in_library(&asked.path, "track");
     };
     answer(&headers, &found, || track::lines(&found))
 }
@@ -198,11 +194,7 @@ async fn folder_tree(
         .filter(|pass| !pass.whole_tree)
         .map(|pass| &pass.covered);
     let Some(listing) = folders::listing(&served, &refusals, walked, &asked) else {
-        return (
-            StatusCode::NOT_FOUND,
-            format!("{} is no folder of this library\n", asked.under),
-        )
-            .into_response();
+        return not_in_library(&asked.under, "folder");
     };
     answer(&headers, &listing, || folder_lines(&listing))
 }
@@ -361,17 +353,12 @@ async fn rescan(
     headers: HeaderMap,
     Query(asked): Query<Rescanning>,
 ) -> Response {
-    if !same_origin(&headers) {
-        tracing::warn!(
-            origin = ?headers.get(header::ORIGIN).and_then(|value| value.to_str().ok()),
-            host = ?headers.get(header::HOST).and_then(|value| value.to_str().ok()),
-            "refusing a pass asked for from another site"
-        );
-        return (
-            StatusCode::FORBIDDEN,
-            "a rescan may only be asked for from this server's own page\n",
-        )
-            .into_response();
+    if let Some(refused) = from_elsewhere(
+        &headers,
+        "a pass asked for",
+        "a rescan may only be asked for from this server's own page\n",
+    ) {
+        return refused;
     }
     let wanted = match asked
         .folder
@@ -426,6 +413,19 @@ async fn rescan(
 }
 
 /// Whether a request that changes something came from this server's own page.
+/// The refusal of a write another site's page asked for, or nothing where this server's page did.
+fn from_elsewhere(headers: &HeaderMap, what: &str, answer: &'static str) -> Option<Response> {
+    if same_origin(headers) {
+        return None;
+    }
+    tracing::warn!(
+        origin = ?headers.get(header::ORIGIN).and_then(|value| value.to_str().ok()),
+        host = ?headers.get(header::HOST).and_then(|value| value.to_str().ok()),
+        "refusing {what} from another site"
+    );
+    Some((StatusCode::FORBIDDEN, answer).into_response())
+}
+
 fn same_origin(headers: &HeaderMap) -> bool {
     let Some(host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) else {
         return false;

@@ -201,9 +201,9 @@ async fn one_folder_is_read_again_on_its_own_and_a_folder_nobody_has_is_refused(
     assert!(says.contains("Autechre"), "the answer names it: {says}");
     assert_eq!(
         server.passes.taken(),
-        Pass::Within(kantele::index::scan::Scope::of([std::path::PathBuf::from(
-            "Autechre"
-        )])),
+        Some(Pass::Within(kantele::index::scan::Scope::of([
+            std::path::PathBuf::from("Autechre")
+        ]))),
         "and the pass waiting is over that folder rather than the library"
     );
 
@@ -215,7 +215,12 @@ async fn one_folder_is_read_again_on_its_own_and_a_folder_nobody_has_is_refused(
         StatusCode::ACCEPTED,
         "asking for everything while one folder waits is a wider pass, not a repeat"
     );
-    assert_eq!(server.passes.taken(), Pass::Whole);
+    assert_eq!(server.passes.taken(), Some(Pass::Whole));
+    assert_eq!(
+        server.passes.taken(),
+        None,
+        "and nothing waits behind it: a second nudge would otherwise walk the whole library"
+    );
 
     let nowhere = ask(&server, post("/api/rescan?folder=Nowhere")).await;
     assert_eq!(nowhere.status(), StatusCode::NOT_FOUND);

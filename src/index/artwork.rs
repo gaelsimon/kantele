@@ -103,21 +103,25 @@ const SAYS_NOT_FRONT: &[&str] = &[
 ];
 
 pub fn preferred_cover(entries: &[PathBuf]) -> Option<PathBuf> {
+    // By name rather than in the order the file system listed them: that order is not the same
+    // on two boxes and changes when a folder is reorganised, and the cover would change with it.
+    let mut entries: Vec<&PathBuf> = entries.iter().collect();
+    entries.sort_by_key(|path| path.as_os_str().to_ascii_lowercase());
     for wanted in FOLDER_IMAGES {
-        for path in entries {
+        for path in &entries {
             let matches = path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.eq_ignore_ascii_case(wanted));
             if matches {
-                return Some(path.clone());
+                return Some((*path).clone());
             }
         }
     }
     let named_front = entries.iter().find(|path| says_front(path));
     named_front
         .or_else(|| entries.first().filter(|_| entries.len() == 1))
-        .cloned()
+        .map(|path| (*path).clone())
 }
 
 /// Whole words: `disc` is inside `disco`.
@@ -243,7 +247,7 @@ pub fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
         return None;
     }
     let mut i = 2;
-    while i + 9 < bytes.len() {
+    while i + 8 < bytes.len() {
         if bytes[i] != 0xFF {
             i += 1;
             continue;
@@ -271,6 +275,15 @@ mod tests {
         assert_eq!(image_mime(b"\x89PNG\r\n\x1a\n"), Some("image/png"));
         assert_eq!(image_mime(b"RIFF____WEBPVP8 "), None);
         assert_eq!(image_mime(b""), None);
+    }
+
+    #[test]
+    fn a_frame_header_ending_on_the_last_byte_read_is_still_read() {
+        // Start of image, then a baseline frame header: length, precision, height, width.
+        let jpeg = [
+            0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x01, 0xF4, 0x02, 0x58,
+        ];
+        assert_eq!(dimensions(&jpeg), Some((600, 500)));
     }
 
     #[test]
@@ -393,6 +406,26 @@ mod tests {
             .map(|name| PathBuf::from("/x").join(name))
             .collect();
         preferred_cover(&paths).map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn the_cover_is_the_same_whatever_order_the_folder_was_listed_in() {
+        let names = [
+            "the sea and cake.sleeve.jpg",
+            "the sea and cake.front.jpg",
+            "the sea and cake.jpg",
+        ];
+        let mut reversed = names;
+        reversed.reverse();
+        assert_eq!(
+            cover_of(&names),
+            cover_of(&reversed),
+            "`read_dir` hands a folder over in the file system's order, not the library's"
+        );
+        assert_eq!(
+            cover_of(&names),
+            Some("the sea and cake.front.jpg".to_owned())
+        );
     }
 
     #[test]

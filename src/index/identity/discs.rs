@@ -1,18 +1,34 @@
 //! Disc markers in folder names and titles.
 
-pub fn strip_disc_marker(title: &str) -> (&str, Option<u32>) {
+use std::borrow::Cow;
+
+pub fn strip_disc_marker(title: &str) -> (Cow<'_, str>, Option<u32>) {
     let trimmed = title.trim();
+    if let Some((before, disc)) = bracketed_disc(trimmed) {
+        return (Cow::Borrowed(before), Some(disc));
+    }
+    // `Symphonies (Disc 2) (Remastered)`: the marker goes, the bracket after it stays.
     if let Some(open) = bracketed_tail(trimmed)
-        && let Some(disc) = disc_phrase(&trimmed[open + 1..trimmed.len() - 1])
+        && let Some((before, disc)) = bracketed_disc(trimmed[..open].trim_end())
     {
-        return (trim_separator(&trimmed[..open]), Some(disc));
+        return (
+            Cow::Owned(format!("{before} {}", &trimmed[open..])),
+            Some(disc),
+        );
     }
     if let Some(start) = last_keyword(trimmed)
         && let Some(disc) = disc_phrase(&trimmed[start..])
     {
-        return (trim_separator(&trimmed[..start]), Some(disc));
+        return (Cow::Borrowed(trim_separator(&trimmed[..start])), Some(disc));
     }
-    (trimmed, None)
+    (Cow::Borrowed(trimmed), None)
+}
+
+/// The title before a closing bracket that holds a disc marker, and the disc.
+fn bracketed_disc(value: &str) -> Option<(&str, u32)> {
+    let open = bracketed_tail(value)?;
+    let disc = disc_phrase(&value[open + 1..value.len() - 1])?;
+    Some((trim_separator(&value[..open]), disc))
 }
 
 const DISC_WORDS: &[&str] = &["disque", "disco", "disc", "disk", "cd"];
@@ -104,41 +120,53 @@ pub(super) fn trim_separator(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn borrowed(title: &str) -> (&str, Option<u32>) {
+        match strip_disc_marker(title) {
+            (Cow::Borrowed(album), disc) => (album, disc),
+            (Cow::Owned(album), _) => panic!("{album} was rebuilt where a slice would do"),
+        }
+    }
+    #[test]
+    fn a_disc_marker_before_another_bracket_is_taken_out_and_the_bracket_kept() {
+        for (title, album, disc) in [
+            (
+                "Symphonies (Disc 2) (Remastered)",
+                "Symphonies (Remastered)",
+                2,
+            ),
+            (
+                "Symphonies [CD 1] [2019 Remaster]",
+                "Symphonies [2019 Remaster]",
+                1,
+            ),
+        ] {
+            let (stripped, found) = strip_disc_marker(title);
+            assert_eq!(
+                (stripped.as_ref(), found),
+                (album, Some(disc)),
+                "the discs of one box are one album only if they carry one title"
+            );
+        }
+    }
+
     #[test]
     fn disc_markers_are_recognised_and_ordinary_numbers_are_not() {
+        assert_eq!(borrowed("Symphonies [disc 2]"), ("Symphonies", Some(2)));
+        assert_eq!(borrowed("Symphonies (CD 3)"), ("Symphonies", Some(3)));
+        assert_eq!(borrowed("Symphonies - Disc 4"), ("Symphonies", Some(4)));
+        assert_eq!(borrowed("Symphonies, disk 5"), ("Symphonies", Some(5)));
+        assert_eq!(borrowed("Symphonies CD1"), ("Symphonies", Some(1)));
+        assert_eq!(borrowed("Symphony No. 2"), ("Symphony No. 2", None));
         assert_eq!(
-            strip_disc_marker("Symphonies [disc 2]"),
-            ("Symphonies", Some(2))
-        );
-        assert_eq!(
-            strip_disc_marker("Symphonies (CD 3)"),
-            ("Symphonies", Some(3))
-        );
-        assert_eq!(
-            strip_disc_marker("Symphonies - Disc 4"),
-            ("Symphonies", Some(4))
-        );
-        assert_eq!(
-            strip_disc_marker("Symphonies, disk 5"),
-            ("Symphonies", Some(5))
-        );
-        assert_eq!(strip_disc_marker("Symphonies CD1"), ("Symphonies", Some(1)));
-        assert_eq!(
-            strip_disc_marker("Symphony No. 2"),
-            ("Symphony No. 2", None)
-        );
-        assert_eq!(
-            strip_disc_marker("Greatest Hits Vol. 2"),
+            borrowed("Greatest Hits Vol. 2"),
             ("Greatest Hits Vol. 2", None)
         );
         assert_eq!(
-            strip_disc_marker("Bitches Brew (Remastered)"),
+            borrowed("Bitches Brew (Remastered)"),
             ("Bitches Brew (Remastered)", None)
         );
-        assert_eq!(
-            strip_disc_marker("Disc Jockey Hits"),
-            ("Disc Jockey Hits", None)
-        );
+        assert_eq!(borrowed("Disc Jockey Hits"), ("Disc Jockey Hits", None));
     }
     #[test]
     fn disc_folders_are_recognised_and_ordinary_folders_are_not() {

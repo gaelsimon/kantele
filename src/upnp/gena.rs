@@ -50,6 +50,8 @@ struct Subscription {
     peer: IpAddr,
     since: u64,
     missed: u8,
+    /// Held while an event goes out, so the next one cannot arrive before it.
+    turn: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -70,6 +72,8 @@ pub struct Subscriptions {
 pub struct Granted {
     pub sid: String,
     pub timeout: Duration,
+    /// The initial event's turn, taken with the grant and given up once it is sent.
+    pub first: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -109,20 +113,27 @@ impl Subscriptions {
             return Err(Refused::TooMany);
         }
         let since = held.values().map(|s| s.since).max().map_or(0, |n| n + 1);
+        let turn = Arc::new(tokio::sync::Mutex::new(()));
+        let first = turn.clone().try_lock_owned().ok();
         held.insert(
             sid.clone(),
             Subscription {
                 service,
                 callbacks,
                 expires: Instant::now() + timeout,
-                seq: 0,
+                seq: 1,
                 user_agent,
                 peer,
                 since,
                 missed: 0,
+                turn,
             },
         );
-        Ok(Granted { sid, timeout })
+        Ok(Granted {
+            sid,
+            timeout,
+            first,
+        })
     }
 
     pub fn listed(&self) -> Vec<Listed> {
@@ -160,6 +171,7 @@ impl Subscriptions {
         Some(Granted {
             sid: sid.to_owned(),
             timeout,
+            first: None,
         })
     }
 
@@ -188,38 +200,51 @@ impl Subscriptions {
         Some((subscription.callbacks.clone(), seq))
     }
 
-    fn subscribers_of(&self, service: Service) -> Vec<String> {
+    fn subscribers_of(&self, service: Service) -> Vec<(String, Arc<tokio::sync::Mutex<()>>)> {
         crate::held(&self.inner)
             .iter()
             .filter(|(_, s)| s.service == service)
-            .map(|(sid, _)| sid.clone())
+            .map(|(sid, s)| (sid.clone(), s.turn.clone()))
             .collect()
     }
 
-    pub async fn send_initial(&self, sid: &str, properties: &[(&str, String)]) {
-        self.send(sid, properties).await;
+    /// Sequence zero, which the grant kept for it, on the turn the grant took.
+    pub async fn send_initial(
+        &self,
+        sid: &str,
+        properties: &[(&str, String)],
+        _turn: Option<tokio::sync::OwnedMutexGuard<()>>,
+    ) {
+        let callbacks = crate::held(&self.inner)
+            .get(sid)
+            .map(|subscription| subscription.callbacks.clone());
+        if let Some(callbacks) = callbacks {
+            self.deliver_once(&callbacks, sid, 0, &property_set(properties))
+                .await;
+        }
     }
 
     pub async fn notify(&self, service: Service, properties: &[(&str, String)]) {
         let body = property_set(properties);
         let permits = Arc::new(tokio::sync::Semaphore::new(DELIVERIES_AT_ONCE));
         let mut sending = tokio::task::JoinSet::new();
-        for sid in self.subscribers_of(service) {
-            let Some((callbacks, seq)) = self.next(&sid) else {
-                continue;
-            };
-            for callback in callbacks {
-                // Taken inside the task: taken here, a slow subscriber stops the round being
-                // handed out at all, and the deadline below starts after the wait it bounds.
-                let permits = permits.clone();
-                let (subscriptions, sid, body) = (self.clone(), sid.clone(), body.clone());
-                sending.spawn(async move {
-                    let _held = permits.acquire_owned().await.expect("never closed");
-                    subscriptions
-                        .deliver_and_say_so(&callback, &sid, seq, &body)
-                        .await;
-                });
-            }
+        for (sid, turn) in self.subscribers_of(service) {
+            // Taken inside the task: taken here, a slow subscriber stops the round being
+            // handed out at all, and the deadline below starts after the wait it bounds.
+            let permits = permits.clone();
+            let (subscriptions, body) = (self.clone(), body.clone());
+            sending.spawn(async move {
+                // The number under the turn, so numbers count in the order events arrive; the
+                // permit after both, or a task waiting on a slow subscriber holds one for nothing.
+                let _turn = turn.lock_owned().await;
+                let Some((callbacks, seq)) = subscriptions.next(&sid) else {
+                    return;
+                };
+                let _held = permits.acquire_owned().await.expect("never closed");
+                subscriptions
+                    .deliver_once(&callbacks, &sid, seq, &body)
+                    .await;
+            });
         }
         // The pass that published the index waits on this, so slow subscribers are left to finish
         // on their own rather than holding it up.
@@ -233,30 +258,27 @@ impl Subscriptions {
         }
     }
 
-    async fn send(&self, sid: &str, properties: &[(&str, String)]) {
-        let Some((callbacks, seq)) = self.next(sid) else {
-            return;
-        };
-        let body = property_set(properties);
+    /// The URLs a `CALLBACK` header holds are alternatives, not a list to fan out over: they are
+    /// tried in the order the subscriber wrote them, one event reaches it once, and an event no
+    /// URL carried counts against it once.
+    async fn deliver_once(&self, callbacks: &[String], sid: &str, seq: u32, body: &str) {
         for callback in callbacks {
-            self.deliver_and_say_so(&callback, sid, seq, &body).await;
-        }
-    }
-
-    async fn deliver_and_say_so(&self, callback: &str, sid: &str, seq: u32, body: &str) {
-        match deliver(callback, sid, seq, body).await {
-            Ok(()) => {
-                tracing::debug!(%sid, %callback, seq, "event delivered");
-                self.delivered(sid);
-            }
-            Err(error) => {
-                let missed = self.missed(sid);
-                tracing::warn!(%sid, %callback, seq, %error, missed, "event not delivered");
-                if missed >= MISSED {
-                    tracing::warn!(%sid, %callback, "nothing reached this subscriber: it is dropped");
-                    self.unsubscribe(sid);
+            match deliver(callback, sid, seq, body).await {
+                Ok(()) => {
+                    tracing::debug!(%sid, %callback, seq, "event delivered");
+                    self.delivered(sid);
+                    return;
+                }
+                Err(error) => {
+                    tracing::warn!(%sid, %callback, seq, %error, "event not delivered")
                 }
             }
+        }
+        let missed = self.missed(sid);
+        tracing::warn!(%sid, seq, missed, "no callback of this subscriber took the event");
+        if missed >= MISSED {
+            tracing::warn!(%sid, "nothing reached this subscriber: it is dropped");
+            self.unsubscribe(sid);
         }
     }
 
@@ -613,7 +635,7 @@ mod tests {
             }
         });
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let handed = subs.listed().iter().filter(|held| held.events == 1).count();
+        let handed = subs.listed().iter().filter(|held| held.events == 2).count();
         round.await.expect("the round ends");
         quiet.abort();
 
@@ -633,11 +655,12 @@ mod tests {
                     service: Service::ContentDirectory,
                     callbacks: vec![callback.to_owned()],
                     expires: Instant::now() + DEFAULT_TIMEOUT,
-                    seq: 0,
+                    seq: 1,
                     user_agent: None,
                     peer: "127.0.0.1".parse().expect("an address"),
                     since: nth as u64,
                     missed: 0,
+                    turn: Arc::default(),
                 },
             );
         }
@@ -661,6 +684,22 @@ mod tests {
             &[("SystemUpdateID", "2".to_owned())],
         )
         .await;
+        settled(subs).await;
+    }
+
+    /// Until no delivery is in flight. A round is bounded and a slow one is left to finish on its
+    /// own: on Windows a refused connection takes seconds, so two dead callbacks outlast a round.
+    async fn settled(subs: &Subscriptions) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            let busy = crate::held(&subs.inner)
+                .values()
+                .any(|subscription| subscription.turn.try_lock().is_err());
+            if !busy {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 
     /// A subscriber listening on a port, answering each NOTIFY with the line it was given.
@@ -737,6 +776,164 @@ mod tests {
         }
     }
 
+    /// A port bound then let go, which refuses every connection after that.
+    async fn refusing() -> String {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("a port");
+        let address = listener.local_addr().expect("bound");
+        drop(listener);
+        format!("http://{address}/notify")
+    }
+
+    /// A callback that answers every NOTIFY, and the count of those it took.
+    async fn counting() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("a port");
+        let url = format!("http://{}/notify", listener.local_addr().expect("bound"));
+        let taken = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = taken.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut seen = [0u8; 1024];
+                let _ = stream.read(&mut seen).await;
+                counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
+                let _ = stream.flush().await;
+            }
+        });
+        (url, taken)
+    }
+
+    /// A callback that answers every NOTIFY and keeps the sequence numbers in the order they came.
+    async fn recording() -> (String, Arc<Mutex<Vec<u32>>>) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("a port");
+        let url = format!("http://{}/notify", listener.local_addr().expect("bound"));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let kept = seen.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut request = Vec::new();
+                let _ = stream.read_to_end(&mut request).await;
+                let text = String::from_utf8_lossy(&request);
+                if let Some(seq) = text
+                    .lines()
+                    .find_map(|line| line.strip_prefix("SEQ: "))
+                    .and_then(|value| value.trim().parse().ok())
+                {
+                    kept.lock().expect("unpoisoned").push(seq);
+                }
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
+            }
+        });
+        (url, seen)
+    }
+
+    fn took(counter: &std::sync::atomic::AtomicUsize) -> usize {
+        counter.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    async fn subscribed_to(callbacks: &[&str]) -> Subscriptions {
+        let header: String = callbacks.iter().map(|url| format!("<{url}>")).collect();
+        let subs = Subscriptions::default();
+        subs.subscribe(
+            Service::ContentDirectory,
+            &header,
+            at("127.0.0.1"),
+            None,
+            None,
+        )
+        .expect("granted");
+        subs
+    }
+
+    async fn one_event(subs: &Subscriptions) {
+        subs.notify(
+            Service::ContentDirectory,
+            &[("SystemUpdateID", "2".to_owned())],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_change_announced_as_a_device_subscribes_reaches_it_after_the_initial_event() {
+        let (url, seen) = recording().await;
+        let subs = Subscriptions::default();
+        let granted = subs
+            .subscribe(
+                Service::ContentDirectory,
+                &format!("<{url}>"),
+                at("127.0.0.1"),
+                None,
+                None,
+            )
+            .expect("granted");
+        // The pass publishing an index does not wait for the task that sends the initial event.
+        let publishing = {
+            let subs = subs.clone();
+            tokio::spawn(async move { one_event(&subs).await })
+        };
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        subs.send_initial(
+            &granted.sid,
+            &[("SystemUpdateID", "1".to_owned())],
+            granted.first,
+        )
+        .await;
+        let _ = publishing.await;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while seen.lock().expect("unpoisoned").len() < 2 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            *seen.lock().expect("unpoisoned"),
+            [0, 1],
+            "a subscriber that meets one before zero has missed an event and subscribes again"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_event_reaches_a_subscriber_once_though_it_gave_two_callback_urls() {
+        let (first, to_first) = counting().await;
+        let (second, to_second) = counting().await;
+        let subs = subscribed_to(&[&first, &second]).await;
+
+        one_event(&subs).await;
+        assert_eq!(took(&to_first), 1);
+        assert_eq!(
+            took(&to_second),
+            0,
+            "the URLs are alternatives, so the second is not written to at all"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_second_callback_url_takes_the_event_when_the_first_refuses_it() {
+        let (alive, taken) = counting().await;
+        let subs = subscribed_to(&[&refusing().await, &alive]).await;
+
+        one_event(&subs).await;
+        assert_eq!(took(&taken), 1, "the alternative took the event");
+        assert!(
+            !subs.is_empty(),
+            "and the subscription is not held to blame"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subscriber_with_two_dead_callbacks_is_dropped_no_sooner_than_one_with_a_single_one()
+    {
+        let subs = subscribed_to(&[&refusing().await, &refusing().await]).await;
+        until_dropped(&subs).await;
+        assert!(
+            subs.is_empty(),
+            "an event nothing carried is one failure, whatever the number of URLs tried"
+        );
+    }
+
     #[test]
     fn a_renewal_names_the_address_that_took_the_subscription() {
         let subs = Subscriptions::default();
@@ -808,10 +1005,20 @@ mod tests {
     }
 
     #[test]
-    fn the_first_event_is_sequence_zero_and_later_ones_are_not() {
+    fn a_change_announced_before_the_initial_event_goes_out_does_not_take_its_sequence() {
         let subs = Subscriptions::default();
         let granted = subscribed(&subs, Service::ContentDirectory, 1);
-        assert_eq!(subs.next(&granted.sid).unwrap().1, 0);
+        assert_eq!(
+            subs.next(&granted.sid).unwrap().1,
+            1,
+            "zero is the event carrying every variable, and a subscriber reads a change as zero"
+        );
+    }
+
+    #[test]
+    fn the_events_after_the_initial_one_count_up_from_one() {
+        let subs = Subscriptions::default();
+        let granted = subscribed(&subs, Service::ContentDirectory, 1);
         assert_eq!(subs.next(&granted.sid).unwrap().1, 1);
         assert_eq!(subs.next(&granted.sid).unwrap().1, 2);
     }

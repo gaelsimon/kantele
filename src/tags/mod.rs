@@ -327,7 +327,7 @@ fn properties_of(tagged: &lofty::file::TaggedFile) -> AudioProperties {
         sample_rate: p.sample_rate(),
         bit_depth: p.bit_depth(),
         channels: p.channels(),
-        bitrate_bps: p.audio_bitrate().map(|kbps| kbps * 1000),
+        bitrate_bps: p.audio_bitrate().and_then(|kbps| kbps.checked_mul(1000)),
     }
 }
 

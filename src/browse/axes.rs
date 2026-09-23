@@ -38,7 +38,7 @@ impl Axes {
     }
 
     fn axis(&self, facet: Facet) -> Option<&Axis> {
-        self.axes.get(FACETS.iter().position(|at| *at == facet)?)
+        self.axes.get(facet as usize)
     }
 
     /// Roughly what these tables hold, in bytes, for the memory report.

@@ -1445,6 +1445,21 @@ mod tests {
         for facet in FACETS {
             assert_eq!(Facet::from_code(facet.code()), Some(*facet));
             assert_ne!(facet.code(), SCOPE, "a code may not be the folder marker");
+            assert_ne!(
+                facet.code(),
+                GROUP,
+                "a code may not be the letter group marker"
+            );
+        }
+    }
+
+    #[test]
+    fn the_axes_are_listed_in_the_order_they_are_declared() {
+        for (at, facet) in FACETS.iter().enumerate() {
+            assert_eq!(
+                *facet as usize, at,
+                "an axis is found by its place: {facet:?}"
+            );
         }
     }
 

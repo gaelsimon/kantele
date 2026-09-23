@@ -11,7 +11,7 @@ use lofty::probe::Probe;
 
 use crate::tags::AudioProperties;
 
-/// DSD is one bit per sample, always.
+/// DSD is one bit per sample, always; DSF's own field of that name is the bit order.
 const BITS_PER_SAMPLE: u8 = 1;
 const LARGEST_TAG: u64 = 32 * 1024 * 1024;
 
@@ -50,13 +50,12 @@ fn dsf<R: Read + Seek>(file: &mut R) -> Option<Dsd> {
     let metadata = u64::from_le_bytes(head[20..28].try_into().ok()?);
     let channels = u32::from_le_bytes(head[52..56].try_into().ok()?);
     let rate = u32::from_le_bytes(head[56..60].try_into().ok()?);
-    let bits = u32::from_le_bytes(head[60..64].try_into().ok()?);
     let samples = u64::from_le_bytes(head[64..72].try_into().ok()?);
     if rate == 0 || channels == 0 {
         return None;
     }
     Some(Dsd {
-        properties: properties(rate, channels, bits, samples as f64 / f64::from(rate)),
+        properties: properties(rate, channels, samples as f64 / f64::from(rate)),
         tagged: (metadata > 0).then(|| id3_at(file, metadata)).flatten(),
     })
 }
@@ -91,12 +90,7 @@ fn dsdiff<R: Read + Seek>(file: &mut R) -> Option<Dsd> {
     }
     let bytes_per_second = f64::from(rate) / 8.0 * f64::from(channels);
     Some(Dsd {
-        properties: properties(
-            rate,
-            channels,
-            u32::from(BITS_PER_SAMPLE),
-            audio as f64 / bytes_per_second,
-        ),
+        properties: properties(rate, channels, audio as f64 / bytes_per_second),
         tagged: tag,
     })
 }
@@ -174,14 +168,14 @@ fn id3_at<R: Read + Seek>(file: &mut R, at: u64) -> Option<TaggedFile> {
         .ok()
 }
 
-fn properties(rate: u32, channels: u32, bits: u32, seconds: f64) -> AudioProperties {
+fn properties(rate: u32, channels: u32, seconds: f64) -> AudioProperties {
     AudioProperties {
         // A count no duration can hold is a header that lies, and unknown is the honest answer.
         duration: Duration::try_from_secs_f64(seconds).unwrap_or_default(),
         sample_rate: Some(rate),
         bit_depth: Some(BITS_PER_SAMPLE),
         channels: u8::try_from(channels).ok(),
-        bitrate_bps: rate.checked_mul(bits).and_then(|n| n.checked_mul(channels)),
+        bitrate_bps: rate.checked_mul(channels),
     }
 }
 
@@ -254,6 +248,17 @@ mod tests {
         assert_eq!(dsd.properties.bit_depth, Some(1));
         assert_eq!(dsd.properties.bitrate_bps, Some(5_644_800));
         assert!(dsd.tagged.is_none(), "no metadata pointer means no tag");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_dsf_stored_most_significant_bit_first_is_still_one_bit_a_sample() {
+        let mut bytes = dsf_bytes(2_822_400, 2, 2_822_400, 0);
+        // The field says the bit order within a byte: 1 least significant first, 8 most.
+        bytes[60..64].copy_from_slice(&8u32.to_le_bytes());
+        let path = written("msb-first.dsf", &bytes);
+        let dsd = read(&path).expect("a dsf is read");
+        assert_eq!(dsd.properties.bitrate_bps, Some(5_644_800));
         let _ = std::fs::remove_file(path);
     }
 

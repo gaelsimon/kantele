@@ -741,6 +741,23 @@ fn upsert_into<'t>(transaction: &'t Transaction<'_>, table: &str) -> Result<Stat
     ))?)
 }
 
+/// One row, in the column order `upsert_into` names.
+fn put(
+    upsert: &mut Statement<'_>,
+    relative: &str,
+    fingerprint: Fingerprint,
+    payload: &str,
+) -> Result<()> {
+    upsert.execute(params![
+        relative,
+        fingerprint.size as i64,
+        fingerprint.mtime,
+        payload,
+        READER_VERSION
+    ])?;
+    Ok(())
+}
+
 fn write_files<'a>(
     transaction: &Transaction<'_>,
     roots: &Roots,
@@ -783,13 +800,7 @@ fn write_files<'a>(
             properties: file.properties,
             artwork,
         })?;
-        upsert.execute(params![
-            relative,
-            fingerprint.size as i64,
-            fingerprint.mtime,
-            payload,
-            READER_VERSION
-        ])?;
+        put(&mut upsert, &relative, fingerprint, &payload)?;
         saved.files += 1;
     }
     Ok(covered)
@@ -820,13 +831,7 @@ fn write_refused<'a>(
             saved.unchanged += 1;
             continue;
         }
-        upsert.execute(params![
-            relative,
-            file.fingerprint.size as i64,
-            file.fingerprint.mtime,
-            payload,
-            READER_VERSION
-        ])?;
+        put(&mut upsert, &relative, file.fingerprint, &payload)?;
         saved.refused += 1;
     }
     Ok(covered)
@@ -869,13 +874,7 @@ fn write_covers(
             saved.unchanged += 1;
             continue;
         }
-        upsert.execute(params![
-            text,
-            image.fingerprint.size as i64,
-            image.fingerprint.mtime,
-            payload,
-            READER_VERSION
-        ])?;
+        put(&mut upsert, &text, image.fingerprint, &payload)?;
         saved.covers += 1;
     }
     Ok(covered)
@@ -902,13 +901,7 @@ fn write_playlists<'a>(
             saved.unchanged += 1;
             continue;
         }
-        upsert.execute(params![
-            relative,
-            found.fingerprint.size as i64,
-            found.fingerprint.mtime,
-            payload,
-            READER_VERSION
-        ])?;
+        put(&mut upsert, &relative, found.fingerprint, &payload)?;
         saved.playlists += 1;
     }
     Ok(covered)

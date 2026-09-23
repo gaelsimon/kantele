@@ -62,6 +62,27 @@ pub(super) fn children<'a>(library: &'a Library, part: &Part<'a>) -> Vec<didl::C
     }
 }
 
+/// Every track an album or one of its parts holds, each under the container it opens from.
+pub(super) fn tracks_under<'a>(library: &'a Library, id: &str) -> Option<Vec<didl::Child<'a>>> {
+    let (album, tracks) = match find(library, id) {
+        Some(Part::Disc(album, at)) => (album, &album.discs[at].tracks),
+        Some(Part::Run(album, at)) => (album, &album.runs[at].tracks),
+        None => {
+            let album = library.album(&ObjectId::new(id.to_owned()).ok()?)?;
+            (album, &album.tracks)
+        }
+    };
+    Some(
+        tracks
+            .iter()
+            .filter_map(|at| {
+                let track = library.tracks().get(*at)?;
+                Some(didl::Child::item(track, parent_of(album, *at)))
+            })
+            .collect(),
+    )
+}
+
 pub(super) fn metadata<'a>(part: &Part<'a>) -> didl::Child<'a> {
     match part {
         Part::Disc(album, at) => didl::Child::Container(disc_spec(album, &album.discs[*at])),
