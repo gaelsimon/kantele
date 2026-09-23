@@ -38,6 +38,10 @@ impl Node {
     fn entries(&self) -> usize {
         self.children.len() + self.tracks.len()
     }
+
+    fn own_tracks(&self) -> Vec<usize> {
+        self.tracks.iter().map(|at| *at as usize).collect()
+    }
 }
 
 impl Folders {
@@ -165,14 +169,14 @@ pub fn folder(view: &View, path: &str) -> (Vec<Subfolder>, Vec<usize>) {
             children: child.entries(),
         })
         .collect();
-    (below, node.tracks.iter().map(|at| *at as usize).collect())
+    (below, node.own_tracks())
 }
 
 /// The tracks directly in a folder, as against everything below it.
 pub fn tracks_in(view: &View, path: &str) -> Vec<usize> {
-    view.folders().at(path).map_or_else(Vec::new, |node| {
-        node.tracks.iter().map(|at| *at as usize).collect()
-    })
+    view.folders()
+        .at(path)
+        .map_or_else(Vec::new, Node::own_tracks)
 }
 
 /// The albums a set of tracks belongs to, in the order the tracks name them. A folder is not an
