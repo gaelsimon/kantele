@@ -361,17 +361,12 @@ async fn rescan(
     headers: HeaderMap,
     Query(asked): Query<Rescanning>,
 ) -> Response {
-    if !same_origin(&headers) {
-        tracing::warn!(
-            origin = ?headers.get(header::ORIGIN).and_then(|value| value.to_str().ok()),
-            host = ?headers.get(header::HOST).and_then(|value| value.to_str().ok()),
-            "refusing a pass asked for from another site"
-        );
-        return (
-            StatusCode::FORBIDDEN,
-            "a rescan may only be asked for from this server's own page\n",
-        )
-            .into_response();
+    if let Some(refused) = from_elsewhere(
+        &headers,
+        "a pass asked for",
+        "a rescan may only be asked for from this server's own page\n",
+    ) {
+        return refused;
     }
     let wanted = match asked
         .folder
@@ -426,6 +421,19 @@ async fn rescan(
 }
 
 /// Whether a request that changes something came from this server's own page.
+/// The refusal of a write another site's page asked for, or nothing where this server's page did.
+fn from_elsewhere(headers: &HeaderMap, what: &str, answer: &'static str) -> Option<Response> {
+    if same_origin(headers) {
+        return None;
+    }
+    tracing::warn!(
+        origin = ?headers.get(header::ORIGIN).and_then(|value| value.to_str().ok()),
+        host = ?headers.get(header::HOST).and_then(|value| value.to_str().ok()),
+        "refusing {what} from another site"
+    );
+    Some((StatusCode::FORBIDDEN, answer).into_response())
+}
+
 fn same_origin(headers: &HeaderMap) -> bool {
     let Some(host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) else {
         return false;

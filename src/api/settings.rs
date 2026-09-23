@@ -12,7 +12,7 @@ use crate::config::Apply;
 use crate::service::{Asked, Pass};
 
 use super::describe::{self, Effective, Setting};
-use super::{Control, Operation, Shared, answer, same_origin};
+use super::{Control, Operation, Shared, answer, from_elsewhere};
 
 pub(super) async fn configuration(State(control): State<Shared>, headers: HeaderMap) -> Response {
     let effective = describe::effective(&control.operation().config);
@@ -34,17 +34,12 @@ pub(super) async fn write_configuration(
     headers: HeaderMap,
     body: String,
 ) -> Response {
-    if !same_origin(&headers) {
-        tracing::warn!(
-            origin = ?headers.get(axum::http::header::ORIGIN).and_then(|value| value.to_str().ok()),
-            host = ?headers.get(axum::http::header::HOST).and_then(|value| value.to_str().ok()),
-            "refusing settings written from another site"
-        );
-        return (
-            StatusCode::FORBIDDEN,
-            "settings may only be written from this server's own page\n",
-        )
-            .into_response();
+    if let Some(refused) = from_elsewhere(
+        &headers,
+        "settings written",
+        "settings may only be written from this server's own page\n",
+    ) {
+        return refused;
     }
     match write_settings(&control, &body).await {
         Ok(written) => answer(&headers, &written, || {
