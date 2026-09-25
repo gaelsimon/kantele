@@ -103,6 +103,10 @@ JPEG or PNG. With none of those, it takes an image whose name says it is a front
 named `back`, `booklet`, `cd` and the like, or else the only image in the folder. With no image in
 the folder, it uses the picture embedded in the file.
 
+A folder holding tracks of several albums, such as a selection you made, is not an album: its image
+is the folder's. There, each file keeps the picture it carries, and the folder's image is used only
+for the files that have none.
+
 **Preferred cover** on the Settings page reverses that order, for a library whose embedded pictures
 are the better ones.
 

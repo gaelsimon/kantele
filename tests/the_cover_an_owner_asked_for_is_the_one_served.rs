@@ -1,7 +1,8 @@
 //! Which cover is published where a folder image and an embedded picture both exist.
 
 use kantele::index::artwork::{Prefer, Source};
-use kantele::index::{Library, ScanOptions};
+use kantele::index::{Library, ScanOptions, Store};
+use kantele::service::{self, Indexing, Pass};
 
 mod fixtures;
 use fixtures::Tree;
@@ -80,4 +81,68 @@ fn whichever_is_not_preferred_still_serves_where_the_other_is_missing() {
         served_cover(&only_embedded, Prefer::Folder),
         Source::Embedded { .. }
     ));
+}
+
+#[test]
+fn a_folder_of_several_albums_leaves_each_file_its_own_picture() {
+    let tree = both("cover-preference-mixed");
+    let mix = tree.path("Exotic Dance Tunes");
+    std::fs::create_dir_all(&mix).expect("creating a selection folder");
+    for (file, album) in [
+        ("01.flac", "Blue Note Trip 10"),
+        ("02.flac", "Republicafrobeat"),
+    ] {
+        let comments = [("ALBUM", album), ("TITLE", file)];
+        std::fs::write(mix.join(file), fixtures::flac(&comments, true)).expect("writing a flac");
+    }
+    std::fs::write(mix.join("Folder.jpg"), fixtures::jpeg())
+        .expect("writing the selection's image");
+
+    let library = Library::scan(&tree.0).expect("the folders are read");
+    let source = |folder: &str| -> Vec<Source> {
+        library
+            .tracks()
+            .iter()
+            .filter(|track| track.relative.starts_with(folder))
+            .map(|track| track.artwork.as_ref().expect("a cover").source.clone())
+            .collect()
+    };
+    assert!(
+        source("Exotic Dance Tunes")
+            .iter()
+            .all(|one| matches!(one, Source::Embedded { .. })),
+        "the image of a folder of many albums is the folder's, not each album's"
+    );
+    assert!(
+        source("Sierra")
+            .iter()
+            .all(|one| matches!(one, Source::File(path) if path.ends_with("cover.jpg"))),
+        "and an album folder keeps its image"
+    );
+}
+
+#[test]
+fn a_second_pass_keeps_each_file_its_own_picture_without_opening_it() {
+    let tree = Tree::new("cover-preference-mixed-again");
+    let mix = tree.path("Mix");
+    std::fs::create_dir_all(&mix).expect("creating a selection folder");
+    for (file, album) in [("01.flac", "One"), ("02.flac", "Two")] {
+        let comments = [("ALBUM", album), ("TITLE", file)];
+        std::fs::write(mix.join(file), fixtures::flac(&comments, true)).expect("writing a flac");
+    }
+    std::fs::write(mix.join("Folder.jpg"), fixtures::jpeg())
+        .expect("writing the selection's image");
+    let mut store = Some(Store::in_memory().expect("a store"));
+    let indexing = Indexing::of(&tree.0);
+    service::index(&indexing, &mut store, Pass::Whole).expect("the first pass");
+
+    let again = service::index(&indexing, &mut store, Pass::Whole).expect("the second pass");
+    assert_eq!(
+        again.pass.opened, 0,
+        "nothing changed, so nothing is opened"
+    );
+    assert!(again.library.tracks().iter().all(|track| matches!(
+        track.artwork.as_ref().map(|artwork| &artwork.source),
+        Some(Source::Embedded { .. })
+    )));
 }

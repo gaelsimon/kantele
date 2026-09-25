@@ -963,6 +963,7 @@ fn read_folder(
         .and_then(|parent| walked.covers.get(parent))
         .and_then(|image| cover_for(image, cache));
     let mut scanned = Vec::with_capacity(folder.len());
+    let mut remembered = Vec::with_capacity(folder.len());
     let mut refused = Vec::new();
     for found in folder {
         let relative = roots.relative_or_self(&found.path);
@@ -976,7 +977,10 @@ fn read_folder(
             continue;
         }
         match read_file(roots, found, cover.clone(), cache, prefer) {
-            Ok(file) => scanned.push(file),
+            Ok((file, row)) => {
+                remembered.push(row);
+                scanned.push(file);
+            }
             Err(error) => {
                 tracing::warn!(path = %found.path.display(), %error, "skipping file");
                 refused.push(RefusedFile {
@@ -985,6 +989,15 @@ fn read_folder(
                     why: why(&error),
                     remember: contents_explain(&found.path),
                 });
+            }
+        }
+    }
+    if prefer == artwork::Prefer::Folder && cover.is_some() && holds_several_albums(&scanned) {
+        for (file, row) in scanned.iter_mut().zip(remembered) {
+            if file.artwork == cover
+                && let Some(own) = own_picture(file, row)
+            {
+                file.artwork = Some(own);
             }
         }
     }
@@ -1003,27 +1016,57 @@ fn cover_for(image: &Found, cache: &Cache) -> Option<Artwork> {
         .or_else(|| artwork::describe(&image.path))
 }
 
+/// A selection folder holds tracks of many albums, and its image is the selection's, not theirs.
+fn holds_several_albums(files: &[Scanned]) -> bool {
+    let mut albums = files
+        .iter()
+        .filter_map(|file| file.tags.album.as_deref())
+        .map(|album| crate::index::fold(&crate::index::identity::strip_disc_marker(album).0));
+    let Some(first) = albums.next() else {
+        return false;
+    };
+    albums.any(|other| other != first)
+}
+
+/// The picture a file carries itself. A file just read is opened once more for it; one the store
+/// held is taken at its row's word, so an unchanged file with no picture is not opened every pass.
+fn own_picture(file: &Scanned, row: Option<Option<Artwork>>) -> Option<Artwork> {
+    match row {
+        None => artwork::embedded(&file.path),
+        Some(Some(artwork)) if matches!(artwork.source, artwork::Source::Embedded { .. }) => {
+            Some(artwork)
+        }
+        Some(_) => None,
+    }
+}
+
 fn read_file(
     roots: &Roots,
     found: &Found,
     cover: Option<Artwork>,
     cache: &Cache,
     prefer: artwork::Prefer,
-) -> anyhow::Result<Scanned> {
+) -> anyhow::Result<(Scanned, Option<Option<Artwork>>)> {
     let path = &found.path;
     let relative = roots.relative_or_self(path);
     if let Some(cached) = cache.file(&relative, found.fingerprint) {
-        return Ok(Scanned {
-            relative,
-            size: found.fingerprint.size,
-            artwork: match prefer {
-                artwork::Prefer::Folder => cover.or_else(|| reuse_embedded(&cached.artwork, path)),
-                artwork::Prefer::Embedded => reuse_embedded(&cached.artwork, path).or(cover),
+        let row = Some(cached.artwork.clone());
+        return Ok((
+            Scanned {
+                relative,
+                size: found.fingerprint.size,
+                artwork: match prefer {
+                    artwork::Prefer::Folder => {
+                        cover.or_else(|| reuse_embedded(&cached.artwork, path))
+                    }
+                    artwork::Prefer::Embedded => reuse_embedded(&cached.artwork, path).or(cover),
+                },
+                path: path.to_path_buf(),
+                tags: cached.tags,
+                properties: cached.properties,
             },
-            path: path.to_path_buf(),
-            tags: cached.tags,
-            properties: cached.properties,
-        });
+            row,
+        ));
     }
     // The picture comes out of the parse this read already pays for, where it is wanted at all.
     let wanted = match prefer {
@@ -1037,17 +1080,20 @@ fn read_file(
         Fingerprint::UNKNOWN => std::fs::metadata(path)?.len(),
         fingerprint => fingerprint.size,
     };
-    Ok(Scanned {
-        relative,
-        size,
-        artwork: match prefer {
-            artwork::Prefer::Folder => cover.or(embedded),
-            artwork::Prefer::Embedded => embedded.or(cover),
+    Ok((
+        Scanned {
+            relative,
+            size,
+            artwork: match prefer {
+                artwork::Prefer::Folder => cover.or(embedded),
+                artwork::Prefer::Embedded => embedded.or(cover),
+            },
+            path: path.to_path_buf(),
+            tags,
+            properties,
         },
-        path: path.to_path_buf(),
-        tags,
-        properties,
-    })
+        None,
+    ))
 }
 
 fn reuse_embedded(cached: &Option<Artwork>, path: &Path) -> Option<Artwork> {
