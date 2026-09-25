@@ -415,6 +415,39 @@ async fn a_folder_this_server_may_not_read_says_so_rather_than_looking_absent() 
 }
 
 #[tokio::test]
+async fn a_folder_holding_only_files_that_would_not_read_is_in_the_tree_and_opens() {
+    let tree = a_library("only-failures");
+    tree.text("Broken/Deeper/01.flac", "not a flac");
+    let mut store = Some(Store::in_memory().expect("a store"));
+    let indexed =
+        service::index(&Indexing::of(&tree.0), &mut store, Pass::Whole).expect("the first pass");
+    let server = serving(&tree, Some(indexed.pass));
+
+    let top = json(&server, "/api/folders").await;
+    let broken = top["folders"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .find(|row| row["name"] == "Broken")
+        .unwrap_or_else(|| panic!("the folder of failures is listed: {top}"));
+    assert_eq!(broken["tracks"], 0);
+    assert_eq!(broken["problems"], 1);
+    assert_eq!(broken["folders"], 1, "and it says that it opens");
+    assert_eq!(broken["says"], "Nothing playable", "rather than empty");
+
+    let inside = json(&server, "/api/folders?under=Broken").await;
+    assert_eq!(inside["folders"][0]["name"], "Deeper", "{inside}");
+    for path in [
+        "/api/folders?under=Broken/Deeper",
+        "/api/files?folder=Broken",
+        "/api/files?folder=Broken/Deeper",
+    ] {
+        let answer = ask(&server, get_json(path)).await;
+        assert_eq!(answer.status(), StatusCode::OK, "{path} opens");
+    }
+}
+
+#[tokio::test]
 async fn the_count_behind_a_problem_is_what_the_folder_really_holds() {
     let tree = Tree::new("problems-past-the-hundred");
     tree.album("Blue Note/Sierra Maestra", &["01.wav"], false);

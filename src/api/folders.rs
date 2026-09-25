@@ -1,6 +1,7 @@
 //! The music folder as a tree, with what the server made of each folder.
 
 use std::collections::HashMap;
+use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
@@ -83,21 +84,22 @@ pub fn listing(
     walked: Option<&Scope>,
     asked: &Asked,
 ) -> Option<Listing> {
-    let folders = served.view.folders();
-    if !folders.holds(&asked.under) {
+    let problems = problems_below(refusals);
+    if !served.view.folders().holds(&asked.under) && !problems.contains_key(asked.under.as_str()) {
         return None;
     }
-    let problems = problems_below(refusals);
+    let unserved = unserved(served, &problems);
     let counted = Counting {
         served,
         problems: &problems,
+        unserved: &unserved,
         walked,
         missing: asked.missing,
     };
     let wanted = asked.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
     let paths: Vec<String> = match wanted {
-        Some(wanted) => matching(served, &asked.under, wanted),
-        None => children_of(served, &asked.under),
+        Some(wanted) => matching(served, &unserved, &asked.under, wanted),
+        None => children_of(served, &unserved, &asked.under),
     };
     // Counted past the cap, because a filter that rejects the first five hundred folders would
     // otherwise answer that the library holds none of what it holds.
@@ -116,24 +118,63 @@ pub fn listing(
 }
 
 /// The folders directly under a path, in the order the tree holds them.
-fn children_of(served: &Served, under: &str) -> Vec<String> {
+fn children_of(served: &Served, unserved: &Unserved, under: &str) -> Vec<String> {
     let (below, _) = crate::browse::folder(&served.view, under);
-    below.into_iter().map(|child| child.path).collect()
+    let mut children: Vec<String> = below.into_iter().map(|child| child.path).collect();
+    if let Some(failed) = unserved.get(under) {
+        children.extend(failed.iter().map(|path| (*path).to_owned()));
+        children.sort_by_cached_key(|path| crate::index::fold(name_of(path)));
+    }
+    children
 }
 
 /// Every folder in the tree under `under` whose name holds the words asked for.
-fn matching(served: &Served, under: &str, wanted: &str) -> Vec<String> {
+fn matching(served: &Served, unserved: &Unserved, under: &str, wanted: &str) -> Vec<String> {
     let wanted = crate::index::fold(wanted);
     let mut found: Vec<String> = served
         .view
         .folders()
         .paths()
+        .chain(unserved.values().flatten().copied())
         .filter(|path| !path.is_empty() && inside(path, under))
         .filter(|path| crate::index::fold(name_of(path)).contains(&wanted))
         .map(ToOwned::to_owned)
         .collect();
     found.sort();
     found
+}
+
+/// Folders holding nothing served, which the tree lacks and the refusals still name, by the folder
+/// holding each. The players' folder view is that same tree, so these are the page's alone.
+type Unserved<'a> = HashMap<&'a str, Vec<&'a str>>;
+
+fn unserved<'a>(served: &Served, problems: &HashMap<&'a str, Tally>) -> Unserved<'a> {
+    let folders = served.view.folders();
+    let mut by_parent: Unserved = HashMap::new();
+    for path in problems.keys().copied() {
+        if !path.is_empty() && !folders.holds(path) {
+            by_parent.entry(parent_of(path)).or_default().push(path);
+        }
+    }
+    by_parent
+}
+
+fn parent_of(path: &str) -> &str {
+    path.rfind('/').map_or("", |cut| &path[..cut])
+}
+
+/// Whether a folder the tree lacks is one the refusals name, at it or somewhere below it.
+pub fn named_by(refusals: &Refusals, path: &str) -> bool {
+    let folders = refusals.by_folder();
+    if folders.contains_key(path) {
+        return true;
+    }
+    // `Broken Two` sorts between `Broken` and `Broken/Deeper`, so the range starts past the slash.
+    let below = format!("{path}/");
+    folders
+        .range::<str, _>((Bound::Included(below.as_str()), Bound::Unbounded))
+        .next()
+        .is_some_and(|(folder, _)| folder.starts_with(&below))
 }
 
 fn inside(path: &str, under: &str) -> bool {
@@ -148,6 +189,7 @@ fn name_of(path: &str) -> &str {
 struct Counting<'a> {
     served: &'a Served,
     problems: &'a HashMap<&'a str, Tally>,
+    unserved: &'a Unserved<'a>,
     walked: Option<&'a Scope>,
     missing: Option<Missing>,
 }
@@ -176,7 +218,8 @@ impl Counting<'_> {
             .filter_map(|at| library.tracks().get(*at))
             .find(|track| track.artwork.is_some())
             .map(|track| track.id.as_str().to_owned());
-        let (folders, _) = crate::browse::folder_size(view, path);
+        let (served_below, _) = crate::browse::folder_size(view, path);
+        let folders = served_below + self.unserved.get(path).map_or(0, Vec::len);
         let empty = Tally::new();
         let problems = self.problems.get(path).unwrap_or(&empty);
         let tracks = below.len();
@@ -200,7 +243,11 @@ impl Counting<'_> {
             changed: self
                 .walked
                 .is_some_and(|scope| scope.covers(std::path::Path::new(path))),
-            says: crate::report::holds(tracks, albums.len(), folders),
+            says: if tracks == 0 && counted(true) > 0 {
+                "Nothing playable".to_owned()
+            } else {
+                crate::report::holds(tracks, albums.len(), folders)
+            },
             issues: issues_of(
                 problems,
                 crate::report::split_by(&own, here.len(), folders),
@@ -637,6 +684,20 @@ mod tests {
         );
         assert!(issues[0].problem, "a file that would not read is a fault");
         assert!(!issues[1].problem, "two albums tagged alike is not");
+    }
+
+    #[test]
+    fn a_folder_is_named_by_a_refusal_below_it_and_not_by_a_neighbour_sharing_its_start() {
+        let mut refusals = Refusals::default();
+        refusals.refuse(Cause::UnreadableFile, "Broken Two/01.flac", None);
+        refusals.refuse(Cause::UnreadableFile, "Broken/Deeper/01.flac", None);
+        assert!(
+            named_by(&refusals, "Broken"),
+            "past the neighbour that sorts between them"
+        );
+        assert!(named_by(&refusals, "Broken/Deeper"));
+        assert!(!named_by(&refusals, "Brok"));
+        assert!(!named_by(&refusals, "Broken/Deep"));
     }
 
     #[test]

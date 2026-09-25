@@ -188,7 +188,8 @@ async fn folder_files(
     Query(asked): Query<files::Asked>,
 ) -> Response {
     let served = control.device.served();
-    let Some(listing) = files::listing(&served, &asked) else {
+    let failed = |folder: &str| folders::named_by(&refusals_now(&control, &served.library), folder);
+    let Some(listing) = files::listing(&served, &asked, failed) else {
         return not_in_library(&asked.folder, "folder");
     };
     answer(&headers, &listing, || files::lines(&listing))

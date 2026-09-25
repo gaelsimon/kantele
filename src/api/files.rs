@@ -67,8 +67,13 @@ pub struct Listing {
 }
 
 /// The files directly in one folder, or nothing where the library holds no such folder.
-pub fn listing(served: &Served, asked: &Asked) -> Option<Listing> {
-    if !served.view.folders().holds(&asked.folder) {
+/// `failed` says whether a folder the tree lacks holds files that would not read.
+pub fn listing(
+    served: &Served,
+    asked: &Asked,
+    failed: impl FnOnce(&str) -> bool,
+) -> Option<Listing> {
+    if !served.view.folders().holds(&asked.folder) && !failed(&asked.folder) {
         return None;
     }
     let at = tracks_in(&served.view, &asked.folder);
@@ -224,6 +229,7 @@ mod tests {
             &Asked {
                 folder: folder.to_owned(),
             },
+            |_| false,
         )
         .expect("the folder is in the tree")
         .albums
