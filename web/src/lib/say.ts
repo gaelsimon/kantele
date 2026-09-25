@@ -11,7 +11,7 @@ export const tagName: Record<Missing, string> = {
   date: 'date',
   genre: 'genre',
   'track-number': 'track number',
-  artwork: 'artwork',
+  artwork: 'cover art',
 };
 
 /// The noun alone, singular where there is one of whatever it counts.

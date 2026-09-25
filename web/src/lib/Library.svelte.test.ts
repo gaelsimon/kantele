@@ -72,11 +72,25 @@ describe('the library page', () => {
       },
     } as unknown as Status;
     const configuration = {
-      settings: [{ key: 'scan.sweep_minutes', as_written: 15 }],
+      settings: [
+        { key: 'content_dir', value: '/volume1/music', as_written: '/volume1/music' },
+        { key: 'scan.sweep_minutes', as_written: 15 },
+      ],
     } as unknown as Configuration;
     render(Library, { props: { status, configuration, onrescanned: () => {} } });
-    expect(screen.getByText(/It looks every 6 h\./)).toBeTruthy();
+    expect(screen.getByText(/The server looks for changes every 6 h\./)).toBeTruthy();
     expect(screen.queryByText(/Next check is due/)).toBeNull();
+  });
+
+  it('sends a first start to Settings, since there is no folder to show', async () => {
+    const configuration = {
+      settings: [{ key: 'content_dir', value: '', as_written: [] }],
+    } as unknown as Configuration;
+    const onsettings = vi.fn();
+    render(Library, { props: { status: null, configuration, onrescanned: () => {}, onsettings } });
+    expect(screen.queryByRole('button', { name: 'Rescan all' })).toBeNull();
+    screen.getByRole('button', { name: 'Select the folder' }).click();
+    expect(onsettings).toHaveBeenCalledOnce();
   });
 
   it('asks the server for the top of the tree first', async () => {

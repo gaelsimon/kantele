@@ -10,7 +10,7 @@
     type Missing,
     type Status,
   } from './api';
-  import { ago, count, extension, noun, tagName, took } from './say';
+  import { ago, count, extension, many, noun, tagName, took } from './say';
   import Columns from './Columns.svelte';
   import { above, type Entry, type Level } from './columns';
   import Detail from './Detail.svelte';
@@ -23,10 +23,12 @@
     status,
     configuration,
     onrescanned,
+    onsettings = () => {},
   }: {
     status: Status | null;
     configuration: Configuration | null;
     onrescanned: () => void;
+    onsettings?: () => void;
   } = $props();
 
   let search = $state('');
@@ -44,6 +46,7 @@
   const folder = $derived(
     configuration?.settings.find((setting) => setting.key === 'content_dir')?.value ?? '',
   );
+  const folderless = $derived(configuration !== null && !folder);
 
   /// What the pane is showing: the folder picked, or the library itself.
   const shown = $derived(selection?.kind === 'folder' ? selection.row : selection ? null : root);
@@ -116,7 +119,7 @@
       pass.outcome === 'agreed'
         ? 'Nothing changed.'
         : pass.outcome === 'published'
-          ? 'The index was replaced.'
+          ? 'The menus were updated.'
           : (pass.why ?? '');
     return `${ran} ${became}`.trim();
   });
@@ -126,7 +129,9 @@
   const nextCheck = $derived.by(() => {
     if (!status) return '';
     const minutes = status.sweep_minutes_effective;
-    return minutes ? `It looks every ${took(minutes * 60)}.` : 'It only looks when something changes.';
+    return minutes
+      ? `The server looks for changes every ${took(minutes * 60)}.`
+      : 'The server looks only when something changes.';
   });
 
   /// The tags a listener will miss, counted against the whole library. Each one narrows the tree
@@ -194,7 +199,7 @@
   {:else if applied}
     No folder in this library has that name.
   {:else if lacking}
-    Every track has {tagName[lacking] === 'artwork' ? 'artwork' : `a ${tagName[lacking]}`}.
+    Every track has {lacking === 'artwork' ? tagName[lacking] : `a ${tagName[lacking]}`}.
   {:else if changedFirst}
     The last check found no change.
   {:else}
@@ -202,84 +207,99 @@
   {/if}
 {/snippet}
 
-<div class="boards">
-  <section class="card serving">
-    <div class="cap">Serving</div>
-    <div class="counts">
-      {#each counts as one (one.of)}
-        <div class="one">
-          <div class="big num">{count(one.n)}</div>
-          <div class="dim">{noun(one.n, one.of)}</div>
-        </div>
-      {/each}
-    </div>
-  </section>
-
-  <section class="card check">
-    <div class="cap">Last check</div>
-    <div class="sentence">{lastCheck} {nextCheck}</div>
+{#if folderless}
+  <section class="card empty">
+    <div class="cap">No music folder</div>
+    <div class="sentence">Your players see this server, but it has no music to show them yet.</div>
     <div class="asking">
-      <button class="button" disabled={asking} onclick={() => askForAPass()}>Rescan all</button>
-      <span class="dim aside">{said || 'serving meanwhile'}</span>
+      <button class="button strong" onclick={onsettings}>Select the folder</button>
+      <span class="dim aside">in Settings, then click Save</span>
     </div>
   </section>
-</div>
+{:else}
+  <div class="boards">
+    <section class="card serving">
+      <div class="cap">On your players</div>
+      <div class="counts">
+        {#each counts as one (one.of)}
+          <div class="one">
+            <div class="big num">{count(one.n)}</div>
+            <div class="dim">{noun(one.n, one.of)}</div>
+          </div>
+        {/each}
+      </div>
+    </section>
 
-<section class="card tree">
-  <div class="head">
-    <div class="mono where">{folder}</div>
-    <div class="tools">
-      <input class="search" type="search" placeholder="Search folders" bind:value={search} />
-      <label class="filter">
-        <input type="checkbox" bind:checked={changedFirst} />
-        Changed only
-      </label>
-    </div>
-  </div>
-  <div class="panes">
-    <Columns
-      framed={false}
-      load={fill}
-      reload={status?.system_update_id ?? 0}
-      selected={selection?.kind === 'folder' ? selection.row.path : (selection?.path ?? null)}
-      onpick={picked}
-      {before}
-      {beside}
-      {mark}
-      {nothing}
-      {bounded}
-    />
-    <Detail
-      row={shown}
-      file={selection?.kind === 'file' ? { path: selection.path, under: selection.under } : null}
-      albums={held}
-      busy={asking}
-      onopen={(path, under) => (selection = { kind: 'file', path, under })}
-      onback={() => (selection = null)}
-      onrescan={askForAPass}
-    />
+    <section class="card check">
+      <div class="cap">Last check</div>
+      <div class="sentence">{lastCheck} {nextCheck}</div>
+      <div class="asking">
+        <button class="button" disabled={asking} onclick={() => askForAPass()}>Rescan all</button>
+        <span class="dim aside">{said || 'your players keep working meanwhile'}</span>
+      </div>
+    </section>
   </div>
 
-  {#if missing.length > 0}
-    <div class="missing">
-      <span class="dim">Missing tags</span>
-      {#each missing as one (one.of)}
-        <button
-          class="tag"
-          class:here={lacking === one.of}
-          onclick={() => (lacking = lacking === one.of ? null : one.of)}
-        >
-          {count(one.n)} no {tagName[one.of]}
-        </button>
-      {/each}
-      {#if lacking}
-        <button class="quiet" onclick={() => (lacking = null)}>All folders</button>
-      {/if}
+  <section class="card tree">
+    <div class="head">
+      <div class="about">
+        <div class="mono where">{folder}</div>
+        <div class="dim aside">Select a folder or a file to see how it shows on your players.</div>
+      </div>
+      <div class="tools">
+        <input class="search" type="search" placeholder="Search folders" bind:value={search} />
+        <label class="filter">
+          <input type="checkbox" bind:checked={changedFirst} />
+          Changed at the last check
+        </label>
+      </div>
     </div>
-  {:else if status && status.library.tracks > 0}
-    <div class="dim missing">All tracks have a date, a genre, an artist, and artwork.</div>
-  {/if}
-</section>
+    <div class="panes">
+      <Columns
+        framed={false}
+        load={fill}
+        reload={status?.system_update_id ?? 0}
+        selected={selection?.kind === 'folder' ? selection.row.path : (selection?.path ?? null)}
+        onpick={picked}
+        {before}
+        {beside}
+        {mark}
+        {nothing}
+        {bounded}
+      />
+      <Detail
+        row={shown}
+        file={selection?.kind === 'file' ? { path: selection.path, under: selection.under } : null}
+        albums={held}
+        busy={asking}
+        onopen={(path, under) => (selection = { kind: 'file', path, under })}
+        onback={() => (selection = null)}
+        onrescan={askForAPass}
+      />
+    </div>
+
+    {#if missing.length > 0}
+      <div class="missing">
+        <span class="dim">Missing tags</span>
+        {#each missing as one (one.of)}
+          <button
+            class="tag"
+            class:here={lacking === one.of}
+            title="List the folders that hold these tracks"
+            onclick={() => (lacking = lacking === one.of ? null : one.of)}
+          >
+            {many(one.n, 'track')} with no {tagName[one.of]}
+          </button>
+        {/each}
+        {#if lacking}
+          <button class="quiet" onclick={() => (lacking = null)}>All folders</button>
+        {/if}
+      </div>
+    {:else if status && status.library.tracks > 0}
+      <div class="dim missing">All tracks have a date, a genre, an artist, and cover art.</div>
+    {/if}
+  </section>
+{/if}
 
 <style>
   .boards {
@@ -290,7 +310,8 @@
   }
 
   .serving,
-  .check {
+  .check,
+  .empty {
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -357,6 +378,13 @@
     align-items: center;
     gap: 24px;
     flex-wrap: wrap;
+  }
+
+  .about {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
   }
 
   .where {

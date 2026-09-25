@@ -136,7 +136,12 @@
   {#if tab === 'settings'}
     <Settings {configuration} {status} onsaved={readConfiguration} />
   {:else}
-    <Library {status} {configuration} onrescanned={readStatus} />
+    <Library
+      {status}
+      {configuration}
+      onrescanned={readStatus}
+      onsettings={() => (tab = 'settings')}
+    />
   {/if}
 </main>
 

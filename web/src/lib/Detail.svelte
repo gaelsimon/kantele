@@ -33,8 +33,8 @@
     <h2 class="heading mono">{leaf(file.path)}</h2>
     <FilePane path={file.path} />
   {:else if row}
-    <div class="crumb mono">{row.path || 'the whole library'}</div>
-    <h2 class="heading mono">{leaf(row.path) || 'Library'}</h2>
+    {#if row.path}<div class="crumb mono">{row.path}</div>{/if}
+    <h2 class="heading mono">{leaf(row.path) || 'The whole library'}</h2>
     <FolderPane {row} {albums} {busy} {onopen} {onrescan} />
   {:else}
     <div class="empty dim">Reading the library.</div>

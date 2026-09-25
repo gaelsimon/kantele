@@ -12,10 +12,10 @@ use crate::index::Prefer;
 pub fn tag(apply: Apply) -> &'static str {
     match apply {
         Apply::Never => "read only",
-        Apply::Immediate => "now",
+        Apply::Immediate => "applies at once",
         Apply::NextPass => "next check",
-        Apply::Reread => "full check",
-        Apply::Restart => "restart",
+        Apply::Reread => "reads the library again",
+        Apply::Restart => "needs a restart",
     }
 }
 
@@ -341,8 +341,8 @@ mod tests {
     #[test]
     fn every_mode_is_said_in_one_of_the_page_s_four_phrases() {
         assert_eq!(says(Apply::Immediate), "This change applies now.");
-        assert_eq!(tag(Apply::Immediate), "now");
-        assert_eq!(tag(Apply::Reread), "full check");
+        assert_eq!(tag(Apply::Immediate), "applies at once");
+        assert_eq!(tag(Apply::Reread), "reads the library again");
         assert_eq!(says(Apply::Restart), "You must restart the server.");
         assert_eq!(
             says(Apply::Never),

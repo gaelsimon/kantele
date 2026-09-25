@@ -39,7 +39,8 @@
   }
 </script>
 
-{#if !albums || albums.length === 0}
+<!-- The library as a whole has no cover of its own, whatever image its first folder holds. -->
+{#if row.path && (!albums || albums.length === 0)}
   <div class="cover" class:none={!row.artwork}>
     {#if row.artwork}
       <img src="/art/{row.artwork}" alt="" />
@@ -82,12 +83,10 @@
   </div>
 {/if}
 
-{#if row.issues.length === 0}
-  <div class="dim">This folder has no problem. The tags show nothing unusual.</div>
-{:else}
+{#snippet listing(title: string, issues: Issue[])}
   <div class="sect">
-    <div class="cap">What the tags made of it</div>
-    {#each row.issues as issue (issue.cause)}
+    <div class="cap">{title}</div>
+    {#each issues as issue (issue.cause)}
       {@const key = keyOf(row.path, issue)}
       <button
         class="issue"
@@ -117,13 +116,22 @@
       {/if}
     {/each}
   </div>
+{/snippet}
+
+{#if row.issues.length === 0}
+  <div class="dim">This folder has no problem. The tags show nothing unusual.</div>
+{:else}
+  {@const problems = row.issues.filter((issue) => issue.problem)}
+  {@const notes = row.issues.filter((issue) => !issue.problem)}
+  {#if problems.length > 0}{@render listing('Problems', problems)}{/if}
+  {#if notes.length > 0}{@render listing('Notes', notes)}{/if}
 {/if}
 
 <!-- The library itself is read again from the card above, which says so in one place. -->
 {#if row.path}
   <div class="acts">
     <button class="button" disabled={busy} onclick={() => onrescan(row.path)}>Rescan folder</button>
-    <span class="dim aside">The server reads only this folder. It continues to serve the library.</span>
+    <span class="dim aside">The server reads only this folder. Your players keep working.</span>
   </div>
 {/if}
 

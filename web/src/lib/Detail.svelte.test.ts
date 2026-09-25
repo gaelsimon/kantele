@@ -35,4 +35,30 @@ describe('the detail pane', () => {
     });
     expect(screen.getByText('Sierra Maestra')).toBeTruthy();
   });
+
+  it('lists the failures apart from what the tags left unsaid', () => {
+    const row: FolderRow = {
+      ...folder,
+      issues: [
+        { cause: 'unreadable', label: 'Unreadable file', count: 1, subject: 'file', problem: true, opens: true },
+        { cause: 'no-artwork', label: 'No cover art', count: 2, subject: 'tracks', problem: false, opens: true },
+      ],
+    };
+    render(Detail, {
+      props: {
+        row,
+        file: null,
+        albums: null,
+        busy: false,
+        onopen: () => {},
+        onback: () => {},
+        onrescan: () => {},
+      },
+    });
+    const problems = screen.getByText('Problems').parentElement;
+    const notes = screen.getByText('Notes').parentElement;
+    expect(problems?.textContent).toContain('Unreadable file');
+    expect(notes?.textContent).toContain('No cover art');
+    expect(problems?.textContent).not.toContain('No cover art');
+  });
 });

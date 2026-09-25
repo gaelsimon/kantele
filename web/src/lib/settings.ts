@@ -36,7 +36,7 @@ const shapes: Record<string, Shape> = {
   friendly_name: { kind: 'text' },
   'menus.axes': {
     kind: 'chips',
-    note: 'Drag a menu to change the sequence. The grey entries come from the library. You cannot change them.',
+    note: 'Drag a menu, or use ←, to change the sequence. The dashed entries are menus you can add.',
   },
   'menus.recent': {
     kind: 'number',
@@ -47,7 +47,7 @@ const shapes: Record<string, Shape> = {
   'menus.album_threshold': {
     kind: 'number',
     before: 'up to',
-    note: 'If a selection has more albums than this number, the menu divides it again. If not, the menu shows the tracks.',
+    note: 'If a selection has more albums than this number, the menu divides it again. If not, the menu shows the albums.',
   },
   'menus.alpha_group': {
     kind: 'number',
@@ -105,7 +105,7 @@ const sections: { title: string; each: boolean; note?: string; keys: string[] }[
       'clients',
       'log level',
     ],
-    note: 'To apply a setting with the restart tag, open the DSM Package Center and restart the server. To change the device profiles and the log level, edit kantele.toml.',
+    note: 'To apply a setting that needs a restart, open the DSM Package Center and restart the server. To change the device profiles and the log level, edit kantele.toml.',
   },
 ];
 

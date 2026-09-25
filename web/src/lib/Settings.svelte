@@ -11,6 +11,7 @@
   } from './api';
   import { costClass, dearest, shared } from './apply';
   import { PLAYERS, arrange, shapeOf, type Section } from './settings';
+  import { listed } from './say';
   import Field from './Field.svelte';
   import Screen from './Screen.svelte';
 
@@ -164,7 +165,7 @@
         {#if badge}
           <span class="cost {costClass(badge.apply)}" title={badge.says}>{badge.tag}</span>
         {:else if section.each}
-          <span class="dim each">each tag shows the effect of a change</span>
+          <span class="dim each">each setting says when a change applies</span>
         {/if}
       </div>
       {#if section.title === PLAYERS}
@@ -179,6 +180,13 @@
               {holds}
               hidden={hiddenAxes}
             />
+            <div class="dim foot">The grey entries are always on the menu.</div>
+            {#if hiddenAxes.length > 0}
+              <div class="dim foot">
+                {listed(hiddenAxes)} {hiddenAxes.length === 1 ? 'is' : 'are'} not on the menu. All
+                tracks have the same value.
+              </div>
+            {/if}
           </aside>
         </div>
       {:else}
@@ -323,16 +331,6 @@
     gap: 14px;
     flex-wrap: wrap;
     box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.06);
-  }
-
-  .button.strong {
-    background: var(--ink);
-    color: var(--surface);
-    border-color: var(--ink);
-  }
-
-  .button.strong:hover:not(:disabled) {
-    background: var(--ink-soft);
   }
 
   .count {

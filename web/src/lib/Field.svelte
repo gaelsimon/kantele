@@ -266,8 +266,8 @@
   }
 
   .label .cost {
-    font-size: 10px;
-    padding: 1px 5px;
+    font-size: 11px;
+    padding: 1px 6px;
   }
 
   .control {
