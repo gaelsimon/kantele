@@ -10,7 +10,7 @@ There is nothing else to run. The installer puts:
 | `~/Library/Application Support/Kantele/kantele.toml` | the configuration, left alone if it is already there |
 | `~/Library/Application Support/Kantele/index.sqlite` | the saved index |
 | `~/Library/LaunchAgents/com.kantele.server.plist` | the launch agent, which starts it at login |
-| `~/Library/Logs/kantele.log` | the log |
+| `~/Library/Application Support/Kantele/kantele.log` | the log |
 
 Then open <http://localhost:8200/config> and choose a music folder.
 

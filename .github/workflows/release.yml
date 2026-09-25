@@ -108,13 +108,14 @@ jobs:
         with:
           files: dist/*
           body: |
-            A UPnP/DLNA music server for amplifiers and streamers. One static binary on
-            one port, with no runtime to install and no request to the internet. It does not
-            transcode, cast, play video, or reach a streaming service.
+            A music server for your amplifier, streamer or phone: every UPnP/DLNA player on
+            your network can browse your music by album, artist, genre, composer or year, search
+            it, and play it. It does not convert formats, play video, or reach a streaming
+            service, and it makes no request to the internet.
 
             The `.spk` files are for a Synology, the macOS tarball carries an installer and a launch
-            agent, and the Linux tarballs carry an installer and a systemd service. What the first
-            run looks like is in [docs/first-run.md](docs/first-run.md).
+            agent, and the Linux tarballs carry an installer and a systemd service. How to install
+            and set it up is in [docs/getting-started.md](docs/getting-started.md).
 
             Nothing here is signed. Package Center asks for a trust level of "Any publisher", and on
             macOS the installer clears the quarantine flag itself, which is what lets a downloaded

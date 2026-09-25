@@ -1,104 +1,100 @@
 # Settings
 
-Everything is one TOML file, and `kantele.example.toml` is the reference: every key, with its
-default, and a paragraph saying what it does. The page edits the ones a page can edit.
+The Settings tab of the page, section by section. Each setting carries a tag saying when a change
+takes effect:
 
-What is here is what the settings mean to a listener, in the blocks the page groups them into and
-in the page's order. What each one costs to change is written beside it there, and there are five
-answers:
-
-| It says | It means |
+| Tag | What happens |
 |---|---|
-| applies at once | Saved and in force |
-| applies at the next check | In force once the server next looks at the library |
-| reads the library again | Every file is read again, which takes as long as the first run did |
-| needs a restart | Stop and start the server |
-| not written from this page | Set somewhere the page cannot reach; the line under the value says where |
+| applies at once | Your player sees the change the next time it opens a menu |
+| next check | It takes effect the next time the server looks at your music |
+| reads the library again | Every file is read again, which takes as long as the first time |
+| needs a restart | Restart Kantele: in Package Center on a Synology, or [as below](#restarting-outside-a-synology) |
+| read only | Change it in `kantele.toml` |
 
-A setting the environment or the command line holds is shown greyed, with the layer that holds it
-named, because that layer outranks the file and a write would not take.
+A greyed setting is held by the command line or the environment, which win over the page. The page
+says which.
 
-## Folders
+## Your music
 
-**Music folders:** what is served. Several folders are a list, and they become one library told apart
-by their names.
+**Music folders.** The folders your music is in. Several folders become one library, and the folder
+view opens onto one entry per folder. Two folders with the same name, or one inside another, are
+refused.
 
-**Exclusions:** names and paths never walked. A pattern with no slash is held against
-every file and folder name, one with a slash against the path under the music folder. `*` stands for
-anything within one name, `?` for one character, and case does not matter. A folder that matches is
-not entered, so nothing under it is either. Useful for a `Podcasts` folder, or for `*.iso`.
+**Exclusions.** Folders and files to leave out, such as `Podcasts` or `*.iso`. A name without a `/`
+is matched against every file and folder name; a path with a `/` is matched from the top of your
+music folder. `*` stands for any text within a name, `?` for one character, and case does not
+matter. Everything inside an excluded folder is left out too.
 
-## Scanning
+## Menu on your players
 
-**Parallel reads:** beyond a handful, an ARM NAS saturates its disk and goes slower. Four is the
-default for that reason.
+**Server name.** The name your player lists the server under.
 
-**Scan interval:** minutes between looks for music nothing announced. Zero turns it off, and
-then new music appears only when you ask. See [the first run](first-run.md) for why a Synology
-depends on this.
+**Menu sequence.** Which menus the first screen offers, and in what order. The choices are Genre,
+Artist, All Artists, Composer, Work, Date, Quality, Bits, Channels, Frequency and Type.
+[Your library on your player](on-your-player.md) says what each holds.
 
-## Network
+**Recently added.** How many of the newest files **Recently added** is built from. Zero removes it.
 
-**Server name:** what control points display.
+**Albums shown in a list.** When you narrow a menu down to this many albums or fewer, you see the
+albums instead of more menus.
 
-**Port:** content, control and the page, all on one port. Changing it on a Synology also means the
-DSM icon points at the old one.
+**A to Z index.** A list at least this long starts with an **A-Z** entry for jumping to a letter.
+Zero turns it off.
 
-**Icon:** what a control point shows beside the server's name.
+## Advanced options
 
-**Index folder:** where the saved index lives. Never inside the music folder: a share may be
-read-only, and a database beside the music writes to the array on every check. One index serves one
-library, so two libraries on one machine want one each, or every start of either reads every file
-again.
+**Scan interval.** How often, in minutes, the server looks for music you added, changed or removed.
+Only the folders that changed are read. Zero turns it off, and new music then appears only when you
+press **Rescan all**. See [getting started](getting-started.md#new-music) for why a Synology relies
+on it.
 
-**Capture folder:** off unless you set it. With it set, every control exchange is written verbatim,
-one folder per device. It is how you find out what your player asks for, and it costs a
-disk write per request, so it is not for a server in daily service.
+**Files read at the same time.** How many files the server reads at once. On a NAS with spinning
+disks, more is slower, because the disk spends its time seeking.
 
-## Menus
+**Preferred cover.** Whether the image in the folder or the picture embedded in the file wins when
+an album has both. See [covers](tagging.md#covers).
 
-**Albums shown directly:** how many albums a selection may hold before the menus stop asking
-you to narrow it further and show them.
+**Words to ignore in the sort order.** Leading words skipped when sorting a name, such as `The`,
+`Les` or `L'`. A sort tag in the file wins over this list.
 
-**A–Z index:** long lists carry an `A-Z` entry as their first child, opening
-onto one container per letter. The flat list stays exactly as it was, so nothing is taken away.
-Everything not starting with a letter is under `#`.
+**Port.** The port for the music and the page. On a Synology the DSM icon keeps pointing at the old
+one.
 
-**Recently added:** how many of the newest files the `Recently added` menu is
-built from. It lists the albums those files belong to, newest first, and the loose files among them.
-The date is when this server first saw the file, so retagging moves nothing and a library has no
-history from before its first run. Zero removes the menu.
+**Icon.** A PNG or JPEG your player shows beside the server's name.
 
-**Menu sequence:** which menus the root offers and in what order. The order here is the order on
-your players. The choices are Genre, Artist, All Artists, Composer, Work, Date, Quality, Bits,
-Channels, Frequency and Type, and `kantele.example.toml` shows which of them start on. *Artist* is
-the album artist where a file carries one, *All Artists* is everyone credited on the track, and
-*Quality* sums a file up in one word from Lossy through CD, HD, DXD and DSD64.
+**Capture folder.** For reporting a player that misbehaves: every exchange with each player is
+written to this folder. Leave it off otherwise.
 
-## Names
+**Index folder.** Where the server keeps what it has read from your files. Never inside your music
+folder. Two libraries on one machine need one index folder each.
 
-**Sort prefixes:** leading words a sort should skip, so `The Beatles` files under B. It
-applies where a file carries no sort tag of its own. Whole words only, or an apostrophe-final one
-like `L'`.
+**Device profiles.** Adjustments for a player that needs them, set in `kantele.toml`.
+`kantele.example.toml` has an example. One is built in, for Denon and Marantz players using HEOS.
 
-## Cover art
+**Log level.** How much the log says. Set it with the `RUST_LOG` environment variable:
+`kantele=debug` for more detail, `kantele=info` by default.
 
-**Preferred cover:** which wins when a track has both an image beside it in the folder and one inside the
-file. Whichever you do not prefer still serves where the other is missing. This one reads the
-library again, because the cover is chosen while a file is read.
+## Restarting outside a Synology
 
-## In the file
+On a Mac:
 
-**Device profiles:** per-device overrides, matched on what the device calls itself. They can hold a
-different MIME type or DLNA profile for one format, join repeated values into one string, and cap a
-stream to a multiple of the rate the file plays at, for a renderer that chokes on a faster one.
-`kantele.example.toml` has a commented example.
+    launchctl kickstart -k gui/$(id -u)/com.kantele.server
 
-**Log level:** set with the `RUST_LOG` environment variable, not in the file. `kantele=debug` is
-what makes eventing and per-device decisions visible; `kantele=info` is the default.
+On Linux:
 
-## There is no password
+    sudo systemctl restart kantele
 
-The page reads and writes with no credentials. A write changes a menu setting or starts a check of
-the library, and every device on your network can already browse and stream all of it, so the
-firewall is what protects the port. Do not forward it to the internet.
+## The settings file
+
+Every setting lives in one file, `kantele.toml`, which the page writes. [Getting
+started](getting-started.md#where-things-are-kept) says where it is. `kantele.example.toml` lists
+every setting with its default. A setting the server does not recognise stops it at startup, with a
+message in the log naming it, so a typo cannot go unnoticed.
+
+The command line and the environment win over the file; `kantele --help` lists both.
+
+## The page has no password
+
+Anyone on your home network can open the page, as anyone on it can already play your music. The page
+refuses any request that changes a setting, starts a rescan or lists your disks when it comes from
+outside your local network. Do not forward the port to the internet anyway.
