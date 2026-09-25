@@ -1,7 +1,10 @@
 //! The routes the configuration page needs: the folder tree, one folder read again, how far a
 //! pass has got, the bounded listing of the shares, and whether the library is answered for.
 
+use std::net::SocketAddr;
+
 use axum::body::{Body, to_bytes};
+use axum::extract::ConnectInfo;
 use axum::http::{Method, Request, StatusCode};
 use axum::response::Response;
 use kantele::api::Operation;
@@ -52,7 +55,11 @@ fn serving(tree: &Tree, pass: Option<PassReport>) -> Server {
     server
 }
 
-async fn ask(server: &Server, request: Request<Body>) -> Response {
+/// A device on this network, as the listener would name it.
+async fn ask(server: &Server, mut request: Request<Body>) -> Response {
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([192, 168, 1, 20], 50_000))));
     server::router(server)
         .oneshot(request)
         .await
@@ -69,6 +76,8 @@ async fn body_of(response: Response) -> String {
 fn get_json(path: &str) -> Request<Body> {
     Request::builder()
         .uri(path)
+        // Every HTTP/1.1 request carries one, and the listing of the shares is refused without it.
+        .header("Host", "192.0.2.42:8200")
         .header("Accept", "application/json")
         .body(Body::empty())
         .expect("a request")

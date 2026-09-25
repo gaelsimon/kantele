@@ -12,7 +12,7 @@ use crate::config::Apply;
 use crate::service::{Asked, Pass};
 
 use super::describe::{self, Effective, Setting};
-use super::{Control, Operation, Shared, answer, from_elsewhere};
+use super::{Control, Operation, Peer, Shared, answer, refused};
 
 pub(super) async fn configuration(State(control): State<Shared>, headers: HeaderMap) -> Response {
     let effective = describe::effective(&control.operation().config);
@@ -31,10 +31,12 @@ struct Written {
 
 pub(super) async fn write_configuration(
     State(control): State<Shared>,
+    peer: Peer,
     headers: HeaderMap,
     body: String,
 ) -> Response {
-    if let Some(refused) = from_elsewhere(
+    if let Some(refused) = refused(
+        peer,
         &headers,
         "settings written",
         "settings may only be written from this server's own page\n",

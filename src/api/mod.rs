@@ -1,13 +1,15 @@
 //! The control interface: what the server is doing, what it was told to do, and how to ask again.
 
 use std::borrow::Cow;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
+use axum::Extension;
 use axum::Router;
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -78,6 +80,9 @@ impl Control {
 }
 
 type Shared = Arc<Control>;
+
+/// The address a request came from, which only a real listener hands over.
+type Peer = Option<Extension<ConnectInfo<SocketAddr>>>;
 
 /// The page, in the binary. A NAS may have no route to the internet.
 const PAGE: &str = include_str!("../../assets/web/index.html");
@@ -315,9 +320,18 @@ fn folder_lines(listing: &folders::Listing) -> Vec<(String, String)> {
 
 async fn share_listing(
     State(control): State<Shared>,
+    peer: Peer,
     headers: HeaderMap,
     Query(asked): Query<shares::Asked>,
 ) -> Response {
+    if let Some(refused) = refused(
+        peer,
+        &headers,
+        "a listing of the shares",
+        "the shares may only be listed from this server's own page\n",
+    ) {
+        return refused;
+    }
     let serving = control.indexing.now().roots.clone();
     match shares::listing(&serving, &asked) {
         Ok(listing) => answer(&headers, &listing, || {
@@ -371,10 +385,12 @@ struct Rescan {
 
 async fn rescan(
     State(control): State<Shared>,
+    peer: Peer,
     headers: HeaderMap,
     Query(asked): Query<Rescanning>,
 ) -> Response {
-    if let Some(refused) = from_elsewhere(
+    if let Some(refused) = refused(
+        peer,
         &headers,
         "a pass asked for",
         "a rescan may only be asked for from this server's own page\n",
@@ -433,8 +449,37 @@ async fn rescan(
     (status, body).into_response()
 }
 
-/// Whether a request that changes something came from this server's own page.
-/// The refusal of a write another site's page asked for, or nothing where this server's page did.
+/// The refusal of a command from beyond this network or from another site's page, or nothing.
+fn refused(peer: Peer, headers: &HeaderMap, what: &str, answer: &'static str) -> Option<Response> {
+    let peer = peer.map(|Extension(ConnectInfo(address))| address.ip());
+    from_outside(peer, what).or_else(|| from_elsewhere(headers, what, answer))
+}
+
+fn from_outside(peer: Option<IpAddr>, what: &str) -> Option<Response> {
+    if peer.is_some_and(on_this_network) {
+        return None;
+    }
+    tracing::warn!(
+        peer = %peer.map_or_else(|| "?".to_owned(), |address| address.to_string()),
+        "refusing {what} from outside this network"
+    );
+    Some(
+        (
+            StatusCode::FORBIDDEN,
+            "only a device on this server's own network may ask for this\n",
+        )
+            .into_response(),
+    )
+}
+
+/// Loopback, private and link-local, which a request through a forwarded port never comes from.
+fn on_this_network(peer: IpAddr) -> bool {
+    match peer.to_canonical() {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local(),
+    }
+}
+
 fn from_elsewhere(headers: &HeaderMap, what: &str, answer: &'static str) -> Option<Response> {
     if same_origin(headers) {
         return None;
@@ -614,6 +659,39 @@ mod tests {
             "a sandboxed page says null"
         );
         assert!(!same_origin(&asking(None, None)));
+    }
+
+    #[test]
+    fn the_addresses_a_home_network_hands_out_are_this_network_and_no_others_are() {
+        for local in [
+            "127.0.0.1",
+            "10.0.0.7",
+            "172.16.0.1",
+            "172.31.255.254",
+            "192.168.8.227",
+            "169.254.10.1",
+            "::1",
+            "fd12:3456::1",
+            "fe80::1",
+            "::ffff:192.168.8.227",
+        ] {
+            let address: IpAddr = local.parse().expect("an address");
+            assert!(on_this_network(address), "{local} is on this network");
+        }
+        for outside in [
+            "8.8.8.8",
+            "203.0.113.9",
+            "172.32.0.1",
+            "100.64.0.1",
+            "0.0.0.0",
+            "2001:db8::1",
+            "2a01:cb00::1",
+            "::",
+            "::ffff:8.8.8.8",
+        ] {
+            let address: IpAddr = outside.parse().expect("an address");
+            assert!(!on_this_network(address), "{outside} is not");
+        }
     }
 
     #[test]

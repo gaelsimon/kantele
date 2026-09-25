@@ -1,6 +1,9 @@
 //! What a pass refused, what survives a start from the store, and the three routes over it.
 
+use std::net::SocketAddr;
+
 use axum::body::{Body, to_bytes};
+use axum::extract::ConnectInfo;
 use axum::http::{Method, Request, StatusCode, header};
 use axum::response::Response;
 use kantele::api::Operation;
@@ -215,7 +218,17 @@ fn serving(tree: &Tree, pass: Option<service::PassReport>) -> Server {
     server
 }
 
-async fn ask(server: &Server, request: Request<Body>) -> Response {
+/// A device on this network, unless the request already names who asks.
+async fn ask(server: &Server, mut request: Request<Body>) -> Response {
+    if request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .is_none()
+    {
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from(([192, 168, 1, 20], 50_000))));
+    }
     server::router(server)
         .oneshot(request)
         .await
@@ -437,6 +450,76 @@ async fn a_pass_asked_for_from_another_site_is_refused() {
         shell.status(),
         StatusCode::CONFLICT,
         "a shell sends no origin, and this one is behind the pass the page asked for"
+    );
+}
+
+#[tokio::test]
+async fn the_commands_of_the_page_answer_this_network_and_nobody_beyond_it() {
+    let tree = library_with_a_broken_playlist("commands-outside");
+    let server = serving(&tree, None);
+    let asking = |method: &Method, uri: &str, peer: Option<[u8; 4]>, host: &str| {
+        let mut request = Request::builder()
+            .method(method.clone())
+            .uri(uri)
+            .header(header::HOST, host)
+            .body(Body::from("{}"))
+            .expect("a request");
+        if let Some(peer) = peer {
+            request
+                .extensions_mut()
+                .insert(ConnectInfo(SocketAddr::from((peer, 50_000))));
+        }
+        request
+    };
+    let commands = [
+        (Method::POST, "/api/rescan"),
+        (Method::PUT, "/api/config"),
+        (Method::GET, "/api/shares"),
+    ];
+    for (method, uri) in &commands {
+        for peer in [[203, 0, 113, 9], [100, 64, 0, 1], [8, 8, 8, 8]] {
+            let answered = ask(&server, asking(method, uri, Some(peer), "192.0.2.42:8200")).await;
+            assert_eq!(
+                answered.status(),
+                StatusCode::FORBIDDEN,
+                "{method} {uri} from {peer:?}, which a forwarded port lets in"
+            );
+        }
+        let unknown = server::router(&server)
+            .oneshot(asking(method, uri, None, "192.0.2.42:8200"))
+            .await
+            .expect("the router answers");
+        assert_eq!(
+            unknown.status(),
+            StatusCode::FORBIDDEN,
+            "{method} {uri} with no address to say who asked"
+        );
+        let rebound = ask(
+            &server,
+            asking(method, uri, Some([192, 168, 1, 20]), "music.example.com"),
+        )
+        .await;
+        assert_eq!(
+            rebound.status(),
+            StatusCode::FORBIDDEN,
+            "{method} {uri} under a public name pointed at this address"
+        );
+    }
+
+    let queued = ask(
+        &server,
+        asking(
+            &Method::POST,
+            "/api/rescan",
+            Some([10, 0, 0, 7]),
+            "192.0.2.42:8200",
+        ),
+    )
+    .await;
+    assert_eq!(
+        queued.status(),
+        StatusCode::ACCEPTED,
+        "the page, from the LAN"
     );
 }
 
