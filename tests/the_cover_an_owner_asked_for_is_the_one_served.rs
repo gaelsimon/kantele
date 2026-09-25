@@ -43,12 +43,24 @@ fn served_cover(tree: &Tree, cover_art: Prefer) -> Source {
 }
 
 #[test]
-fn the_folders_image_wins_by_default() {
-    let tree = both("cover-preference-folder");
+fn the_picture_in_the_file_wins_by_default() {
+    let tree = both("cover-preference-default");
     assert!(
-        matches!(served_cover(&tree, Prefer::Folder), Source::File(path) if path.ends_with("cover.jpg")),
-        "which is what this server has always done, so an upgrade changes no artwork"
+        matches!(
+            served_cover(&tree, Prefer::default()),
+            Source::Embedded { .. }
+        ),
+        "as MinimServer does, so a library moved from it keeps its covers"
     );
+}
+
+#[test]
+fn the_folders_image_wins_where_the_owner_asked_for_it() {
+    let tree = both("cover-preference-folder");
+    assert!(matches!(
+        served_cover(&tree, Prefer::Folder),
+        Source::File(path) if path.ends_with("cover.jpg")
+    ));
 }
 
 #[test]
@@ -98,7 +110,14 @@ fn a_folder_of_several_albums_leaves_each_file_its_own_picture() {
     std::fs::write(mix.join("Folder.jpg"), fixtures::jpeg())
         .expect("writing the selection's image");
 
-    let library = Library::scan(&tree.0).expect("the folders are read");
+    let library = Library::scan_with(
+        &tree.0,
+        &ScanOptions {
+            cover_art: Prefer::Folder,
+            ..ScanOptions::default()
+        },
+    )
+    .expect("the folders are read");
     let source = |folder: &str| -> Vec<Source> {
         library
             .tracks()

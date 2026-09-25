@@ -98,17 +98,16 @@ Any date works: `1963`, `1963-04-12` or `12/04/1963`. The **Date** menu keeps th
 
 ## Covers
 
-Kantele looks in the album's folder for an image called `cover`, `folder`, `front` or `album`, in
-JPEG or PNG. With none of those, it takes an image whose name says it is a front cover, never one
-named `back`, `booklet`, `cd` and the like, or else the only image in the folder. With no image in
-the folder, it uses the picture embedded in the file.
+Kantele uses the picture embedded in the file, as MinimServer does. For a file with none, it looks
+in the file's folder for an image called `cover`, `folder`, `front` or `album`, in JPEG or PNG. With
+none of those, it takes an image whose name says it is a front cover, never one named `back`,
+`booklet`, `cd` and the like, or else the only image in the folder.
 
-A folder holding tracks of several albums, such as a selection you made, is not an album: its image
-is the folder's. There, each file keeps the picture it carries, and the folder's image is used only
-for the files that have none.
-
-**Preferred cover** on the Settings page reverses that order, for a library whose embedded pictures
-are the better ones.
+**Preferred cover** on the Settings page can make the folder's image win instead, for a library
+whose folder images are the better ones. Even then, a folder holding tracks of several albums, such
+as a selection you made, is not an album: there each file keeps the picture it carries, and the
+folder's image is used only for the files that have none. Changing the setting reads the library
+again.
 
 ## Tracks with no tags
 

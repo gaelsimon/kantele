@@ -52,8 +52,10 @@ exclude = []
 
 # Which cover wins where a folder holds an image and the file carries a picture of its own.
 # `folder` takes cover.jpg and its like, `embedded` takes the picture in the file. Whichever is
-# not preferred is still used where the other is missing. Changing this reads the library again.
-cover_art = "folder"
+# not preferred is still used where the other is missing, as MinimServer does. With `folder`, a
+# folder holding several albums still leaves each file its own picture. Changing this reads the
+# library again.
+cover_art = "embedded"
 
 [menus]
 # How many albums a selection may hold before the menus stop narrowing and show them.

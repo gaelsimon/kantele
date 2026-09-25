@@ -66,8 +66,8 @@ pub fn unchanged(asked: &str, held: &str) -> bool {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Prefer {
-    #[default]
     Folder,
+    #[default]
     Embedded,
 }
 

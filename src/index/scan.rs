@@ -1059,7 +1059,7 @@ fn read_file(
                     artwork::Prefer::Folder => {
                         cover.or_else(|| reuse_embedded(&cached.artwork, path))
                     }
-                    artwork::Prefer::Embedded => reuse_embedded(&cached.artwork, path).or(cover),
+                    artwork::Prefer::Embedded => embedded_of(&cached.artwork).or(cover),
                 },
                 path: path.to_path_buf(),
                 tags: cached.tags,
@@ -1094,6 +1094,14 @@ fn read_file(
         },
         None,
     ))
+}
+
+/// A row written while the file's own picture wins names a folder image only where the file has
+/// none, so it is taken at its word rather than opened again on every pass.
+fn embedded_of(cached: &Option<Artwork>) -> Option<Artwork> {
+    cached
+        .clone()
+        .filter(|artwork| matches!(artwork.source, artwork::Source::Embedded { .. }))
 }
 
 fn reuse_embedded(cached: &Option<Artwork>, path: &Path) -> Option<Artwork> {
