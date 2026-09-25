@@ -112,4 +112,34 @@ describe('the detail pane', () => {
     expect(screen.getByText(/2 things to fix in the albums below/)).toBeTruthy();
     expect(screen.queryByText(/The tags show nothing unusual/)).toBeNull();
   });
+  it('lists every broken link of one playlist, which all name the same playlist', async () => {
+    const shown = [
+      { subject: 'Sierra/set.m3u', detail: 'Sierra/gone-1.flac' },
+      { subject: 'Sierra/set.m3u', detail: 'Sierra/gone-2.flac' },
+    ];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ folder: 'Sierra', cause: 'missing-entry', label: 'Broken playlist link', total: 2, shown }), { status: 200 })),
+    );
+    const row: FolderRow = {
+      ...folder,
+      issues: [{ cause: 'missing-entry', label: 'Broken playlist link', count: 2, subject: 'links', problem: true, opens: true }],
+    };
+    render(Detail, {
+      props: {
+        row,
+        file: null,
+        albums: null,
+        busy: false,
+        onopen: () => {},
+        onback: () => {},
+        onrescan: () => {},
+        onfind: () => {},
+      },
+    });
+    await fireEvent.click(screen.getByText(/Broken playlist link/));
+    expect(await screen.findByText(/gone-1\.flac/)).toBeTruthy();
+    expect(screen.getByText(/gone-2\.flac/)).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
 });

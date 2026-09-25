@@ -123,7 +123,8 @@
           {:else if behind[key].shown.length === 0}
             <span class="dim">The server keeps a maximum of one hundred examples of each problem. It did not keep these names.</span>
           {:else}
-            {#each behind[key].shown as one (one.subject)}
+            <!-- Unkeyed: the links of one playlist all name that playlist. -->
+            {#each behind[key].shown as one}
               <button class="file" onclick={() => onopen(one.subject, row.path)}>
                 {one.subject}{one.detail ? ` — ${one.detail}` : ''}
               </button>
