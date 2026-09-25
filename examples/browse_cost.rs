@@ -75,19 +75,27 @@ fn main() {
         contentdirectory::browse(&served, request, didl::To::plain("http://host"), 1)
             .expect("a container the library holds")
     };
-    for (label, count) in [("the whole axis", 0), ("one page of a hundred", 100)] {
-        let request = request(listing.id(), count);
-        let response = answer(&request);
-        println!(
-            "  Browse of All Artists, {label}: {} of {}",
-            response.number_returned, response.total_matches
-        );
-        time(
-            &format!("Browse of All Artists, {label}"),
-            Box::new(move || {
-                std::hint::black_box(answer(&request));
-            }),
-        );
+    for facet in [
+        browse::Facet::AllArtists,
+        browse::Facet::Artist,
+        browse::Facet::Genre,
+    ] {
+        let listing = browse::Position::default().listing(facet);
+        for (label, count) in [("the whole axis", 0), ("one page of a hundred", 100)] {
+            let request = request(listing.id(), count);
+            let response = answer(&request);
+            let title = facet.title();
+            println!(
+                "  Browse of {title}, {label}: {} of {}",
+                response.number_returned, response.total_matches
+            );
+            time(
+                &format!("Browse of {title}, {label}"),
+                Box::new(move || {
+                    std::hint::black_box(answer(&request));
+                }),
+            );
+        }
     }
     let root = request(String::from("0"), 0);
     time(

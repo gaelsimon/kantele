@@ -112,7 +112,7 @@ pub fn level(served: &Served, asked: &Asked) -> Option<Level> {
                 .collect(),
             0,
         ),
-        Menu::Values(facet, values) => {
+        Menu::Values(facet, values, selected) => {
             // The way into the letter index is the first entry, as it is on the wire.
             let letters = browse::index_offered(&at, &values, &served.view.settings);
             let mut entries: Vec<Entry> = letters
@@ -121,11 +121,19 @@ pub fn level(served: &Served, asked: &Asked) -> Option<Level> {
                 })
                 .into_iter()
                 .collect();
-            entries.extend(values.into_iter().map(|value| {
+            let sizes = browse::choice_sizes(
+                &served.library,
+                &served.view,
+                &at,
+                facet,
+                &selected,
+                &values,
+            );
+            entries.extend(values.into_iter().zip(sizes).map(|(value, size)| {
                 Entry::given(
                     at.chose(facet, value.digest).id(),
                     value.display.to_owned(),
-                    value.tracks,
+                    size,
                 )
             }));
             (Kind::Values, entries, 0)

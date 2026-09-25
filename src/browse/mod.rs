@@ -486,8 +486,9 @@ fn digest_of(bytes: &[u8]) -> String {
 pub enum Menu<'a> {
     /// The axes that still narrow something, each with the number of values it offers.
     Facets(Vec<(Facet, Position, usize)>),
-    /// One axis and its values, borrowed so a page can be minted rather than the whole list.
-    Values(Facet, Vec<Entry<'a>>),
+    /// One axis and its values, borrowed so a page can be minted rather than the whole list, and
+    /// the selection they were drawn from.
+    Values(Facet, Vec<Entry<'a>>, Vec<usize>),
     /// One axis split into letter groups, which only a configured menu ever answers.
     Letters(Facet, Vec<Group>),
     /// Nothing narrows any further, so the selection itself is shown, as indices into the tracks.
@@ -620,7 +621,7 @@ pub fn menu<'a>(library: &'a Library, view: &'a View, position: &Position) -> Op
         let values = view.axes().distinct(facet, &selected);
         return Some(match position.grouped {
             // The listing itself is one sorted list, whatever its length, with the way into.
-            None => Menu::Values(facet, values),
+            None => Menu::Values(facet, values, selected),
             Some(Grouped::Index) => Menu::Letters(facet, grouped(&values)),
             Some(Grouped::Letter(letter)) => Menu::Values(
                 facet,
@@ -628,29 +629,85 @@ pub fn menu<'a>(library: &'a Library, view: &'a View, position: &Position) -> Op
                     .into_iter()
                     .filter(|entry| group_of(entry.sort) == letter)
                     .collect(),
+                selected,
             ),
         });
     }
-    // The root keeps the menus the owner chose, whatever the library holds: the threshold spares a
-    // selection narrowed by hand from one menu too many, and a first sight of the library is not one.
-    let narrowed = !position.chosen.is_empty();
-    if narrowed && !albums_exceed(library, &selected, view.settings.album_threshold) {
-        return Some(Menu::Tracks(selected));
-    }
-    let offered: Vec<(Facet, Position, usize)> = view
-        .settings
-        .axes
-        .iter()
-        .filter(|facet| position.chosen.iter().all(|(chosen, _)| chosen != *facet))
-        .filter_map(|facet| {
-            let count = view.axes().count(*facet, &selected);
-            (count > 1).then(|| (*facet, position.listing(*facet), count))
-        })
-        .collect();
+    let made: Vec<Facet> = position.chosen.iter().map(|(facet, _)| *facet).collect();
+    let offered = narrowing(library, view, &made, &selected);
     if offered.is_empty() {
         return Some(Menu::Tracks(selected));
     }
-    Some(Menu::Facets(offered))
+    Some(Menu::Facets(
+        offered
+            .into_iter()
+            .map(|facet| {
+                let at = position.listing(facet);
+                let size = listing_size(view, &at, facet, &selected);
+                (facet, at, size)
+            })
+            .collect(),
+    ))
+}
+
+/// The axes a selection can still be narrowed along, or none where it is shown as it is.
+fn narrowing(library: &Library, view: &View, made: &[Facet], selected: &[usize]) -> Vec<Facet> {
+    // The root keeps the menus the owner chose, whatever the library holds: the threshold spares a
+    // selection narrowed by hand from one menu too many, and a first sight of the library is not one.
+    if !made.is_empty() && !albums_exceed(library, selected, view.settings.album_threshold) {
+        return Vec::new();
+    }
+    view.settings
+        .axes
+        .iter()
+        .copied()
+        .filter(|facet| !made.contains(facet))
+        .filter(|facet| view.axes().varies(*facet, selected))
+        .collect()
+}
+
+/// How many children a listing renders: its values, and the way into its letter index.
+fn listing_size(view: &View, listing: &Position, facet: Facet, selected: &[usize]) -> usize {
+    let count = view.axes().count(facet, selected);
+    let long = view
+        .settings
+        .alpha_group
+        .is_some_and(|least| count >= least);
+    let indexed = long
+        && index_offered(
+            listing,
+            &view.axes().distinct(facet, selected),
+            &view.settings,
+        )
+        .is_some();
+    count + usize::from(indexed)
+}
+
+/// How many children each of these values of a listing opens onto, in the order they are given.
+pub fn choice_sizes(
+    library: &Library,
+    view: &View,
+    listing: &Position,
+    facet: Facet,
+    selected: &[usize],
+    values: &[Entry<'_>],
+) -> Vec<usize> {
+    let mut made: Vec<Facet> = listing.chosen.iter().map(|(made, _)| *made).collect();
+    made.push(facet);
+    let digests: Vec<&str> = values.iter().map(|entry| entry.digest).collect();
+    view.axes()
+        .holders(facet, selected, &digests)
+        .iter()
+        .map(|held| match narrowing(library, view, &made, held).len() {
+            0 => shown_size(library, held),
+            axes => axes,
+        })
+        .collect()
+}
+
+/// How many children a selection shown as it is renders: its albums, then its loose files.
+pub fn shown_size(library: &Library, selected: &[usize]) -> usize {
+    albums_in(library, selected).len() + loose_tracks(library, selected).len()
 }
 
 /// One place the menus put a track: an axis, a value it carries, and the position that lists it.
@@ -1024,7 +1081,7 @@ mod tests {
         let listing = Position::default().listing(Facet::Genre);
         match menu(&library, &eager_view(&library), &listing).expect("a position naming an object")
         {
-            Menu::Values(_, values) => {
+            Menu::Values(_, values, _) => {
                 let named: Vec<(&str, usize)> = values
                     .iter()
                     .map(|entry| (entry.display, entry.tracks))
@@ -1041,7 +1098,7 @@ mod tests {
         let listing = Position::inside("a").listing(Facet::Genre);
         match menu(&library, &eager_view(&library), &listing).expect("a position naming an object")
         {
-            Menu::Values(_, values) => {
+            Menu::Values(_, values, _) => {
                 let named: Vec<(&str, usize)> = values
                     .iter()
                     .map(|entry| (entry.display, entry.tracks))
@@ -1058,7 +1115,7 @@ mod tests {
         let listing = Position::default().listing(Facet::Artist);
         match menu(&library, &eager_view(&library), &listing).expect("a position naming an object")
         {
-            Menu::Values(_, values) => {
+            Menu::Values(_, values, _) => {
                 let shown: Vec<&str> = values.iter().map(|entry| entry.display).collect();
                 let mut sorted = shown.clone();
                 sorted.sort_by_key(|name| fold(name));
@@ -1097,7 +1154,7 @@ mod tests {
         let listing = Position::default().listing(Facet::Artist);
         match menu(&library, &eager_view(&library), &listing).expect("a position naming an object")
         {
-            Menu::Values(_, values) => assert_eq!(values.len(), 1, "{values:?}"),
+            Menu::Values(_, values, _) => assert_eq!(values.len(), 1, "{values:?}"),
             other => panic!("expected values, got {other:?}"),
         }
     }
@@ -1272,7 +1329,7 @@ mod tests {
         let listing = Position::default().listing(Facet::Artist);
         let view = View::with_settings(&library, settings.clone());
         let values = match menu(&library, &view, &listing).expect("a position naming an object") {
-            Menu::Values(_, values) => values,
+            Menu::Values(_, values, _) => values,
             other => panic!("expected one list, got {other:?}"),
         };
         assert_eq!(
@@ -1490,7 +1547,7 @@ mod tests {
     /// The values a listing holds, whatever the settings say about its index.
     fn listed<'a>(library: &'a Library, view: &'a View, position: &Position) -> Vec<Entry<'a>> {
         match menu(library, view, position).expect("a position naming an object") {
-            Menu::Values(_, values) => values,
+            Menu::Values(_, values, _) => values,
             other => panic!("a listing holds values, not {other:?}"),
         }
     }
@@ -1605,7 +1662,7 @@ mod tests {
         );
         let inside = listing.at_letter('B');
         let view = View::with_settings(&library, splitting(1));
-        let Some(Menu::Values(_, values)) = menu(&library, &view, &inside) else {
+        let Some(Menu::Values(_, values, _)) = menu(&library, &view, &inside) else {
             panic!("a group holds values");
         };
         assert_eq!(

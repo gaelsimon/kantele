@@ -1169,12 +1169,8 @@ async fn the_root_and_the_folder_view_count_the_children_they_render() {
     assert!(checked > 5, "only {checked} containers were checked");
 }
 
-/// Known, and not fixed here: a value chosen on an axis says how many tracks carry it, and renders
-/// the albums those tracks belong to. Counting what it renders costs a pass over the library per
-/// value, because the axis maps tracks to values and not the other way round, and dropping the
-/// attribute is a wire change on the busiest menu. The owner decides which.
 #[tokio::test]
-async fn a_chosen_value_counts_its_tracks_and_renders_its_albums() {
+async fn a_chosen_value_counts_the_albums_it_renders_rather_than_its_tracks() {
     let server = serving_tagged();
     let root = children_of(&server, "0").await;
     let (artists, _) = root
@@ -1192,12 +1188,94 @@ async fn a_chosen_value_counts_its_tracks_and_renders_its_albums() {
 
     let promised = child_count_in(&didl, &scientist).expect("a count");
     let rendered = children_of(&server, &scientist).await;
-    assert_eq!(promised, 2, "the two tracks that carry the name");
-    assert_eq!(rendered.len(), 1, "the one album they belong to");
-    assert!(
-        rendered.len() < promised,
-        "a client that pages until it has {promised} children asks past the end"
-    );
+    assert_eq!(rendered.len(), 1, "the one album its two tracks belong to");
+    assert_eq!(promised, rendered.len(), "a client pages by the count");
+}
+
+/// A library whose tag menus reach every shape a container renders: axes still to narrow, albums
+/// with a loose file beside them, and listings long enough to open on their letter index.
+fn serving_every_shape() -> Server {
+    let mut files = Vec::new();
+    for (folder, artist, genre, album) in [
+        ("Reggae/Scientist/Dub", "Scientist", "Reggae", "Dub Landing"),
+        (
+            "Reggae/Scientist/Heavy",
+            "Scientist",
+            "Reggae",
+            "Heavyweight Dub",
+        ),
+        ("Reggae/Spear", "Burning Spear", "Reggae", "Marcus Garvey"),
+        ("Reggae/Tubby", "King Tubby", "Reggae", "Dub Gone Crazy"),
+        ("Latin/Sierra", "Sierra Maestra", "Latin", "Dundunbanza"),
+        ("Latin/Ochoa", "Eliades Ochoa", "Latin", "Sublime Ilusion"),
+    ] {
+        for track in 1..=2 {
+            files.push(fixtures::tagged(
+                &format!("{folder}/0{track}.wav"),
+                album,
+                artist,
+                genre,
+                track,
+            ));
+        }
+    }
+    let mut loose = fixtures::tagged("Reggae/Scientist/single.wav", "", "Scientist", "Reggae", 1);
+    loose.tags.album = None;
+    files.push(loose);
+    let library = Library::build("Music".to_owned(), &files);
+    let settings = kantele::browse::Settings {
+        album_threshold: 1,
+        alpha_group: Some(3),
+        ..kantele::browse::Settings::default()
+    };
+    Server::new(
+        library,
+        settings,
+        DeviceIdentity {
+            friendly_name: "Kantele Test".to_owned(),
+            udn: "3d5d1cbe-8f2a-4d1e-9a9c-7c2f0a1b2c3d".to_owned(),
+            icon: Default::default(),
+        },
+        Profiles::default(),
+    )
+}
+
+#[tokio::test]
+async fn every_container_counts_the_children_it_renders() {
+    let server = serving_every_shape();
+    // A letter index, albums beside a loose file, and a chosen value that still narrows.
+    let mut shapes = [false; 3];
+    let mut checked = 0;
+    let mut seen = std::collections::HashSet::new();
+    let mut waiting = vec!["0".to_owned()];
+
+    while let Some(id) = waiting.pop() {
+        let listed = body_of(ask(&server, browse(&id, "BrowseDirectChildren", 0, 0)).await).await;
+        let didl = didl_in(&listed);
+        for (child, title) in listing(&listed) {
+            let Some(count) = child_count_in(&didl, &child) else {
+                continue;
+            };
+            let below = children_of(&server, &child).await;
+            assert_eq!(
+                below.len(),
+                count,
+                "{title} ({child}) under {id} promises {count} children and renders {below:?}"
+            );
+            let opens = |prefix: &str| below.iter().any(|(at, _)| at.starts_with(prefix));
+            if child.starts_with("f-") {
+                shapes[0] |= below.iter().any(|(_, title)| title == "A-Z");
+                shapes[1] |= opens("al-") && opens("tr-");
+                shapes[2] |= child.starts_with("f-g") && child.len() > 3 && opens("f-");
+            }
+            checked += 1;
+            if seen.insert(child.clone()) {
+                waiting.push(child);
+            }
+        }
+    }
+    assert!(checked > 30, "only {checked} containers were checked");
+    assert_eq!(shapes, [true; 3], "a shape the walk never reached");
 }
 
 /// The `childCount` a listing gives a container, where it gives one.
