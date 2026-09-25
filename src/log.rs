@@ -115,6 +115,24 @@ impl Write for Rolling {
     }
 }
 
+/// A control character a tag carried, written as `\x00`, since one byte of it makes the whole log
+/// a binary file to `grep`. Tabs, line ends and the escapes that colour a line stay as they are.
+fn printable(buf: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let kept = |byte: u8| !byte.is_ascii_control() || matches!(byte, b'\t' | b'\n' | b'\r' | 0x1b);
+    if buf.iter().all(|byte| kept(*byte)) {
+        return std::borrow::Cow::Borrowed(buf);
+    }
+    let mut line = Vec::with_capacity(buf.len() + 8);
+    for byte in buf {
+        if kept(*byte) {
+            line.push(*byte);
+        } else {
+            line.extend_from_slice(format!("\\x{byte:02x}").as_bytes());
+        }
+    }
+    std::borrow::Cow::Owned(line)
+}
+
 /// One formatted line's writer: stdout, then the file.
 pub struct Tee {
     sink: Sink,
@@ -122,9 +140,10 @@ pub struct Tee {
 
 impl Write for Tee {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let line = printable(buf);
         // A closed stdout is not a reason to lose the line the file would have kept.
-        let _ = io::stdout().write_all(buf);
-        self.sink.write(buf)?;
+        let _ = io::stdout().write_all(&line);
+        self.sink.write(&line)?;
         Ok(buf.len())
     }
 
@@ -175,6 +194,19 @@ pub fn tail(path: &Path, lines: usize) -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_nul_a_tag_carried_is_written_as_text_and_the_colours_stay() {
+        let line = b"\x1b[33mWARN\x1b[0m unexpected character '\0'\tthere\n";
+        assert_eq!(
+            printable(line).as_ref(),
+            b"\x1b[33mWARN\x1b[0m unexpected character '\\x00'\tthere\n"
+        );
+        assert!(matches!(
+            printable(b"plain\n"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("kantele-log-{name}-{}", std::process::id()));
