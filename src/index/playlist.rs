@@ -780,6 +780,7 @@ mod tests {
             genres: Vec::new(),
             date: None,
             track_number: None,
+            track_total: None,
             disc_number: None,
             duration: std::time::Duration::ZERO,
             size: 0,

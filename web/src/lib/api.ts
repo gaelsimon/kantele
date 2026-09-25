@@ -96,6 +96,8 @@ export type FolderRow = {
   albums: number;
   problems: number;
   notes: number;
+  /// What the checks found in the albums below it.
+  checks: number;
   missing: number;
   changed: boolean;
   artwork?: string;
@@ -221,6 +223,8 @@ export type FolderAlbum = {
   of: number;
   folders: string[];
   says?: string;
+  /// What a listener would want fixed in its tags.
+  checks: { says: string; folder?: string }[];
 };
 
 export type FolderFiles = {
@@ -259,12 +263,14 @@ export function getFolders(
   search: string,
   changed: boolean,
   missing: Missing | null = null,
+  review = false,
 ) {
   const asked = new URLSearchParams();
   if (under) asked.set('under', under);
   if (search) asked.set('q', search);
   if (changed) asked.set('changed', 'true');
   if (missing) asked.set('missing', missing);
+  if (review) asked.set('review', 'true');
   const query = asked.toString();
   return ask<FolderListing>(`/api/folders${query ? `?${query}` : ''}`);
 }

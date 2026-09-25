@@ -448,6 +448,47 @@ async fn a_folder_holding_only_files_that_would_not_read_is_in_the_tree_and_open
 }
 
 #[tokio::test]
+async fn the_tree_can_keep_only_what_needs_fixing_and_an_album_says_what_it_is() {
+    let tree = a_library("to-review");
+    for number in ["1", "2", "4"] {
+        let path = tree.path(&format!("Rock/Harvest/{number}.flac"));
+        std::fs::create_dir_all(path.parent().expect("a folder")).expect("creating it");
+        let comments = [
+            ("ALBUM", "Harvest"),
+            ("ARTIST", "Neil Young"),
+            ("TRACKNUMBER", number),
+            ("TRACKTOTAL", "4"),
+        ];
+        std::fs::write(path, fixtures::flac(&comments, false)).expect("writing a flac");
+    }
+    let server = serving(&tree, None);
+
+    let names = |listing: &serde_json::Value| -> Vec<String> {
+        listing["folders"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .map(|row| row["name"].as_str().expect("a name").to_owned())
+            .collect()
+    };
+    let top = json(&server, "/api/folders?review=true").await;
+    assert_eq!(
+        names(&top),
+        ["Blue Note", "Rock"],
+        "a broken playlist and a missing track, and nothing where nothing is wrong"
+    );
+    assert_eq!(top["folders"][1]["checks"], 1);
+    let inside = json(&server, "/api/folders?under=Rock&review=true").await;
+    assert_eq!(names(&inside), ["Harvest"], "every level keeps to them");
+
+    let files = json(&server, "/api/files?folder=Rock/Harvest").await;
+    assert_eq!(
+        files["albums"][0]["checks"][0]["says"], "Track 3 of 4 is missing",
+        "{files}"
+    );
+}
+
+#[tokio::test]
 async fn the_count_behind_a_problem_is_what_the_folder_really_holds() {
     let tree = Tree::new("problems-past-the-hundred");
     tree.album("Blue Note/Sierra Maestra", &["01.wav"], false);

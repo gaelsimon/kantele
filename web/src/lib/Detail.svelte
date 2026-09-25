@@ -12,6 +12,7 @@
     onopen,
     onback,
     onrescan,
+    onfind,
   }: {
     /// The folder the pane is showing, which is the library itself when nothing is picked.
     row: FolderRow | null;
@@ -22,6 +23,7 @@
     onopen: (path: string, under: string) => void;
     onback: () => void;
     onrescan: (path: string) => void;
+    onfind: (name: string) => void;
   } = $props();
 </script>
 
@@ -35,7 +37,7 @@
   {:else if row}
     {#if row.path}<div class="crumb mono">{row.path}</div>{/if}
     <h2 class="heading mono">{leaf(row.path) || 'The whole library'}</h2>
-    <FolderPane {row} {albums} {busy} {onopen} {onrescan} />
+    <FolderPane {row} {albums} {busy} {onopen} {onrescan} {onfind} />
   {:else}
     <div class="empty dim">Reading the library.</div>
   {/if}

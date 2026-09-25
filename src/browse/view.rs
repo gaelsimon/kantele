@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::index::{Coverage, Library};
+use crate::index::{Checks, Coverage, Library};
 
 use super::{Axes, Folders, Recent, Settings, recently_added};
 
@@ -49,6 +49,7 @@ pub struct Counts {
     pub coverage: Coverage,
     /// Tracks no tag axis reaches, which the axes decide, so a settings change moves it.
     pub untagged: usize,
+    pub checks: Arc<Checks>,
 }
 
 /// A library and the view over it, swapped in as one piece.
@@ -64,6 +65,7 @@ impl Served {
         let counts = Counts {
             coverage: Coverage::of(&library),
             untagged: super::untagged_count(&library, &view),
+            checks: Arc::new(Checks::of(&library)),
         };
         Self {
             library: Arc::new(library),
@@ -78,6 +80,7 @@ impl Served {
             counts: Counts {
                 coverage: self.counts.coverage.clone(),
                 untagged: super::untagged_count(&self.library, &view),
+                checks: self.counts.checks.clone(),
             },
             library: self.library.clone(),
             view,

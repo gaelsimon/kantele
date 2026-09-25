@@ -113,6 +113,7 @@ pub struct Track {
     pub genres: Vec<String>,
     pub date: Option<String>,
     pub track_number: Option<u32>,
+    pub track_total: Option<u32>,
     pub disc_number: Option<u32>,
     /// Set where the disc came from a marker in the album title rather than a disc-number tag.
     pub disc_from_title: bool,
@@ -517,6 +518,7 @@ fn track_from(
         genres: tags.genres.clone(),
         date: tags.date.clone(),
         track_number: tags.track_number,
+        track_total: tags.track_total,
         disc_number: placement.disc.or(tags.disc_number),
         disc_from_title: tags
             .album

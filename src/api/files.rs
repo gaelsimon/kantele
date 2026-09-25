@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::browse::{Served, albums_of, tracks_in};
-use crate::index::Track;
+use crate::index::{Check, Track};
 
 /// Rows one answer carries. A folder of a thousand files is read as far as this and says so.
 const MOST: usize = 500;
@@ -54,6 +54,16 @@ pub struct Album {
     /// Which disc this is, or how much of the album is elsewhere. Nothing where it is all here.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub says: Option<String>,
+    /// What a listener would want fixed in its tags.
+    pub checks: Vec<Checked>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Checked {
+    pub says: String,
+    /// The other folder, for an album another one carries as well.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -142,6 +152,19 @@ fn albums_here(served: &Served, folder: &str, here: &[usize]) -> Vec<Album> {
                 tracks: mine.len(),
                 of: album.tracks.len(),
                 folders,
+                checks: served
+                    .counts
+                    .checks
+                    .on(&album.id)
+                    .iter()
+                    .map(|check| Checked {
+                        says: crate::report::check(check),
+                        folder: match check {
+                            Check::Twin { folder } => Some(folder.clone()),
+                            _ => None,
+                        },
+                    })
+                    .collect(),
             }
         })
         .collect()
@@ -181,6 +204,12 @@ pub fn lines(listing: &Listing) -> Vec<(String, String)> {
                     .unwrap_or_default()
             ),
         ));
+        for (checked, check) in album.checks.iter().enumerate() {
+            lines.push((
+                format!("album.{}.check.{}", at + 1, checked + 1),
+                check.says.clone(),
+            ));
+        }
     }
     for (at, file) in listing.files.iter().enumerate() {
         lines.push((

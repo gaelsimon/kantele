@@ -307,8 +307,8 @@ async fn problem_files(
 fn folder_lines(listing: &folders::Listing) -> Vec<(String, String)> {
     let row = |row: &folders::Row| {
         format!(
-            "{}\t{} tracks\t{} albums\t{} problems\t{} notes\t{}",
-            row.path, row.tracks, row.albums, row.problems, row.notes, row.says
+            "{}\t{} tracks\t{} albums\t{} problems\t{} notes\t{} checks\t{}",
+            row.path, row.tracks, row.albums, row.problems, row.notes, row.checks, row.says
         )
     };
     let mut lines = vec![("under".to_owned(), row(&listing.here))];

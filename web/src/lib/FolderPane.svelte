@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getProblems, type FolderAlbum, type FolderRow, type Issue, type ProblemFiles } from './api';
   import { count, many } from './say';
+  import { leaf } from './selection';
 
   let {
     row,
@@ -8,6 +9,7 @@
     busy,
     onopen,
     onrescan,
+    onfind,
   }: {
     row: FolderRow;
     /// What the files of this folder belong to, once its column has been read.
@@ -15,12 +17,16 @@
     busy: boolean;
     onopen: (path: string, under: string) => void;
     onrescan: (path: string) => void;
+    /// Lists the folders of that name, which is how the pane shows an album's twin beside it.
+    onfind: (name: string) => void;
   } = $props();
 
   /// The files behind one issue, keyed by folder and cause, fetched when it is opened.
   let behind = $state<Record<string, ProblemFiles | 'asking'>>({});
 
   const keyOf = (path: string, issue: Issue) => `${path}${issue.cause}`;
+
+  const shownHere = $derived((albums ?? []).reduce((n, album) => n + album.checks.length, 0));
 
   async function openIssue(path: string, issue: Issue) {
     const key = keyOf(path, issue);
@@ -77,6 +83,17 @@
           {#if album.cover_in}
             <div class="dim line">Its cover is in {album.cover_in}.</div>
           {/if}
+          {#each album.checks as check (check.says)}
+            <div class="line fix">
+              <span aria-hidden="true">✎</span>
+              {check.says}.
+              {#if check.folder}
+                <button class="quiet find" onclick={() => onfind(leaf(check.folder ?? ''))}>
+                  Show both
+                </button>
+              {/if}
+            </div>
+          {/each}
         </div>
       </div>
     {/each}
@@ -118,8 +135,18 @@
   </div>
 {/snippet}
 
+<!-- An album card says what is wrong with it. What is wrong further down needs saying here. -->
+{#if row.checks > shownHere}
+  <div class="line fix">
+    <span aria-hidden="true">✎</span>
+    {many(row.checks - shownHere, 'thing')} to fix in the albums below.
+  </div>
+{/if}
+
 {#if row.issues.length === 0}
-  <div class="dim">This folder has no problem. The tags show nothing unusual.</div>
+  {#if row.checks === 0}
+    <div class="dim">This folder has no problem. The tags show nothing unusual.</div>
+  {/if}
 {:else}
   {@const problems = row.issues.filter((issue) => issue.problem)}
   {@const notes = row.issues.filter((issue) => !issue.problem)}
@@ -221,6 +248,15 @@
   .line {
     font-size: 12px;
     overflow-wrap: anywhere;
+  }
+
+  .fix {
+    color: var(--ink-soft);
+  }
+
+  .find {
+    font-size: 12px;
+    margin-left: 4px;
   }
 
   .acts {

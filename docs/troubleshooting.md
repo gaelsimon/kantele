@@ -76,6 +76,22 @@ Under the folders, a line counts the tracks with no artist, no date, no genre or
 count opens onto the folders that hold those tracks. [Tagging your music](tagging.md) says how
 albums, discs and artists are formed.
 
+## Finding what to fix in your tags
+
+Tick **Something to fix** above the folders on the Library tab. Every column then keeps only the
+folders that hold a problem, or an album one of these checks found wanting, so you can follow them
+down to the album. Under the album, the page says what it found:
+
+| The page says | What to do in your tagger |
+|---|---|
+| Tracks 7 and 9 of 12 are missing | Find the missing files, or correct the track total |
+| Same title and artist as the album in another folder | Keep one copy, or tell the two apart in the album title. **Show both** lists the two folders |
+| No album artist and not marked as a compilation | Set `ALBUMARTIST`, or `COMPILATION` to 1 ([compilations](tagging.md#artists)) |
+| The cover is 300 × 300 | Replace it with a larger one ([covers](tagging.md#covers)) |
+
+A folder holding one or two tracks of a longer album is not reported as incomplete: that is taken
+for a choice. Neither is an album whose files give different track totals, or no total at all.
+
 ## A track will not play, or will not seek
 
 - **It will not play at all.** Check that it is not listed as **Unreadable file**.

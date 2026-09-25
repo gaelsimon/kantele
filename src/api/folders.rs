@@ -24,6 +24,9 @@ pub struct Asked {
     pub changed: bool,
     /// Only the folders holding tracks that carry no such tag.
     pub missing: Option<Missing>,
+    /// Only the folders holding something to fix: a problem, or an album a check found wanting.
+    #[serde(default)]
+    pub review: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,6 +52,8 @@ pub struct Row {
     /// Only what went wrong. What the tags decided is in the sentence.
     pub problems: usize,
     pub notes: usize,
+    /// What the checks found in the albums below it.
+    pub checks: usize,
     /// Tracks below it carrying no such tag, where one was asked about.
     pub missing: usize,
     /// Whether the last pass read this folder again.
@@ -107,6 +112,7 @@ pub fn listing(
         .iter()
         .map(|path| counted.row(path))
         .filter(|row| !asked.changed || row.changed)
+        .filter(|row| !asked.review || row.problems + row.checks > 0)
         .filter(|row| asked.missing.is_none() || row.missing > 0);
     let folders: Vec<Row> = rows.by_ref().take(MOST).collect();
     Some(Listing {
@@ -239,6 +245,10 @@ impl Counting<'_> {
             artwork,
             problems: counted(true),
             notes: counted(false),
+            checks: albums
+                .iter()
+                .map(|album| self.served.counts.checks.on(&album.id).len())
+                .sum(),
             missing,
             changed: self
                 .walked

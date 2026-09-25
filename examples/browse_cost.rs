@@ -36,6 +36,12 @@ fn main() {
     let view = browse::View::build(&library);
 
     let served = kantele::browse::Served::new(library.clone(), view.settings.clone());
+    time(
+        "checks over every album",
+        Box::new(|| {
+            std::hint::black_box(kantele::index::Checks::of(&library));
+        }),
+    );
 
     let root = browse::Position::default();
     time(
@@ -144,6 +150,7 @@ fn synthetic(count: usize) -> Library {
                     genres: vec![format!("Genre {}", n % genres)],
                     date: Some(format!("{}", 1900 + n % dates)),
                     track_number: Some((n % 12) as u32 + 1),
+                    track_total: Some(12),
                     ..FileTags::default()
                 },
                 properties: AudioProperties {

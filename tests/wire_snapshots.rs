@@ -38,6 +38,7 @@ fn track(n: u32, title: &str, millis: u64, size: u64) -> Track {
         genres: vec!["Latin".to_owned()],
         date: Some("1994".to_owned()),
         track_number: Some(n),
+        track_total: None,
         disc_number: None,
         duration: Duration::from_millis(millis),
         size,

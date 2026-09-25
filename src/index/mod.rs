@@ -1,6 +1,7 @@
 //! The library index.
 
 pub mod artwork;
+pub mod checks;
 pub mod coverage;
 pub mod credits;
 pub mod derive;
@@ -17,6 +18,7 @@ pub mod sweep;
 pub mod watch;
 
 pub use artwork::{Artwork, Prefer, Source};
+pub use checks::{Check, Checks};
 pub use coverage::{Coverage, Missing};
 pub use fold::fold;
 pub use identity::{IDENTITY_VERSION, Rule};

@@ -460,6 +460,7 @@ mod tests {
             genres: vec!["Latin".to_owned()],
             date: Some("1994-01-01".to_owned()),
             track_number: Some(1),
+            track_total: None,
             disc_number: None,
             duration: Duration::from_millis(243_026),
             size: 27_296_681,

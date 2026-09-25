@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Library from './Library.svelte';
 import type { Configuration, FolderFiles, FolderListing, FolderRow, Status } from './api';
@@ -13,6 +13,7 @@ function folder(path: string, name: string, tracks: number): FolderRow {
     albums: tracks > 0 ? 1 : 0,
     problems: 0,
     notes: 0,
+    checks: 0,
     missing: 0,
     changed: false,
     says: `${tracks} tracks`,
@@ -100,6 +101,20 @@ describe('the library page', () => {
     await waitFor(() => {
       const asked = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0]);
       expect(asked.some((url: string) => url === '/api/folders')).toBe(true);
+    });
+  });
+  it('keeps every column to what needs fixing once asked to', async () => {
+    render(Library, {
+      props: { status: null, configuration: null, onrescanned: () => {} },
+    });
+    await waitFor(() => expect(screen.getByText('Blue Note')).toBeTruthy());
+    await fireEvent.click(screen.getByLabelText('Something to fix'));
+    // The columns start again from the top under the new filter.
+    await fireEvent.click(await screen.findByText('Blue Note'));
+    await waitFor(() => {
+      const asked = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0]);
+      expect(asked).toContain('/api/folders?review=true');
+      expect(asked).toContain('/api/folders?under=Blue+Note&review=true');
     });
   });
 });

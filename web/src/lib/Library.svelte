@@ -33,6 +33,7 @@
 
   let search = $state('');
   let changedFirst = $state(false);
+  let review = $state(false);
   let lacking = $state<Missing | null>(null);
   let asking = $state(false);
   let said = $state('');
@@ -66,9 +67,11 @@
     const wanted = applied;
     const only = changedFirst;
     const tag = lacking;
+    // Every level keeps to it, so the columns lead down to what needs fixing and nowhere else.
+    const fixing = review;
     return async (path: string, first: boolean): Promise<Level<Held>> => {
       const [folders, files] = await Promise.all([
-        getFolders(path, first ? wanted : '', first && only, first ? tag : null),
+        getFolders(path, first ? wanted : '', first && only, first ? tag : null, fixing),
         getFiles(path),
       ]);
       albums = { ...albums, [path]: files.albums };
@@ -183,6 +186,9 @@
       <!-- The colour alone says nothing to a reader who cannot tell it apart. -->
       <span class="problem num mark"><span aria-hidden="true">▲</span>
         {count(entry.of.row.problems)}</span>
+    {:else if entry.of.row.checks > 0}
+      <span class="fix num mark" title="Tags to fix"><span aria-hidden="true">✎</span>
+        {count(entry.of.row.checks)}</span>
     {/if}
   {/if}
 {/snippet}
@@ -200,6 +206,8 @@
     No folder in this library has that name.
   {:else if lacking}
     Every track has {lacking === 'artwork' ? tagName[lacking] : `a ${tagName[lacking]}`}.
+  {:else if review}
+    Nothing to fix here.
   {:else if changedFirst}
     The last check found no change.
   {:else}
@@ -249,6 +257,10 @@
       <div class="tools">
         <input class="search" type="search" placeholder="Search folders" bind:value={search} />
         <label class="filter">
+          <input type="checkbox" bind:checked={review} />
+          Something to fix
+        </label>
+        <label class="filter">
           <input type="checkbox" bind:checked={changedFirst} />
           Changed at the last check
         </label>
@@ -273,6 +285,7 @@
         albums={held}
         busy={asking}
         onopen={(path, under) => (selection = { kind: 'file', path, under })}
+        onfind={(name) => (search = name)}
         onback={() => (selection = null)}
         onrescan={askForAPass}
       />
@@ -435,6 +448,10 @@
   .mark {
     font-size: 12px;
     white-space: nowrap;
+  }
+
+  .fix {
+    color: var(--ink-soft);
   }
 
   .format {
