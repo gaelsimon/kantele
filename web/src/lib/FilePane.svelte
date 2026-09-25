@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Zoom from './Zoom.svelte';
   import { getTrack, type TrackDetail } from './api';
 
   let { path }: { path: string } = $props();
@@ -30,7 +31,7 @@
 {:else if found}
   <div class="cover" class:none={!found.artwork}>
     {#if found.artwork}
-      <img src="/art/{found.artwork}" alt="" />
+      <Zoom src="/art/{found.artwork}" />
     {:else}
       <span class="dim">no cover</span>
     {/if}

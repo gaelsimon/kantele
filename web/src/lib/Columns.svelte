@@ -207,18 +207,20 @@
     border: 0;
   }
 
-  /* Every column shares the width there is, up to a point: past it a line of names is harder to
-     read, not easier. What is left over goes to the last column, which is the one being read. */
+  /* A column is as wide as its names, up to a point: past it a line of names is harder to read.
+     Short of room, they narrow before the strip scrolls. What is left over goes to the last. */
   .col {
-    flex: 1 1 248px;
-    min-width: 210px;
-    max-width: 420px;
+    flex: 0 1 auto;
+    width: max-content;
+    min-width: 250px;
+    max-width: 340px;
     overflow-y: auto;
     border-right: 1px solid var(--hairline);
     padding: 4px 0;
   }
 
   .col.last {
+    flex-grow: 1;
     max-width: none;
     border-right: 0;
   }
@@ -313,6 +315,8 @@
 
     .col {
       flex: 1 1 100%;
+      width: auto;
+      max-width: none;
       border-right: 0;
     }
 

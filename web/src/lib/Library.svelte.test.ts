@@ -117,4 +117,50 @@ describe('the library page', () => {
       expect(asked).toContain('/api/folders?under=Blue+Note&review=true');
     });
   });
+  it('goes back from a file to the folder it was in rather than to the whole library', async () => {
+    const root = folder('', 'music', 5);
+    const blue = folder('Blue Note', 'Blue Note', 3);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.startsWith('/api/track')) return new Response('', { status: 404 });
+        if (url.startsWith('/api/folders')) {
+          const under = url.includes('under=') ? blue : root;
+          const folders = under === root ? [blue] : [];
+          const body: FolderListing = { under: under.path, here: under, folders, more: false };
+          return new Response(JSON.stringify(body), { status: 200 });
+        }
+        const inBlue = url.includes('folder=Blue');
+        const body: FolderFiles = {
+          folder: inBlue ? 'Blue Note' : '',
+          files: inBlue ? [{ path: 'Blue Note/01.flac', title: 'Dundunbanza', seconds: 180 }] : [],
+          albums: [],
+          more: false,
+        };
+        return new Response(JSON.stringify(body), { status: 200 });
+      }),
+    );
+    render(Library, { props: { status: null, configuration: null, onrescanned: () => {} } });
+    await fireEvent.click(await screen.findByText('Blue Note'));
+    await fireEvent.click(await screen.findByText('Dundunbanza'));
+    await fireEvent.click(await screen.findByText(/‹ Blue Note/));
+    expect(await screen.findByRole('heading', { name: 'Blue Note' })).toBeTruthy();
+  });
+
+  it('counts a missing tag among what needs fixing, and applies it at every level', async () => {
+    const coverage = { tracks: 5, date: 5, genre: 5, artwork: 5, artist: 2 };
+    const status = {
+      library: { tracks: 5, albums: 2, artists: 2, playlists: 0, untagged: 0, coverage },
+    } as unknown as Status;
+    render(Library, { props: { status, configuration: null, onrescanned: () => {} } });
+    await fireEvent.click(await screen.findByText(/3 tracks with no artist/));
+    expect((screen.getByLabelText('Something to fix') as HTMLInputElement).checked).toBe(true);
+    await fireEvent.click(await screen.findByText('Blue Note'));
+    await waitFor(() => {
+      const asked = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0]);
+      expect(asked).toContain('/api/folders?under=Blue+Note&missing=artist');
+    });
+    await fireEvent.click(screen.getByLabelText('Something to fix'));
+    expect(screen.getByText(/3 tracks with no artist/).classList.contains('here')).toBe(false);
+  });
 });

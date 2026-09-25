@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Zoom from './Zoom.svelte';
   import { getProblems, type FolderAlbum, type FolderRow, type Issue, type ProblemFiles } from './api';
   import { count, many } from './say';
   import { leaf } from './selection';
@@ -49,7 +50,7 @@
 {#if row.path && (!albums || albums.length === 0)}
   <div class="cover" class:none={!row.artwork}>
     {#if row.artwork}
-      <img src="/art/{row.artwork}" alt="" />
+      <Zoom src="/art/{row.artwork}" />
     {:else}
       <span class="dim">no cover</span>
     {/if}
@@ -66,7 +67,7 @@
       <div class="album">
         <div class="cover small" class:none={!album.artwork}>
           {#if album.artwork}
-            <img src="/art/{album.artwork}" alt="" />
+            <Zoom src="/art/{album.artwork}" />
           {:else}
             <span class="dim">no cover</span>
           {/if}

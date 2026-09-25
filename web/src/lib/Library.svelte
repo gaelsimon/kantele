@@ -43,6 +43,8 @@
   let albums = $state<Record<string, FolderAlbum[]>>({});
   /// The library's own row, which the pane shows while nothing else is picked.
   let root = $state<FolderRow | null>(null);
+  /// Every folder row a column has read, so going back from a file lands on its folder.
+  const known: Record<string, FolderRow> = {};
 
   const folder = $derived(
     configuration?.settings.find((setting) => setting.key === 'content_dir')?.value ?? '',
@@ -66,16 +68,18 @@
   const fill = $derived.by(() => {
     const wanted = applied;
     const only = changedFirst;
+    // Every level keeps to either, so the columns lead down to what needs fixing and nowhere else.
     const tag = lacking;
-    // Every level keeps to it, so the columns lead down to what needs fixing and nowhere else.
-    const fixing = review;
+    const fixing = review && !tag;
     return async (path: string, first: boolean): Promise<Level<Held>> => {
       const [folders, files] = await Promise.all([
-        getFolders(path, first ? wanted : '', first && only, first ? tag : null, fixing),
+        getFolders(path, first ? wanted : '', first && only, tag, fixing),
         getFiles(path),
       ]);
       albums = { ...albums, [path]: files.albums };
       if (first) root = folders.here;
+      known[path] = folders.here;
+      for (const row of folders.folders) known[row.path] = row;
       return {
         entries: [
           ...folders.folders.map((row) => ({
@@ -97,6 +101,12 @@
       };
     };
   });
+
+  /// Back from a file is to the folder it was reached under, or to the library at the top.
+  function back() {
+    const up = selection?.kind === 'file' ? known[selection.under] : undefined;
+    selection = up?.path ? { kind: 'folder', row: up } : null;
+  }
 
   function picked(entry: Entry<Held>) {
     selection =
@@ -257,7 +267,15 @@
       <div class="tools">
         <input class="search" type="search" placeholder="Search folders" bind:value={search} />
         <label class="filter">
-          <input type="checkbox" bind:checked={review} />
+          <!-- A missing tag is one of the things to fix, so the box says so while one is picked. -->
+          <input
+            type="checkbox"
+            checked={review || lacking !== null}
+            onchange={(event) => {
+              review = event.currentTarget.checked;
+              lacking = null;
+            }}
+          />
           Something to fix
         </label>
         <label class="filter">
@@ -266,6 +284,29 @@
         </label>
       </div>
     </div>
+    {#if missing.length > 0}
+      <div class="missing">
+        <span class="dim">Missing tags</span>
+        {#each missing as one (one.of)}
+          <button
+            class="tag"
+            class:here={lacking === one.of}
+            title="List the folders that hold these tracks"
+            onclick={() => {
+              lacking = lacking === one.of ? null : one.of;
+              review = false;
+            }}
+          >
+            {many(one.n, 'track')} with no {tagName[one.of]}
+          </button>
+        {/each}
+        {#if lacking}
+          <button class="quiet" onclick={() => (lacking = null)}>All folders</button>
+        {/if}
+      </div>
+    {:else if status && status.library.tracks > 0}
+      <div class="dim missing">All tracks have a date, a genre, an artist, and cover art.</div>
+    {/if}
     <div class="panes">
       <Columns
         framed={false}
@@ -286,31 +327,11 @@
         busy={asking}
         onopen={(path, under) => (selection = { kind: 'file', path, under })}
         onfind={(name) => (search = name)}
-        onback={() => (selection = null)}
+        onback={back}
         onrescan={askForAPass}
       />
     </div>
 
-    {#if missing.length > 0}
-      <div class="missing">
-        <span class="dim">Missing tags</span>
-        {#each missing as one (one.of)}
-          <button
-            class="tag"
-            class:here={lacking === one.of}
-            title="List the folders that hold these tracks"
-            onclick={() => (lacking = lacking === one.of ? null : one.of)}
-          >
-            {many(one.n, 'track')} with no {tagName[one.of]}
-          </button>
-        {/each}
-        {#if lacking}
-          <button class="quiet" onclick={() => (lacking = null)}>All folders</button>
-        {/if}
-      </div>
-    {:else if status && status.library.tracks > 0}
-      <div class="dim missing">All tracks have a date, a genre, an artist, and cover art.</div>
-    {/if}
   </section>
 {/if}
 
@@ -380,7 +401,7 @@
      sidebar of its own width, so the columns are what grows when the window does. */
   .panes {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
     align-items: stretch;
     border: 1px solid var(--hairline);
   }
