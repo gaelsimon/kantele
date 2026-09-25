@@ -18,12 +18,40 @@
   --good: #2e7d4f;
   --good-paper: #e9f4ec;
   --link-paper: #eaf0fa;
+  --accent: #2f6fd6;
+  --on-accent: #ffffff;
 
   --text: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
     sans-serif;
   --mono: ui-monospace, Menlo, Consolas, 'DejaVu Sans Mono', monospace;
 
   color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1b1d20;
+    --surface: #23262a;
+    --row: #272a2f;
+    --edge: #4a4f56;
+    --hairline: #33373c;
+    --ink: #e8e6df;
+    --ink-soft: #c2c5cb;
+    --muted: #9a9ea6;
+    --faint: #6d7178;
+    --link: #8fb0e8;
+    --link-strong: #b3cbf2;
+    --warn: #e0a04a;
+    --warn-paper: #3a2f1c;
+    --warn-edge: #6b5424;
+    --warn-ink: #f0cf8a;
+    --good: #6cc48f;
+    --good-paper: #1f3a2a;
+    --link-paper: #263447;
+    --accent: #2f63c7;
+    --on-accent: #ffffff;
+    color-scheme: dark;
+  }
 }
 
 * {

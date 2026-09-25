@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ago, extension, listed, many, noun, tagName, took, uptime } from './say';
+import { ago, extension, length, listed, many, noun, size, tagName, took, uptime } from './say';
 
 describe('a count and the noun beside it', () => {
   it('is singular where there is one', () => {
@@ -138,5 +138,18 @@ describe('a file name', () => {
   it('says nothing where the name carries no end', () => {
     expect(extension('Blue Note/Sierra/cover')).toBe('');
     expect(extension('.hidden')).toBe('');
+  });
+});
+
+describe('a file', () => {
+  it('says its size as a file browser does', () => {
+    expect(size(512)).toBe('512 bytes');
+    expect(size(2_400_000)).toBe('2.4 MB');
+    expect(size(23_456_789)).toBe('23 MB');
+  });
+
+  it('says its length in minutes and seconds', () => {
+    expect(length(192)).toBe('3:12');
+    expect(length(59)).toBe('0:59');
   });
 });

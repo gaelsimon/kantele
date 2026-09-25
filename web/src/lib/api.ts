@@ -243,6 +243,7 @@ export type TrackDetail = {
   /// What to ask `/art/` for, where the file has a cover.
   artwork?: string;
   format: string;
+  bytes: number;
   seconds: number;
 };
 

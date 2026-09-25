@@ -1,6 +1,7 @@
 <script lang="ts">
   import Zoom from './Zoom.svelte';
   import { getTrack, type TrackDetail } from './api';
+  import { length, size } from './say';
 
   let { path }: { path: string } = $props();
 
@@ -29,13 +30,14 @@
 {:else if found === 'gone'}
   <div class="dim">The library has no entry for this file. The server could not read its tags.</div>
 {:else if found}
-  <div class="cover" class:none={!found.artwork}>
+  <div class="cover" class:none={!found.artwork} class:whole={found.artwork}>
     {#if found.artwork}
       <Zoom src="/art/{found.artwork}" />
     {:else}
       <span class="dim">no cover</span>
     {/if}
   </div>
+  <div class="summary">{found.format} · {size(found.bytes)} · {length(found.seconds)}</div>
   <div class="sect">
     <div class="cap">Tags</div>
     <div class="kv">
@@ -71,12 +73,32 @@
 {/if}
 
 <style>
+  /* The cover the file carries, as wide as the pane: the one picture anyone looks at here. */
+  .cover.whole {
+    width: 100%;
+  }
+
+  .summary {
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  /* One line per tag, parted by a hairline, the value to the right as a file browser sets it. */
   .kv {
     display: grid;
-    grid-template-columns: 110px minmax(0, 1fr);
-    gap: 3px 12px;
+    grid-template-columns: max-content minmax(0, 1fr);
     align-items: baseline;
     font-size: 13px;
+  }
+
+  .kv > span {
+    padding: 5px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .kv > span:nth-child(even) {
+    padding-left: 16px;
+    text-align: right;
   }
 
   .k {
@@ -86,9 +108,6 @@
 
   .absent {
     color: var(--warn-ink);
-    background: var(--warn-paper);
-    padding: 0 6px;
-    justify-self: start;
     font-size: 13px;
   }
 

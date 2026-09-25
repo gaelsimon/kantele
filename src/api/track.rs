@@ -44,6 +44,7 @@ pub struct Found {
     pub artwork: Option<String>,
     /// The format and what it holds, in the words the Quality menu uses.
     pub format: String,
+    pub bytes: u64,
     pub seconds: u64,
 }
 
@@ -135,6 +136,7 @@ pub fn found(served: &Served, asked: &Asked) -> Option<Found> {
         artwork: track.artwork.as_ref().map(|_| track.id.as_str().to_owned()),
         album: filed(&served.library, track),
         format: format(track),
+        bytes: track.size,
         seconds: track.duration.as_secs(),
     })
 }
@@ -145,6 +147,7 @@ pub fn lines(found: &Found) -> Vec<(String, String)> {
         ("path".to_owned(), found.path.clone()),
         ("title".to_owned(), found.title.clone()),
         ("format".to_owned(), found.format.clone()),
+        ("bytes".to_owned(), found.bytes.to_string()),
         ("seconds".to_owned(), found.seconds.to_string()),
     ];
     for tag in &found.tags {

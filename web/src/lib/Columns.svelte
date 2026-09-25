@@ -229,9 +229,11 @@
     display: flex;
     align-items: baseline;
     gap: 6px;
-    width: 100%;
+    width: calc(100% - 12px);
+    margin: 0 6px;
+    border-radius: 6px;
     text-align: left;
-    padding: 5px 8px 5px 12px;
+    padding: 5px 6px 5px 8px;
     font-size: 13px;
     line-height: 1.3;
   }
@@ -244,9 +246,14 @@
     background: var(--hairline);
   }
 
+  /* The row being shown is a solid mark, the ones leading to it a grey one, as in a file browser. */
   .entry.here {
-    background: var(--link-paper);
-    color: var(--link);
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  .entry.here :global(*) {
+    color: inherit;
   }
 
   .entry:focus-visible {
