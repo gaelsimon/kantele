@@ -12,7 +12,7 @@ use crate::config::Apply;
 use crate::service::{Asked, Pass};
 
 use super::describe::{self, Effective, Setting};
-use super::{Control, Operation, Shared, answer, from_elsewhere};
+use super::{Control, Operation, Peer, Shared, answer, refused};
 
 pub(super) async fn configuration(State(control): State<Shared>, headers: HeaderMap) -> Response {
     let effective = describe::effective(&control.operation().config);
@@ -31,10 +31,12 @@ struct Written {
 
 pub(super) async fn write_configuration(
     State(control): State<Shared>,
+    peer: Peer,
     headers: HeaderMap,
     body: String,
 ) -> Response {
-    if let Some(refused) = from_elsewhere(
+    if let Some(refused) = refused(
+        peer,
         &headers,
         "settings written",
         "settings may only be written from this server's own page\n",
@@ -132,7 +134,13 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
         config: reloaded,
     });
     let written: Vec<String> = changes.keys().cloned().collect();
-    let says = applied(control, mode, menus_now, &path, settings).await;
+    // The cover a row remembers was chosen under the old preference, so no row can be trusted.
+    let pass = if changes.contains_key("scan.cover_art") {
+        Pass::Reread
+    } else {
+        Pass::Whole
+    };
+    let says = applied(control, mode, pass, menus_now, &path, settings).await;
     tracing::info!(keys = ?written, mode = mode.as_str(), "settings written");
     Ok(Written {
         written,
@@ -183,6 +191,7 @@ fn writable(
 async fn applied(
     control: &Control,
     mode: Apply,
+    pass: Pass,
     menus_now: bool,
     path: &Path,
     settings: crate::browse::Settings,
@@ -200,7 +209,7 @@ async fn applied(
             tracing::info!(system_update_id = id, "the menus were rebuilt");
             format!("saved to {file} and applied")
         }
-        Apply::Reread => match control.passes.request(Pass::Whole) {
+        Apply::Reread => match control.passes.request(pass) {
             Asked::NobodyIsListening => {
                 // No pass will carry it, so what the menus can take now they take now.
                 if !menus_now {

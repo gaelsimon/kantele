@@ -70,16 +70,40 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  # The gate the standards ask for, so the figure cannot drift down unnoticed.
+  # The gate the standards ask for, so the figure cannot drift down unnoticed. The same run feeds
+  # SonarCloud, which is skipped where the token is absent: a fork's pull request, or before setup.
   coverage:
     runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
-          components: llvm-tools-preview
+          components: llvm-tools-preview, clippy
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - run: cargo llvm-cov --fail-under-lines 85
+      - run: cargo llvm-cov --lcov --output-path target/lcov.info --fail-under-lines 85
+      - if: env.SONAR_TOKEN != ''
+        run: cargo clippy --all-targets --message-format=json > target/clippy.json
+      - if: env.SONAR_TOKEN != ''
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - if: env.SONAR_TOKEN != ''
+        run: npm ci
+        working-directory: web
+      # Vitest writes paths from web/, the scanner reads them from the repository root.
+      - if: env.SONAR_TOKEN != ''
+        run: |
+          npx vitest run --coverage.enabled --coverage.provider=v8 --coverage.reporter=lcov --coverage.include='src/**'
+          sed -i 's|^SF:|SF:web/|' coverage/lcov.info
+        working-directory: web
+      - if: env.SONAR_TOKEN != ''
+        uses: SonarSource/sonarqube-scan-action@v8
 
   # The parsers that take hostile input build as fuzz targets; a target that no longer compiles
   # is caught here, and `cargo fuzz run <target>` is a local pass, not a CI one.

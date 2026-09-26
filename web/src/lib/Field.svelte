@@ -236,8 +236,8 @@
       </div>
     {/if}
 
-    {#if shape.note && !held}
-      <div class="dim note">{shape.note}</div>
+    {#if setting.note || (shape.note && !held)}
+      <div class="dim note">{[setting.note, held ? '' : shape.note].filter(Boolean).join(' ')}</div>
     {/if}
   </div>
 </div>
@@ -266,8 +266,8 @@
   }
 
   .label .cost {
-    font-size: 10px;
-    padding: 1px 5px;
+    font-size: 11px;
+    padding: 1px 6px;
   }
 
   .control {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Zoom from './Zoom.svelte';
   import { getProblems, type FolderAlbum, type FolderRow, type Issue, type ProblemFiles } from './api';
   import { count, many } from './say';
 
@@ -22,6 +23,8 @@
 
   const keyOf = (path: string, issue: Issue) => `${path}${issue.cause}`;
 
+  const shownHere = $derived((albums ?? []).reduce((n, album) => n + album.checks.length, 0));
+
   async function openIssue(path: string, issue: Issue) {
     const key = keyOf(path, issue);
     if (key in behind) {
@@ -39,10 +42,11 @@
   }
 </script>
 
-{#if !albums || albums.length === 0}
+<!-- The library as a whole has no cover of its own, whatever image its first folder holds. -->
+{#if row.path && (!albums || albums.length === 0)}
   <div class="cover" class:none={!row.artwork}>
     {#if row.artwork}
-      <img src="/art/{row.artwork}" alt="" />
+      <Zoom src="/art/{row.artwork}" />
     {:else}
       <span class="dim">no cover</span>
     {/if}
@@ -59,7 +63,7 @@
       <div class="album">
         <div class="cover small" class:none={!album.artwork}>
           {#if album.artwork}
-            <img src="/art/{album.artwork}" alt="" />
+            <Zoom src="/art/{album.artwork}" />
           {:else}
             <span class="dim">no cover</span>
           {/if}
@@ -76,18 +80,22 @@
           {#if album.cover_in}
             <div class="dim line">Its cover is in {album.cover_in}.</div>
           {/if}
+          {#each album.checks as check (check.says)}
+            <div class="line fix">
+              <span aria-hidden="true">✎</span>
+              {check.says}.
+            </div>
+          {/each}
         </div>
       </div>
     {/each}
   </div>
 {/if}
 
-{#if row.issues.length === 0}
-  <div class="dim">This folder has no problem. The tags show nothing unusual.</div>
-{:else}
+{#snippet listing(title: string, issues: Issue[])}
   <div class="sect">
-    <div class="cap">What the tags made of it</div>
-    {#each row.issues as issue (issue.cause)}
+    <div class="cap">{title}</div>
+    {#each issues as issue (issue.cause)}
       {@const key = keyOf(row.path, issue)}
       <button
         class="issue"
@@ -105,25 +113,49 @@
           {#if behind[key] === 'asking'}
             <span class="dim">Reading.</span>
           {:else if behind[key].shown.length === 0}
-            <span class="dim">The server keeps a maximum of one hundred examples of each problem. It did not keep these names.</span>
+            <span class="dim">The server counted these and did not keep their names.</span>
           {:else}
-            {#each behind[key].shown as one (one.subject)}
+            {@const rest = behind[key].total - behind[key].shown.length}
+            <!-- Unkeyed: the links of one playlist all name that playlist. -->
+            {#each behind[key].shown as one}
               <button class="file" onclick={() => onopen(one.subject, row.path)}>
                 {one.subject}{one.detail ? ` — ${one.detail}` : ''}
               </button>
             {/each}
+            {#if rest > 0}
+              <span class="dim">{count(rest)} more {rest === 1 ? 'is' : 'are'} not listed.</span>
+            {/if}
           {/if}
         </div>
       {/if}
     {/each}
   </div>
+{/snippet}
+
+<!-- An album card says what is wrong with it. What is wrong further down needs saying here. -->
+{#if row.checks > shownHere}
+  <div class="line fix">
+    <span aria-hidden="true">✎</span>
+    {many(row.checks - shownHere, 'thing')} to fix in the albums below.
+  </div>
+{/if}
+
+{#if row.issues.length === 0}
+  {#if row.checks === 0}
+    <div class="dim">This folder has no problem. The tags show nothing unusual.</div>
+  {/if}
+{:else}
+  {@const problems = row.issues.filter((issue) => issue.problem)}
+  {@const notes = row.issues.filter((issue) => !issue.problem)}
+  {#if problems.length > 0}{@render listing('Problems', problems)}{/if}
+  {#if notes.length > 0}{@render listing('Notes', notes)}{/if}
 {/if}
 
 <!-- The library itself is read again from the card above, which says so in one place. -->
 {#if row.path}
   <div class="acts">
     <button class="button" disabled={busy} onclick={() => onrescan(row.path)}>Rescan folder</button>
-    <span class="dim aside">The server reads only this folder. It continues to serve the library.</span>
+    <span class="dim aside">The server reads only this folder. Your players keep working.</span>
   </div>
 {/if}
 
@@ -213,6 +245,10 @@
   .line {
     font-size: 12px;
     overflow-wrap: anywhere;
+  }
+
+  .fix {
+    color: var(--ink-soft);
   }
 
   .acts {

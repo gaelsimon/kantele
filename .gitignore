@@ -21,6 +21,7 @@
 # The front end's dependencies. The built page under assets/web is committed, so a clone builds
 # and tests with no node at all; tools/package-spk.sh rebuilds it and refuses a stale one.
 web/node_modules/
+web/coverage/
 
 # Tooling and editors
 __pycache__/

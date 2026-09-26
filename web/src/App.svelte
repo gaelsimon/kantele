@@ -9,13 +9,29 @@
   } from './lib/api';
   import { clock, count, uptime } from './lib/say';
   import Library from './lib/Library.svelte';
+  import { href, parse, type Tab } from './lib/route';
   import Settings from './lib/Settings.svelte';
 
   let status = $state<Status | null>(null);
   let progress = $state<Progress | null>(null);
   let configuration = $state<Configuration | null>(null);
   let unreachable = $state<string | null>(null);
-  let tab = $state<'library' | 'settings'>('settings');
+  let tab = $state<Tab>(parse(location.pathname, location.search).tab ?? 'settings');
+  /// The library's own address when the page left it, so going back to the tab lands there again.
+  let library = href({ tab: 'library' });
+
+  function show(next: Tab) {
+    if (next === tab) return;
+    if (tab === 'library') library = `${location.pathname}${location.search}`;
+    tab = next;
+    history.pushState(null, '', next === 'library' ? library : href({ tab: next }));
+  }
+
+  $effect(() => {
+    const moved = () => (tab = parse(location.pathname, location.search).tab ?? 'settings');
+    window.addEventListener('popstate', moved);
+    return () => window.removeEventListener('popstate', moved);
+  });
 
   const running = $derived(progress !== null && progress.phase !== 'idle');
   const failing = $derived(status?.failing);
@@ -101,8 +117,8 @@
     <span class="dim version">{status?.version ?? ''}</span>
   </div>
   <nav>
-    <button class:here={tab === 'settings'} onclick={() => (tab = 'settings')}>Settings</button>
-    <button class:here={tab === 'library'} onclick={() => (tab = 'library')}>Library</button>
+    <button class:here={tab === 'settings'} onclick={() => show('settings')}>Settings</button>
+    <button class:here={tab === 'library'} onclick={() => show('library')}>Library</button>
   </nav>
   <div class="dim up">{status ? `up ${uptime(status.uptime_seconds)}` : ''}</div>
 </header>
@@ -136,7 +152,12 @@
   {#if tab === 'settings'}
     <Settings {configuration} {status} onsaved={readConfiguration} />
   {:else}
-    <Library {status} {configuration} onrescanned={readStatus} />
+    <Library
+      {status}
+      {configuration}
+      onrescanned={readStatus}
+      onsettings={() => show('settings')}
+    />
   {/if}
 </main>
 

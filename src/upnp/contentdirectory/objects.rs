@@ -312,7 +312,7 @@ fn facet_children<'a>(
                 .collect(),
         ),
         // The index entry is the first child, so it counts in the page arithmetic.
-        browse::Menu::Values(facet, values) => {
+        browse::Menu::Values(facet, values, selected) => {
             let letters = browse::index_offered(position, &values, &view.settings);
             let ahead = usize::from(letters.is_some());
             let total = values.len() + ahead;
@@ -329,13 +329,13 @@ fn facet_children<'a>(
                     didl::MENU,
                 ));
             }
-            let from = range.start.saturating_sub(ahead);
-            let to = range.end.saturating_sub(ahead);
-            children.extend(values[from..to].iter().map(|entry| {
+            let shown = &values[range.start.saturating_sub(ahead)..range.end.saturating_sub(ahead)];
+            let sizes = browse::choice_sizes(library, view, position, facet, &selected, shown);
+            children.extend(shown.iter().zip(sizes).map(|(entry, size)| {
                 container(
                     position.chose(facet, entry.digest).id(),
                     entry.display.to_owned(),
-                    entry.tracks,
+                    size,
                     facet.class(),
                 )
             }));

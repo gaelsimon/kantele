@@ -3,8 +3,7 @@
 use crate::index::{Library, Track};
 
 /// Disc number, composer and the MusicBrainz ids are left out: nobody goes and fills those in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Missing {
     Artist,
     Album,

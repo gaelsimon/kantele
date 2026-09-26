@@ -18,12 +18,40 @@
   --good: #2e7d4f;
   --good-paper: #e9f4ec;
   --link-paper: #eaf0fa;
+  --accent: #2f6fd6;
+  --on-accent: #ffffff;
 
   --text: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
     sans-serif;
   --mono: ui-monospace, Menlo, Consolas, 'DejaVu Sans Mono', monospace;
 
   color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1b1d20;
+    --surface: #23262a;
+    --row: #272a2f;
+    --edge: #4a4f56;
+    --hairline: #33373c;
+    --ink: #e8e6df;
+    --ink-soft: #c2c5cb;
+    --muted: #9a9ea6;
+    --faint: #6d7178;
+    --link: #8fb0e8;
+    --link-strong: #b3cbf2;
+    --warn: #e0a04a;
+    --warn-paper: #3a2f1c;
+    --warn-edge: #6b5424;
+    --warn-ink: #f0cf8a;
+    --good: #6cc48f;
+    --good-paper: #1f3a2a;
+    --link-paper: #263447;
+    --accent: #2f63c7;
+    --on-accent: #ffffff;
+    color-scheme: dark;
+  }
 }
 
 * {
@@ -108,6 +136,45 @@ a:hover {
   color: var(--faint);
   cursor: default;
 }
+.button.strong {
+  background: var(--ink);
+  color: var(--surface);
+  border-color: var(--ink);
+}
+.button.strong:hover:not(:disabled) {
+  background: var(--ink-soft);
+}
+
+/* A filter: a button that stays filled while it narrows what is listed. */
+.filter-chip {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.filter-chip:hover {
+  border-color: var(--faint);
+  color: var(--ink);
+}
+.filter-chip:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 1px;
+}
+.filter-chip[aria-expanded='true'] {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+}
+.filter-chip.on {
+  background: var(--link-paper);
+  border-color: var(--accent);
+  color: var(--ink);
+}
 
 .quiet {
   color: var(--link);
@@ -175,10 +242,8 @@ a:hover {
 
 /* What a change costs, in the server's words: one badge per section, or one tag per field. */
 .cost {
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: 3px 8px;
+  font-size: 12px;
+  padding: 2px 8px;
   border: 1px solid var(--hairline);
   color: var(--muted);
   background: var(--row);

@@ -79,6 +79,8 @@ export class Walk<T> {
       await this.read(path);
       kept.push(path);
     }
+    // A folder opened while this read is newer than the trail it started from.
+    if (this.trail !== trail) return;
     this.trail = kept;
     this.levels = Object.fromEntries(
       Object.entries(this.levels).filter(([path]) => path === '' || kept.includes(path)),

@@ -1,18 +1,6 @@
 // Numbers and times in the words the page uses. One place, so the tabs agree.
 
-import type { Missing } from './api';
-
 export const count = (n: number) => n.toLocaleString();
-
-export const tagName: Record<Missing, string> = {
-  artist: 'artist',
-  album: 'album',
-  'album-artist': 'album artist',
-  date: 'date',
-  genre: 'genre',
-  'track-number': 'track number',
-  artwork: 'artwork',
-};
 
 /// The noun alone, singular where there is one of whatever it counts.
 export function noun(n: number, singular: string, plural = `${singular}s`): string {
@@ -70,4 +58,23 @@ export function clock(epochSeconds: number): string {
 export function listed(parts: string[]): string {
   if (parts.length <= 1) return parts[0] ?? '';
   return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/// A file's size as a file browser writes it: one decimal below ten, none above.
+export function size(bytes: number): string {
+  const units = ['bytes', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  const shown = unit === 0 || value >= 10 ? Math.round(value).toString() : value.toFixed(1);
+  return `${shown} ${units[unit]}`;
+}
+
+/// A track's length, minutes and seconds.
+export function length(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
 }

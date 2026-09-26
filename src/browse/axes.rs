@@ -134,6 +134,45 @@ impl Axes {
             .filter(|count| *count > 0)
             .count()
     }
+
+    /// Whether a selection reaches more than one value of an axis, answered at the second.
+    pub(super) fn varies(&self, facet: Facet, selected: &[usize]) -> bool {
+        let Some(axis) = self.axis(facet) else {
+            return false;
+        };
+        let mut first = None;
+        selected
+            .iter()
+            .flat_map(|at| axis.of(*at))
+            .any(|id| *first.get_or_insert(*id) != *id)
+    }
+
+    /// The tracks of a selection that carry each of these values, in the order they are named.
+    pub(super) fn holders(
+        &self,
+        facet: Facet,
+        selected: &[usize],
+        digests: &[&str],
+    ) -> Vec<Vec<usize>> {
+        let mut held = vec![Vec::new(); digests.len()];
+        let Some(axis) = self.axis(facet) else {
+            return held;
+        };
+        let mut slot: Vec<Option<usize>> = vec![None; axis.values.len()];
+        for (at, digest) in digests.iter().enumerate() {
+            if let Some(id) = axis.by_digest.get(*digest) {
+                slot[*id as usize] = Some(at);
+            }
+        }
+        for track in selected {
+            for id in axis.of(*track) {
+                if let Some(at) = slot[*id as usize] {
+                    held[at].push(*track);
+                }
+            }
+        }
+        held
+    }
 }
 
 /// One axis: its distinct values, and which of them each track carries.

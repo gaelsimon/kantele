@@ -1,8 +1,10 @@
 //! A setting written from the page is saved with the file's comments kept and applied at once.
 
+use std::net::SocketAddr;
 use std::path::Path;
 
 use axum::body::{Body, to_bytes};
+use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use kantele::api::Operation;
 use kantele::config::{Config, Resolved};
@@ -46,12 +48,15 @@ async fn put(server: &Server, body: &str, headers: &[(&str, &str)]) -> (StatusCo
     for (name, value) in headers {
         request = request.header(*name, *value);
     }
+    let mut request = request
+        .body(Body::from(body.to_owned()))
+        .expect("a request");
+    // A device on this network, as the listener would name it.
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([192, 168, 1, 20], 50_000))));
     let response = server::router(server)
-        .oneshot(
-            request
-                .body(Body::from(body.to_owned()))
-                .expect("a request"),
-        )
+        .oneshot(request)
         .await
         .expect("the router answers");
     let status = response.status();

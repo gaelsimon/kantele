@@ -12,6 +12,7 @@
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@testing-library/svelte": "^5.4.2",
+    "@vitest/coverage-v8": "^4.1.11",
     "jsdom": "^27.0.1",
     "svelte": "^5.46.4",
     "svelte-check": "^4.7.6",

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::index::artwork::Source;
 use crate::index::credits::Credit;
-use crate::index::{Album, Cause, IDENTITY_VERSION, Library, Rule, Track, fold};
+use crate::index::{Album, Cause, Check, IDENTITY_VERSION, Library, Rule, Track, fold};
 
 /// A refusal cause as a form labels a field: the field and its state, never a sentence.
 pub fn label(cause: Cause) -> &'static str {
@@ -67,6 +67,65 @@ pub fn album_part(
     Some(match disc {
         Some((number, discs)) => format!("Disc {number} of {discs}, {here} of {of} tracks"),
         None => format!("{here} of {of} tracks, in {folders} folders"),
+    })
+}
+
+/// What a check found, as the page says it under the album.
+pub fn check(check: &Check) -> String {
+    match check {
+        Check::Incomplete {
+            disc,
+            missing,
+            total,
+        } => {
+            let gone = match missing.as_slice() {
+                [one] => format!("track {one} of {total} is missing"),
+                few if few.len() <= 4 => format!("tracks {} of {total} are missing", listed(few)),
+                many => format!("{} of its {total} tracks are missing", many.len()),
+            };
+            match disc {
+                Some(disc) => format!("Disc {disc}: {gone}"),
+                None => capitalised(&gone),
+            }
+        }
+        Check::Unmarked { artists } => format!(
+            "No album artist and not marked as a compilation, so Artist lists it under {artists} names"
+        ),
+        Check::SmallCover { width, height } => {
+            format!("The cover is {width} × {height}, which shows blurred on a large screen")
+        }
+    }
+}
+
+/// A name one file writes as fewer files do, and how the rest write it, commonest first.
+pub fn spelled(tag: &str, name: &str, others: &[(String, usize)]) -> String {
+    let ways: Vec<String> = others
+        .iter()
+        .enumerate()
+        .map(|(at, (written, files))| match (at, files) {
+            (0, 1) => format!("{written} on 1 file"),
+            (0, _) => format!("{written} on {files} files"),
+            _ => format!("{written} on {files}"),
+        })
+        .collect();
+    format!("{tag} {name} is written {}", listed(&ways))
+}
+
+fn listed<T: std::fmt::Display>(items: &[T]) -> String {
+    match items.split_last() {
+        Some((last, [])) => last.to_string(),
+        Some((last, rest)) => {
+            let rest: Vec<String> = rest.iter().map(T::to_string).collect();
+            format!("{} and {last}", rest.join(", "))
+        }
+        None => String::new(),
+    }
+}
+
+fn capitalised(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
     })
 }
 
@@ -269,6 +328,66 @@ fn tally(rules: impl Iterator<Item = Rule>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_check_says_what_is_wrong_in_a_line() {
+        let incomplete = |disc, missing: &[u32]| {
+            check(&Check::Incomplete {
+                disc,
+                missing: missing.to_vec(),
+                total: 12,
+            })
+        };
+        assert_eq!(incomplete(None, &[7]), "Track 7 of 12 is missing");
+        assert_eq!(
+            incomplete(None, &[7, 9]),
+            "Tracks 7 and 9 of 12 are missing"
+        );
+        assert_eq!(
+            incomplete(Some(2), &[1, 2, 3]),
+            "Disc 2: tracks 1, 2 and 3 of 12 are missing"
+        );
+        assert_eq!(
+            incomplete(None, &[1, 2, 3, 4, 5]),
+            "5 of its 12 tracks are missing"
+        );
+        assert_eq!(
+            check(&Check::SmallCover {
+                width: 300,
+                height: 300
+            }),
+            "The cover is 300 × 300, which shows blurred on a large screen"
+        );
+    }
+
+    #[test]
+    fn a_minority_spelling_names_the_others_commonest_first_with_their_files() {
+        let others = |ways: &[(&str, usize)]| -> Vec<(String, usize)> {
+            ways.iter()
+                .map(|(written, files)| ((*written).to_owned(), *files))
+                .collect()
+        };
+        assert_eq!(
+            spelled(
+                "Genre",
+                "Drum n Bass",
+                &others(&[("Drum & Bass", 120), ("Drum and Bass", 30)])
+            ),
+            "Genre Drum n Bass is written Drum & Bass on 120 files and Drum and Bass on 30"
+        );
+        assert_eq!(
+            spelled(
+                "Artist",
+                "Tok",
+                &others(&[("T.O.K.", 4), ("T.O.K", 2), ("TOK", 1)])
+            ),
+            "Artist Tok is written T.O.K. on 4 files, T.O.K on 2 and TOK on 1"
+        );
+        assert_eq!(
+            spelled("Genre", "Afrobeat", &others(&[("Afro Beat", 1)])),
+            "Genre Afrobeat is written Afro Beat on 1 file"
+        );
+    }
     use crate::index::Scanned;
     use crate::tags::FileTags;
     use std::path::PathBuf;

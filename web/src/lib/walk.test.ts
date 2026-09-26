@@ -58,6 +58,21 @@ describe('walking a tree', () => {
     expect(walk.columns).toEqual(['', 'b']);
   });
 
+  it('keeps a folder opened while a refresh was reading', async () => {
+    const { walk, answer } = tree({ '': ['a'], a: ['a/one'] });
+    const reading = walk.restart();
+    await answer('');
+    await reading;
+
+    const refreshing = walk.refresh();
+    walk.open(0, 'a');
+    await answer('a');
+    await answer('');
+    await refreshing;
+    expect(walk.columns, 'the refresh began with nothing open').toEqual(['', 'a']);
+    expect(walk.entries('a').map((entry) => entry.path)).toEqual(['a/one']);
+  });
+
   it('closes every column past a file that was picked', async () => {
     const { walk, answer } = tree({ '': ['a'], a: ['a/one'] });
     const reading = walk.restart();

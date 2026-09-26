@@ -49,6 +49,9 @@ Read the diff before accepting it. Accepting one unread is how a wire change shi
 
 `tests/the_wire_answers_a_client.rs` drives the router: status codes, SOAP faults, byte ranges,
 the DLNA headers a renderer asks for, and the eventing some devices will not browse without.
+Players read a file in two opposite ways: one asks for it whole in a single request, another reads
+the tags at the end of the file and then moves through it in windows of a couple of megabytes. Both
+are covered there.
 
 `tests/the_binary_answers_over_a_real_socket.rs` starts the built binary and asks it over TCP,
 including a stop and a restart, because the wiring in `main` is not covered by anything else. It

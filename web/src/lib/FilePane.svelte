@@ -1,7 +1,9 @@
 <script lang="ts">
+  import Zoom from './Zoom.svelte';
   import { getTrack, type TrackDetail } from './api';
+  import { length, size } from './say';
 
-  let { path }: { path: string } = $props();
+  let { path, onopen }: { path: string; onopen: (path: string) => void } = $props();
 
   let found = $state<TrackDetail | 'asking' | 'gone' | null>(null);
 
@@ -28,13 +30,14 @@
 {:else if found === 'gone'}
   <div class="dim">The library has no entry for this file. The server could not read its tags.</div>
 {:else if found}
-  <div class="cover" class:none={!found.artwork}>
+  <div class="cover" class:none={!found.artwork} class:whole={found.artwork}>
     {#if found.artwork}
-      <img src="/art/{found.artwork}" alt="" />
+      <Zoom src="/art/{found.artwork}" />
     {:else}
       <span class="dim">no cover</span>
     {/if}
   </div>
+  <div class="summary">{found.format} · {size(found.bytes)} · {length(found.seconds)}</div>
   <div class="sect">
     <div class="cap">Tags</div>
     <div class="kv">
@@ -67,15 +70,51 @@
       </div>
     {/if}
   </div>
+  {#if found.copies && found.copies.length > 0}
+    <div class="sect">
+      <div class="cap">Copies</div>
+      {#each found.copies as copy (copy)}
+        <button class="quiet mono copy" onclick={() => onopen(copy)}>{copy}</button>
+      {/each}
+    </div>
+  {/if}
+  {#if found.spellings && found.spellings.length > 0}
+    <div class="sect">
+      <div class="cap">Spelled otherwise</div>
+      {#each found.spellings as spelled (spelled)}
+        <div class="spelled">{spelled}</div>
+      {/each}
+    </div>
+  {/if}
 {/if}
 
 <style>
+  /* The cover the file carries, as wide as the pane: the one picture anyone looks at here. */
+  .cover.whole {
+    width: 100%;
+  }
+
+  .summary {
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  /* One line per tag, parted by a hairline, the value to the right as a file browser sets it. */
   .kv {
     display: grid;
-    grid-template-columns: 110px minmax(0, 1fr);
-    gap: 3px 12px;
+    grid-template-columns: max-content minmax(0, 1fr);
     align-items: baseline;
     font-size: 13px;
+  }
+
+  .kv > span {
+    padding: 5px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .kv > span:nth-child(even) {
+    padding-left: 16px;
+    text-align: right;
   }
 
   .k {
@@ -85,9 +124,6 @@
 
   .absent {
     color: var(--warn-ink);
-    background: var(--warn-paper);
-    padding: 0 6px;
-    justify-self: start;
     font-size: 13px;
   }
 
@@ -103,6 +139,18 @@
     border: 1px solid var(--hairline);
     background: var(--row);
     color: var(--ink-soft);
+  }
+
+  .copy {
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .spelled {
+    font-size: 13px;
+    color: var(--ink-soft);
+    overflow-wrap: anywhere;
   }
 
   .path b {

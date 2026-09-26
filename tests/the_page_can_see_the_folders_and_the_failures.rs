@@ -1,7 +1,10 @@
 //! The routes the configuration page needs: the folder tree, one folder read again, how far a
 //! pass has got, the bounded listing of the shares, and whether the library is answered for.
 
+use std::net::SocketAddr;
+
 use axum::body::{Body, to_bytes};
+use axum::extract::ConnectInfo;
 use axum::http::{Method, Request, StatusCode};
 use axum::response::Response;
 use kantele::api::Operation;
@@ -52,7 +55,11 @@ fn serving(tree: &Tree, pass: Option<PassReport>) -> Server {
     server
 }
 
-async fn ask(server: &Server, request: Request<Body>) -> Response {
+/// A device on this network, as the listener would name it.
+async fn ask(server: &Server, mut request: Request<Body>) -> Response {
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([192, 168, 1, 20], 50_000))));
     server::router(server)
         .oneshot(request)
         .await
@@ -69,6 +76,8 @@ async fn body_of(response: Response) -> String {
 fn get_json(path: &str) -> Request<Body> {
     Request::builder()
         .uri(path)
+        // Every HTTP/1.1 request carries one, and the listing of the shares is refused without it.
+        .header("Host", "192.0.2.42:8200")
         .header("Accept", "application/json")
         .body(Body::empty())
         .expect("a request")
@@ -403,6 +412,186 @@ async fn a_folder_this_server_may_not_read_says_so_rather_than_looking_absent() 
         said.contains("may not read it"),
         "and it says what to do about it: {said}"
     );
+}
+
+#[tokio::test]
+async fn a_folder_holding_only_files_that_would_not_read_is_in_the_tree_and_opens() {
+    let tree = a_library("only-failures");
+    tree.text("Broken/Deeper/01.flac", "not a flac");
+    let mut store = Some(Store::in_memory().expect("a store"));
+    let indexed =
+        service::index(&Indexing::of(&tree.0), &mut store, Pass::Whole).expect("the first pass");
+    let server = serving(&tree, Some(indexed.pass));
+
+    let top = json(&server, "/api/folders").await;
+    let broken = top["folders"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .find(|row| row["name"] == "Broken")
+        .unwrap_or_else(|| panic!("the folder of failures is listed: {top}"));
+    assert_eq!(broken["tracks"], 0);
+    assert_eq!(broken["problems"], 1);
+    assert_eq!(broken["folders"], 1, "and it says that it opens");
+    assert_eq!(broken["says"], "Nothing playable", "rather than empty");
+
+    let inside = json(&server, "/api/folders?under=Broken").await;
+    assert_eq!(inside["folders"][0]["name"], "Deeper", "{inside}");
+    for path in [
+        "/api/folders?under=Broken/Deeper",
+        "/api/files?folder=Broken",
+        "/api/files?folder=Broken/Deeper",
+    ] {
+        let answer = ask(&server, get_json(path)).await;
+        assert_eq!(answer.status(), StatusCode::OK, "{path} opens");
+    }
+}
+
+#[tokio::test]
+async fn the_tree_can_keep_only_what_needs_fixing_and_an_album_says_what_it_is() {
+    let tree = a_library("to-review");
+    for number in ["1", "2", "4"] {
+        let path = tree.path(&format!("Rock/Harvest/{number}.flac"));
+        std::fs::create_dir_all(path.parent().expect("a folder")).expect("creating it");
+        let comments = [
+            ("ALBUM", "Harvest"),
+            ("ARTIST", "Neil Young"),
+            ("TRACKNUMBER", number),
+            ("TRACKTOTAL", "4"),
+        ];
+        std::fs::write(path, fixtures::flac(&comments, false)).expect("writing a flac");
+    }
+    let server = serving(&tree, None);
+
+    let names = |listing: &serde_json::Value| -> Vec<String> {
+        listing["folders"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .map(|row| row["name"].as_str().expect("a name").to_owned())
+            .collect()
+    };
+    let top = json(&server, "/api/folders?only=broken-links,track-gaps").await;
+    assert_eq!(
+        names(&top),
+        ["Blue Note", "Rock"],
+        "a broken playlist and a missing track, and nothing where nothing is wrong"
+    );
+    assert_eq!(top["folders"][1]["checks"], 1);
+    let inside = json(
+        &server,
+        "/api/folders?under=Rock&only=broken-links,track-gaps",
+    )
+    .await;
+    assert_eq!(names(&inside), ["Harvest"], "every level keeps to them");
+
+    let files = json(&server, "/api/files?folder=Rock/Harvest").await;
+    assert_eq!(
+        files["albums"][0]["checks"][0]["says"], "Track 3 of 4 is missing",
+        "{files}"
+    );
+}
+
+#[tokio::test]
+async fn the_checks_the_tree_can_be_narrowed_to_are_declared_with_their_words() {
+    let tree = a_library("flags");
+    let server = serving(&tree, None);
+    let declared = json(&server, "/api/flags").await;
+    let checks = declared.as_array().expect("a list");
+    let genre = checks
+        .iter()
+        .find(|one| one["flag"] == "no-genre")
+        .unwrap_or_else(|| panic!("no genre is offered: {declared}"));
+    assert_eq!(genre["group"], "tags");
+    for one in checks {
+        let name = &one["flag"];
+        assert!(
+            one["label"].as_str().is_some_and(|label| !label.is_empty()),
+            "{name}"
+        );
+        assert!(
+            one["says"].as_str().is_some_and(|says| !says.is_empty()),
+            "{name}"
+        );
+        let asked = ask(
+            &server,
+            get_json(&format!(
+                "/api/folders?only={}",
+                name.as_str().expect("a name")
+            )),
+        )
+        .await;
+        assert_eq!(
+            asked.status(),
+            StatusCode::OK,
+            "{name} is a name the listing takes"
+        );
+    }
+    let unknown = ask(&server, get_json("/api/folders?only=everything")).await;
+    assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_track_in_two_folders_names_the_other_and_both_folders_are_kept() {
+    let tree = a_library("duplicate-tracks");
+    let comments = [("TITLE", "Harvest Moon"), ("ARTIST", "Neil Young")];
+    for path in ["Neil Young/Harvest/05.flac", "Selection/harvest moon.flac"] {
+        let path = tree.path(path);
+        std::fs::create_dir_all(path.parent().expect("a folder")).expect("creating it");
+        std::fs::write(path, fixtures::flac(&comments, false)).expect("writing a flac");
+    }
+    let server = serving(&tree, None);
+
+    let found = json(&server, "/api/track?path=Neil%20Young/Harvest/05.flac").await;
+    assert_eq!(
+        found["copies"],
+        serde_json::json!(["Selection/harvest moon.flac"])
+    );
+
+    let top = json(&server, "/api/folders?only=duplicate-tracks").await;
+    let names: Vec<&str> = top["folders"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .map(|row| row["name"].as_str().expect("a name"))
+        .collect();
+    assert_eq!(names, ["Neil Young", "Selection"], "{top}");
+}
+
+#[tokio::test]
+async fn a_genre_written_as_fewer_files_write_it_says_how_the_rest_write_it() {
+    let tree = a_library("genre-spellings");
+    for (path, genre) in [
+        ("Jungle/A/01.flac", "Drum & Bass"),
+        ("Jungle/A/02.flac", "Drum & Bass"),
+        ("Jungle/B/01.flac", "Drum and Bass"),
+        ("Mixes/01.flac", "Drum n Bass"),
+    ] {
+        let path = tree.path(path);
+        std::fs::create_dir_all(path.parent().expect("a folder")).expect("creating it");
+        let comments = [("TITLE", path.to_str().expect("a name")), ("GENRE", genre)];
+        std::fs::write(&path, fixtures::flac(&comments, false)).expect("writing a flac");
+    }
+    let server = serving(&tree, None);
+
+    let found = json(&server, "/api/track?path=Mixes/01.flac").await;
+    assert_eq!(
+        found["spellings"],
+        serde_json::json!([
+            "Genre Drum n Bass is written Drum & Bass on 2 files and Drum and Bass on 1"
+        ])
+    );
+    let reference = json(&server, "/api/track?path=Jungle/A/01.flac").await;
+    assert!(reference.get("spellings").is_none(), "{reference}");
+
+    let top = json(&server, "/api/folders?only=genre-spellings").await;
+    let names: Vec<&str> = top["folders"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .map(|row| row["name"].as_str().expect("a name"))
+        .collect();
+    assert_eq!(names, ["Jungle", "Mixes"], "{top}");
 }
 
 #[tokio::test]
