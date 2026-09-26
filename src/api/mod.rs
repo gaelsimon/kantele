@@ -17,6 +17,7 @@ use serde::Serialize;
 
 pub mod describe;
 pub mod files;
+pub mod flags;
 pub mod folders;
 pub mod log;
 pub mod menu;
@@ -101,6 +102,8 @@ fn refusals_now(control: &Control, library: &crate::index::Library) -> Refusals 
 pub fn router(control: Shared) -> Router {
     Router::new()
         .route("/config", get(page))
+        // The page reads the rest of the address itself: a tab, a folder, a file.
+        .route("/config/{*at}", get(page))
         .route("/favicon.ico", get(favicon))
         .route("/api/status", get(status::status))
         .route("/api/log", get(log::tail))
@@ -110,6 +113,7 @@ pub fn router(control: Shared) -> Router {
             get(settings::configuration).put(settings::write_configuration),
         )
         .route("/api/folders", get(folder_tree))
+        .route("/api/flags", get(flag_catalogue))
         .route("/api/files", get(folder_files))
         .route("/api/menu", get(menu_level))
         .route("/api/track", get(track_detail))
@@ -226,6 +230,10 @@ async fn folder_tree(
     answer(&headers, &listing, || folder_lines(&listing))
 }
 
+async fn flag_catalogue(headers: HeaderMap) -> Response {
+    answer(&headers, &flags::CHECKS, flags::lines)
+}
+
 #[derive(serde::Deserialize)]
 struct AskedProblems {
     #[serde(default)]
@@ -234,8 +242,8 @@ struct AskedProblems {
     cause: String,
 }
 
-/// The files behind one line of a folder row. Only the first hundred of each cause are kept, so
-/// `shown` can be shorter than `total` or empty.
+/// The files behind one line of a folder row. One answer names a hundred at most, so `shown` can be
+/// shorter than `total`.
 #[derive(serde::Serialize)]
 struct ProblemFiles {
     folder: String,
@@ -265,7 +273,7 @@ async fn problem_files(
                     .into_response();
             };
             let refusals = refusals_now(&control, &served.library);
-            // Counted off the folder tallies: only the first hundred of a cause are kept.
+            // Counted off the folder tallies: each folder keeps a hundred of a cause.
             (
                 refusals
                     .held_under(*cause, &asked.folder)

@@ -236,8 +236,8 @@
       </div>
     {/if}
 
-    {#if shape.note && !held}
-      <div class="dim note">{shape.note}</div>
+    {#if setting.note || (shape.note && !held)}
+      <div class="dim note">{[setting.note, held ? '' : shape.note].filter(Boolean).join(' ')}</div>
     {/if}
   </div>
 </div>

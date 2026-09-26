@@ -3,7 +3,7 @@
   import { getTrack, type TrackDetail } from './api';
   import { length, size } from './say';
 
-  let { path }: { path: string } = $props();
+  let { path, onopen }: { path: string; onopen: (path: string) => void } = $props();
 
   let found = $state<TrackDetail | 'asking' | 'gone' | null>(null);
 
@@ -70,6 +70,22 @@
       </div>
     {/if}
   </div>
+  {#if found.copies && found.copies.length > 0}
+    <div class="sect">
+      <div class="cap">Copies</div>
+      {#each found.copies as copy (copy)}
+        <button class="quiet mono copy" onclick={() => onopen(copy)}>{copy}</button>
+      {/each}
+    </div>
+  {/if}
+  {#if found.spellings && found.spellings.length > 0}
+    <div class="sect">
+      <div class="cap">Spelled otherwise</div>
+      {#each found.spellings as spelled (spelled)}
+        <div class="spelled">{spelled}</div>
+      {/each}
+    </div>
+  {/if}
 {/if}
 
 <style>
@@ -123,6 +139,18 @@
     border: 1px solid var(--hairline);
     background: var(--row);
     color: var(--ink-soft);
+  }
+
+  .copy {
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .spelled {
+    font-size: 13px;
+    color: var(--ink-soft);
+    overflow-wrap: anywhere;
   }
 
   .path b {

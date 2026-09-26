@@ -4,10 +4,13 @@
   import { halves, stepped, type Entry, type Level } from './columns';
   import { Walk } from './walk.svelte';
 
+  type Picked = 'click' | 'key' | 'land';
+
   let {
     load,
     reload = 0,
     start = '',
+    landing = '',
     tall = 'min(60vh, 620px)',
     framed = true,
     selected = null,
@@ -25,13 +28,16 @@
     reload?: number;
     /// A path to open down to when the columns first appear.
     start?: string;
+    /// A path to open down to and pick whenever the columns fill again, as a link to it does.
+    landing?: string;
     /// How tall the columns stand. One height for as long as they are open, whatever they hold.
     tall?: string;
     /// Whether the columns draw their own frame, or sit inside one the page draws.
     framed?: boolean;
     /// The path the page is showing, which the column draws as picked.
     selected?: string | null;
-    onpick: (entry: Entry<T>) => void;
+    /// `click` and `key` are the owner's; `land` is a path the page asked to open.
+    onpick: (entry: Entry<T>, how: Picked) => void;
     /// What is drawn before the name of a row, beside it, and at the right of the column.
     before?: Snippet<[Entry<T>]>;
     beside?: Snippet<[Entry<T>]>;
@@ -52,13 +58,27 @@
   const columns = $derived(walk.columns);
   const lists = $derived(columns.map((under) => walk.entries(under)));
 
-  function pick(column: number, index: number) {
+  function pick(column: number, index: number, how: Picked = 'key') {
     const entry = lists[column]?.[index];
     if (!entry) return;
     active = { column, index };
     if (entry.folder) walk.open(column, entry.path);
     else walk.close(column);
-    onpick(entry);
+    onpick(entry, how);
+  }
+
+  /// Opens down to a path and picks it, or closes every column for the top of the listing.
+  async function land(walking: Walk<T>, target: string) {
+    if (!target) {
+      if (walking.trail.length > 0) walking.close(0);
+      active = null;
+      return;
+    }
+    await walking.revealTo(target);
+    if (walking !== walk) return;
+    const column = columns.length - 1;
+    const index = (lists[column] ?? []).findIndex((entry) => entry.path === target);
+    if (index >= 0) pick(column, index, 'land');
   }
 
   /// Left and right change column, up and down move inside one.
@@ -88,7 +108,7 @@
     const row = lists[column]?.find((one) => one.path === columns[column + 1]);
     walk.close(column);
     active = null;
-    if (row) onpick(row);
+    if (row) onpick(row, 'click');
   }
 
   $effect(() => {
@@ -97,7 +117,18 @@
       active = null;
       void walking.restart().then(() => {
         if (start) return walking.revealTo(start);
+        if (landing) return land(walking, landing);
       });
+    });
+  });
+
+  // A path asked for that is not the one shown: the history moved, and the columns follow it.
+  $effect(() => {
+    const target = landing;
+    untrack(() => {
+      if (target && target === selected) return;
+      if (walk.levels[''] === undefined) return;
+      void land(walk, target);
     });
   });
 
@@ -142,7 +173,7 @@
             class:here={selected === entry.path}
             bind:this={buttons[`${at}:${index}`]}
             title={entry.path}
-            onclick={() => pick(at, index)}
+            onclick={() => pick(at, index, 'click')}
             onfocus={() => (active = { column: at, index })}
             onkeydown={key}
           >

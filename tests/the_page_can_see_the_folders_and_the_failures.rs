@@ -471,14 +471,18 @@ async fn the_tree_can_keep_only_what_needs_fixing_and_an_album_says_what_it_is()
             .map(|row| row["name"].as_str().expect("a name").to_owned())
             .collect()
     };
-    let top = json(&server, "/api/folders?review=true").await;
+    let top = json(&server, "/api/folders?only=broken-links,track-gaps").await;
     assert_eq!(
         names(&top),
         ["Blue Note", "Rock"],
         "a broken playlist and a missing track, and nothing where nothing is wrong"
     );
     assert_eq!(top["folders"][1]["checks"], 1);
-    let inside = json(&server, "/api/folders?under=Rock&review=true").await;
+    let inside = json(
+        &server,
+        "/api/folders?under=Rock&only=broken-links,track-gaps",
+    )
+    .await;
     assert_eq!(names(&inside), ["Harvest"], "every level keeps to them");
 
     let files = json(&server, "/api/files?folder=Rock/Harvest").await;
@@ -486,6 +490,108 @@ async fn the_tree_can_keep_only_what_needs_fixing_and_an_album_says_what_it_is()
         files["albums"][0]["checks"][0]["says"], "Track 3 of 4 is missing",
         "{files}"
     );
+}
+
+#[tokio::test]
+async fn the_checks_the_tree_can_be_narrowed_to_are_declared_with_their_words() {
+    let tree = a_library("flags");
+    let server = serving(&tree, None);
+    let declared = json(&server, "/api/flags").await;
+    let checks = declared.as_array().expect("a list");
+    let genre = checks
+        .iter()
+        .find(|one| one["flag"] == "no-genre")
+        .unwrap_or_else(|| panic!("no genre is offered: {declared}"));
+    assert_eq!(genre["group"], "tags");
+    for one in checks {
+        let name = &one["flag"];
+        assert!(
+            one["label"].as_str().is_some_and(|label| !label.is_empty()),
+            "{name}"
+        );
+        assert!(
+            one["says"].as_str().is_some_and(|says| !says.is_empty()),
+            "{name}"
+        );
+        let asked = ask(
+            &server,
+            get_json(&format!(
+                "/api/folders?only={}",
+                name.as_str().expect("a name")
+            )),
+        )
+        .await;
+        assert_eq!(
+            asked.status(),
+            StatusCode::OK,
+            "{name} is a name the listing takes"
+        );
+    }
+    let unknown = ask(&server, get_json("/api/folders?only=everything")).await;
+    assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_track_in_two_folders_names_the_other_and_both_folders_are_kept() {
+    let tree = a_library("duplicate-tracks");
+    let comments = [("TITLE", "Harvest Moon"), ("ARTIST", "Neil Young")];
+    for path in ["Neil Young/Harvest/05.flac", "Selection/harvest moon.flac"] {
+        let path = tree.path(path);
+        std::fs::create_dir_all(path.parent().expect("a folder")).expect("creating it");
+        std::fs::write(path, fixtures::flac(&comments, false)).expect("writing a flac");
+    }
+    let server = serving(&tree, None);
+
+    let found = json(&server, "/api/track?path=Neil%20Young/Harvest/05.flac").await;
+    assert_eq!(
+        found["copies"],
+        serde_json::json!(["Selection/harvest moon.flac"])
+    );
+
+    let top = json(&server, "/api/folders?only=duplicate-tracks").await;
+    let names: Vec<&str> = top["folders"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .map(|row| row["name"].as_str().expect("a name"))
+        .collect();
+    assert_eq!(names, ["Neil Young", "Selection"], "{top}");
+}
+
+#[tokio::test]
+async fn a_genre_written_as_fewer_files_write_it_says_how_the_rest_write_it() {
+    let tree = a_library("genre-spellings");
+    for (path, genre) in [
+        ("Jungle/A/01.flac", "Drum & Bass"),
+        ("Jungle/A/02.flac", "Drum & Bass"),
+        ("Jungle/B/01.flac", "Drum and Bass"),
+        ("Mixes/01.flac", "Drum n Bass"),
+    ] {
+        let path = tree.path(path);
+        std::fs::create_dir_all(path.parent().expect("a folder")).expect("creating it");
+        let comments = [("TITLE", path.to_str().expect("a name")), ("GENRE", genre)];
+        std::fs::write(&path, fixtures::flac(&comments, false)).expect("writing a flac");
+    }
+    let server = serving(&tree, None);
+
+    let found = json(&server, "/api/track?path=Mixes/01.flac").await;
+    assert_eq!(
+        found["spellings"],
+        serde_json::json!([
+            "Genre Drum n Bass is written Drum & Bass on 2 files and Drum and Bass on 1"
+        ])
+    );
+    let reference = json(&server, "/api/track?path=Jungle/A/01.flac").await;
+    assert!(reference.get("spellings").is_none(), "{reference}");
+
+    let top = json(&server, "/api/folders?only=genre-spellings").await;
+    let names: Vec<&str> = top["folders"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .map(|row| row["name"].as_str().expect("a name"))
+        .collect();
+    assert_eq!(names, ["Jungle", "Mixes"], "{top}");
 }
 
 #[tokio::test]

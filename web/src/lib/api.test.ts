@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getFolders, getLog, getShares, rescan, writeConfiguration } from './api';
+import { getFiles, getFolders, getLog, getShares, rescan, writeConfiguration } from './api';
 
 /// The last request the page made, and a body of the caller's choosing in reply.
 function answering(body: unknown, ok = true, text?: string) {
@@ -45,17 +45,23 @@ describe('asking for a folder listing', () => {
     expect(asked(fetch)).toBe('/api/folders?q=kremerata&changed=true');
   });
 
-  it('carries the tag a listener is chasing', async () => {
+  it('carries every box ticked in one parameter', async () => {
     const fetch = answering({});
-    await getFolders('', '', false, 'album-artist');
-    expect(asked(fetch)).toBe('/api/folders?missing=album-artist');
+    await getFolders('', '', false, ['duplicate-tracks', 'no-genre']);
+    expect(asked(fetch)).toBe('/api/folders?only=duplicate-tracks%2Cno-genre');
   });
 
-  /// Null is how the page says "no filter", and a literal "null" in the query would be a fault.
-  it('leaves the tag out where none is chased', async () => {
+  /// An empty `only=` would be a question about nothing.
+  it('leaves the boxes out where none is ticked', async () => {
     const fetch = answering({});
-    await getFolders('', '', false, null);
+    await getFolders('', '', false, []);
     expect(asked(fetch)).toBe('/api/folders');
+  });
+
+  it('narrows the files of a folder by the same checks as the folders', async () => {
+    const fetch = answering({});
+    await getFiles('Blue Note', ['no-artist']);
+    expect(asked(fetch)).toBe('/api/files?folder=Blue+Note&only=no-artist');
   });
 
   it('escapes a folder name that would break the query', async () => {

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::config::{Apply, ContentDir, DEFAULT_PORT, Resolved, Source};
-use crate::index::Prefer;
+use crate::index::{Prefer, SKIPPED_FOLDERS};
 
 /// What a page shows beside the field.
 /// The same cost as a badge wears it: a label, never a sentence.
@@ -58,6 +58,9 @@ pub struct Setting {
     /// Every value this setting may take, where they are countable; empty where they are not.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub choices: Vec<Choice>,
+    /// What the server does with it that the value does not say, shown under the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// Every setting in force, with the file that was read, if one was.
@@ -88,6 +91,7 @@ pub fn effective(resolved: &Resolved) -> Effective {
             tag: tag(apply),
             writable,
             choices: choices_for(key),
+            note: note_for(key, resolved.file_path()),
         })
     };
     let menus = config.menu_settings();
@@ -253,6 +257,33 @@ pub fn effective(resolved: &Resolved) -> Effective {
     }
 }
 
+fn note_for(key: &str, file: Option<&Path>) -> Option<String> {
+    match key {
+        "scan.exclude" => Some(format!(
+            "The server does not scan these names or paths, and never scans {}.",
+            either(SKIPPED_FOLDERS)
+        )),
+        "clients" => Some(format!(
+            "Edit the device profiles in {}.",
+            file.map_or_else(
+                || "kantele.toml".to_owned(),
+                |file| file.display().to_string()
+            )
+        )),
+        "log level" => Some("The server reads it from RUST_LOG when it starts.".to_owned()),
+        _ => None,
+    }
+}
+
+/// `a, b or c`.
+fn either(names: &[&str]) -> String {
+    match names.split_last() {
+        Some((last, [])) => (*last).to_owned(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
+
 /// Every value a key may take, where the set is closed.
 fn choices_for(key: &str) -> Vec<Choice> {
     let named = |value: &Prefer, label| Choice {
@@ -302,6 +333,29 @@ mod tests {
             file: None,
             command_line_folder: None,
         }
+    }
+
+    fn note(key: &str) -> String {
+        effective(&resolved(Config::default()))
+            .settings
+            .into_iter()
+            .find(|setting| setting.key == key)
+            .and_then(|setting| setting.note)
+            .unwrap_or_else(|| panic!("{key} carries a note"))
+    }
+
+    #[test]
+    fn the_exclusions_name_every_folder_the_server_never_scans() {
+        let said = note("scan.exclude");
+        for name in SKIPPED_FOLDERS {
+            assert!(said.contains(name), "{name} is left out of: {said}");
+        }
+    }
+
+    #[test]
+    fn the_log_level_says_where_it_is_read_and_it_is_not_the_file() {
+        assert!(note("log level").contains("RUST_LOG"));
+        assert!(!note("log level").contains("kantele.toml"));
     }
 
     #[test]

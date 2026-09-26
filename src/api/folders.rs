@@ -5,6 +5,8 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
+use super::flags::Asking;
+pub use super::flags::Flag;
 use crate::browse::Served;
 use crate::index::{Missing, Refusals, Tally};
 use crate::service::Scope;
@@ -22,11 +24,9 @@ pub struct Asked {
     /// Only the folders the last pass read again.
     #[serde(default)]
     pub changed: bool,
-    /// Only the folders holding tracks that carry no such tag.
-    pub missing: Option<Missing>,
-    /// Only the folders holding something to fix: a problem, or an album a check found wanting.
-    #[serde(default)]
-    pub review: bool,
+    /// Only the folders holding one of these, as `only=duplicate-tracks,no-genre`.
+    #[serde(default, deserialize_with = "super::flags::listed")]
+    pub only: Vec<Flag>,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,8 +54,10 @@ pub struct Row {
     pub notes: usize,
     /// What the checks found in the albums below it.
     pub checks: usize,
-    /// Tracks below it carrying no such tag, where one was asked about.
-    pub missing: usize,
+    /// Files below it holding one of the flags asked for, each counted once.
+    pub found: usize,
+    /// Playlist links below it that a flag asked for, which are no files of their own.
+    pub links: usize,
     /// Whether the last pass read this folder again.
     pub changed: bool,
     /// What to ask `/art/` for: the first track below it that carries a cover, which in a folder
@@ -99,7 +101,7 @@ pub fn listing(
         problems: &problems,
         unserved: &unserved,
         walked,
-        missing: asked.missing,
+        asking: Asking::new(served, &asked.only),
     };
     let wanted = asked.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
     let paths: Vec<String> = match wanted {
@@ -112,8 +114,7 @@ pub fn listing(
         .iter()
         .map(|path| counted.row(path))
         .filter(|row| !asked.changed || row.changed)
-        .filter(|row| !asked.review || row.problems + row.checks > 0)
-        .filter(|row| asked.missing.is_none() || row.missing > 0);
+        .filter(|row| asked.only.is_empty() || row.found + row.links > 0);
     let folders: Vec<Row> = rows.by_ref().take(MOST).collect();
     Some(Listing {
         here: counted.row(&asked.under),
@@ -197,7 +198,7 @@ struct Counting<'a> {
     problems: &'a HashMap<&'a str, Tally>,
     unserved: &'a Unserved<'a>,
     walked: Option<&'a Scope>,
-    missing: Option<Missing>,
+    asking: Asking<'a>,
 }
 
 impl Counting<'_> {
@@ -209,14 +210,40 @@ impl Counting<'_> {
             .count()
     }
 
+    fn refused(&self, problems: &Tally, flag: Flag) -> usize {
+        if !self.asking.asks(flag) {
+            return 0;
+        }
+        problems
+            .iter()
+            .filter(|(cause, _)| flag.counts(**cause))
+            .map(|(_, count)| count)
+            .sum()
+    }
+
+    /// A track and a file the server did not serve are never the same file, so the two add up.
+    fn found(&self, tracks: &[usize], problems: &Tally) -> usize {
+        if !self.asking.anything() {
+            return 0;
+        }
+        let flagged = tracks
+            .iter()
+            .filter(|at| {
+                self.served
+                    .library
+                    .tracks()
+                    .get(**at)
+                    .is_some_and(|track| self.asking.holds(**at, track))
+            })
+            .count();
+        flagged + self.refused(problems, Flag::Unserved)
+    }
+
     fn row(&self, path: &str) -> Row {
         let view = &self.served.view;
         let library = &self.served.library;
         let below = view.folders().tracks_below(path);
         let albums = crate::browse::albums_of(library, &below);
-        let missing = self
-            .missing
-            .map_or(0, |wanted| self.lacking(&below, wanted));
         let here = crate::browse::tracks_in(view, path);
         let own = crate::browse::albums_of(library, &here);
         let artwork = below
@@ -249,7 +276,8 @@ impl Counting<'_> {
                 .iter()
                 .map(|album| self.served.counts.checks.on(&album.id).len())
                 .sum(),
-            missing,
+            found: self.found(&below, problems),
+            links: self.refused(problems, Flag::BrokenLinks),
             changed: self
                 .walked
                 .is_some_and(|scope| scope.covers(std::path::Path::new(path))),
@@ -399,19 +427,22 @@ mod tests {
         scanned
     }
 
-    fn lacking(served: &Served, wanted: Missing, under: &str) -> Vec<Row> {
+    fn flagged(served: &Served, refusals: &Refusals, only: &[Flag], under: &str) -> Listing {
         listing(
             served,
-            &Refusals::default(),
+            refusals,
             None,
             &Asked {
                 under: under.to_owned(),
-                missing: Some(wanted),
+                only: only.to_vec(),
                 ..Asked::default()
             },
         )
         .expect("the folder is in the tree")
-        .folders
+    }
+
+    fn lacking(served: &Served, wanted: Flag, under: &str) -> Vec<Row> {
+        flagged(served, &Refusals::default(), &[wanted], under).folders
     }
 
     #[test]
@@ -428,17 +459,17 @@ mod tests {
             crate::browse::Settings::default(),
         );
 
-        let top = lacking(&served, Missing::Date, "");
+        let top = lacking(&served, Flag::Lacking(Missing::Date), "");
         assert_eq!(top.len(), 1, "the folder whose tracks all carry one is out");
         assert_eq!(top[0].name, "Blue Note");
-        assert_eq!(top[0].missing, 1);
+        assert_eq!(top[0].found, 1);
 
         assert!(
-            lacking(&served, Missing::Genre, "").len() > 1,
+            lacking(&served, Flag::Lacking(Missing::Genre), "").len() > 1,
             "a tag nothing carries keeps every folder holding a track"
         );
         assert!(
-            lacking(&served, Missing::Album, "").is_empty(),
+            lacking(&served, Flag::Lacking(Missing::Album), "").is_empty(),
             "and a tag everything carries keeps none"
         );
     }
@@ -518,10 +549,10 @@ mod tests {
     }
 
     #[test]
-    fn a_row_counts_nothing_missing_where_none_was_asked_about() {
+    fn a_row_counts_nothing_where_nothing_was_asked_about() {
         let served = served();
         let row = &rows(&served, &Refusals::default(), "")[0];
-        assert_eq!(row.missing, 0, "though every track here lacks a date");
+        assert_eq!(row.found, 0, "though every track here lacks a date");
     }
 
     #[test]
@@ -545,7 +576,7 @@ mod tests {
             &Refusals::default(),
             None,
             &Asked {
-                missing: Some(Missing::Album),
+                only: vec![Flag::Lacking(Missing::Album)],
                 ..Asked::default()
             },
         )
@@ -557,6 +588,175 @@ mod tests {
         );
         assert_eq!(listed.folders[0].path, last);
         assert!(!listed.more, "and nothing else answers it");
+    }
+
+    fn numbered(relative: &str, number: u32, total: u32) -> Scanned {
+        let mut scanned = track(relative, "Harvest");
+        scanned.tags.track_number = Some(number);
+        scanned.tags.track_total = Some(total);
+        scanned
+    }
+
+    #[test]
+    fn a_check_asked_for_keeps_the_folders_holding_its_album_and_counts_its_files() {
+        let served = Served::new(
+            Library::build(
+                "Music".to_owned(),
+                &[
+                    numbered("Rock/Harvest/1.flac", 1, 4),
+                    numbered("Rock/Harvest/2.flac", 2, 4),
+                    numbered("Rock/Harvest/4.flac", 4, 4),
+                    track("Jazz/Kind of Blue/01.flac", "Kind of Blue"),
+                ],
+            ),
+            crate::browse::Settings::default(),
+        );
+
+        let incomplete = flagged(&served, &Refusals::default(), &[Flag::TrackGaps], "");
+        let names: Vec<&str> = incomplete
+            .folders
+            .iter()
+            .map(|row| row.name.as_str())
+            .collect();
+        assert_eq!(names, ["Rock"]);
+        assert_eq!(incomplete.folders[0].found, 3, "every file of the album");
+        assert_eq!(incomplete.here.found, 3, "and the library counts the same");
+        assert!(
+            flagged(&served, &Refusals::default(), &[Flag::Unmarked], "")
+                .folders
+                .is_empty(),
+            "a check that found nothing keeps nothing"
+        );
+    }
+
+    #[test]
+    fn a_file_the_server_did_not_serve_is_a_file_and_a_broken_link_is_not() {
+        let served = served();
+        let mut refusals = Refusals::default();
+        refusals.refuse(Cause::UnreadableFile, "Blue Note/Sierra/03.flac", None);
+        refusals.refuse(
+            Cause::MissingEntry,
+            "Blue Note/set.m3u",
+            Some("gone.flac".into()),
+        );
+        refusals.refuse(
+            Cause::MissingEntry,
+            "Blue Note/set.m3u",
+            Some("lost.flac".into()),
+        );
+        let label = |only: &[Flag]| -> (usize, usize) {
+            let listed = flagged(&served, &refusals, only, "");
+            let row = listed
+                .folders
+                .iter()
+                .find(|row| row.name == "Blue Note")
+                .expect("listed");
+            (row.found, row.links)
+        };
+
+        assert_eq!(label(&[Flag::Unserved, Flag::BrokenLinks]), (1, 2));
+        assert_eq!(label(&[Flag::Unserved]), (1, 0));
+        assert_eq!(
+            label(&[Flag::BrokenLinks]),
+            (0, 2),
+            "a folder holding only broken links is kept"
+        );
+    }
+
+    #[test]
+    fn a_file_holding_two_of_the_flags_asked_for_is_counted_once() {
+        let served = served();
+        let top = flagged(
+            &served,
+            &Refusals::default(),
+            &[Flag::Lacking(Missing::Date), Flag::Lacking(Missing::Genre)],
+            "",
+        );
+        let autechre = top
+            .folders
+            .iter()
+            .find(|row| row.name == "Autechre")
+            .expect("listed");
+        assert_eq!(
+            autechre.found, 1,
+            "one track with neither a date nor a genre"
+        );
+    }
+
+    #[test]
+    fn a_track_held_in_two_folders_keeps_both_and_counts_one_file_in_each() {
+        let mut album = track("Neil Young/Harvest/05.flac", "Harvest");
+        let mut picked = track("Selection/harvest moon.mp3", "Selection");
+        for one in [&mut album, &mut picked] {
+            one.tags.title = Some("Harvest Moon".to_owned());
+            one.tags.artists = vec!["Neil Young".to_owned()];
+        }
+        let served = Served::new(
+            Library::build(
+                "Music".to_owned(),
+                &[album, picked, track("Autechre/01.flac", "Amber")],
+            ),
+            crate::browse::Settings::default(),
+        );
+        let top = flagged(&served, &Refusals::default(), &[Flag::DuplicateTracks], "");
+        let found: Vec<(&str, usize)> = top
+            .folders
+            .iter()
+            .map(|row| (row.name.as_str(), row.found))
+            .collect();
+        assert_eq!(found, [("Neil Young", 1), ("Selection", 1)]);
+        assert_eq!(top.here.found, 2);
+    }
+
+    #[test]
+    fn a_genre_spelled_as_fewer_files_spell_it_keeps_the_folder_holding_it_and_counts_its_files() {
+        let genred = |relative: &str, genre: &str| {
+            let mut one = track(relative, relative);
+            one.tags.genres = vec![genre.to_owned()];
+            one
+        };
+        let served = Served::new(
+            Library::build(
+                "Music".to_owned(),
+                &[
+                    genred("Jungle/A/01.flac", "Drum & Bass"),
+                    genred("Jungle/A/02.flac", "Drum & Bass"),
+                    genred("Jungle/B/01.flac", "drum & bass"),
+                    genred("Mixes/01.flac", "Drum n Bass"),
+                    genred("Mixes/02.flac", "Drum n Bass"),
+                    genred("Mixes/03.flac", "Jungle"),
+                ],
+            ),
+            crate::browse::Settings::default(),
+        );
+        let spelled = flagged(&served, &Refusals::default(), &[Flag::GenreSpellings], "");
+        let found: Vec<(&str, usize)> = spelled
+            .folders
+            .iter()
+            .map(|row| (row.name.as_str(), row.found))
+            .collect();
+        assert_eq!(found, [("Mixes", 2)]);
+        assert_eq!(spelled.here.found, 2);
+        assert!(
+            flagged(&served, &Refusals::default(), &[Flag::ArtistSpellings], "")
+                .folders
+                .is_empty(),
+            "no artist is spelled two ways"
+        );
+    }
+
+    #[test]
+    fn the_flags_are_asked_for_by_name_in_one_parameter() {
+        let asked = |query: &str| {
+            let uri: axum::http::Uri = format!("/api/folders?{query}").parse().expect("a uri");
+            axum::extract::Query::<Asked>::try_from_uri(&uri).map(|asked| asked.0.only)
+        };
+        assert_eq!(
+            asked("only=duplicate-tracks,no-genre").expect("two names"),
+            [Flag::DuplicateTracks, Flag::Lacking(Missing::Genre)]
+        );
+        assert!(asked("under=Rock").expect("none").is_empty());
+        assert!(asked("only=everything").is_err(), "a name no flag has");
     }
 
     #[test]

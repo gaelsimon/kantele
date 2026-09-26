@@ -70,7 +70,8 @@ name.
 **A compilation** is an album by nobody in particular. Set `COMPILATION` to 1, or `ALBUMARTIST` to
 `Various Artists`. The album is then not listed under any one artist in **Artist**, and each track
 is still found under its performer in **All Artists**. `Various`, `VA`, `V/A`, `Unknown Artist` and
-`None` are treated the same way as `Various Artists`.
+`None` are treated the same way as `Various Artists`. **Unmarked compilations** on the Library tab
+finds the albums by many artists that carry neither.
 
 ## Several values in one tag
 
@@ -112,5 +113,5 @@ again.
 ## Tracks with no tags
 
 A track with no tags at all is under **[untagged]**, titled by its file name, and in the folder
-view. The Library tab counts the tracks with no artist, no date, no genre or no cover, and each
-count opens onto the folders that hold them.
+view. On the Library tab, the **Tags** menu keeps the folders holding tracks with no artist, no
+album, no genre, no cover or no date.

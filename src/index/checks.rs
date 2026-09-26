@@ -1,12 +1,16 @@
 //! What a listener would want fixed in an album's tags, where no pass refused anything.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::time::Duration;
 
-use crate::index::{Album, Library, Track, fold};
+use crate::index::{Album, Library, Spelling, Track, fold};
 use crate::object::ObjectId;
 
 /// Below this on its longer side a cover shows blurred on a tablet or a television.
 pub const SMALL_COVER: u32 = 500;
+
+/// Two tracks of one title and one artist this close in length are taken for one recording.
+pub const SAME_LENGTH: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Check {
@@ -15,10 +19,6 @@ pub enum Check {
         disc: Option<u32>,
         missing: Vec<u32>,
         total: u32,
-    },
-    /// Another album carries the same title and credit, so a player lists the two alike.
-    Twin {
-        folder: String,
     },
     /// No album artist and no compilation flag, over tracks by this many artists.
     Unmarked {
@@ -33,11 +33,17 @@ pub enum Check {
 #[derive(Clone, Debug, Default)]
 pub struct Checks {
     by_album: HashMap<ObjectId, Vec<Check>>,
+    /// The tracks holding one recording, by their index in the library.
+    copies: Vec<Vec<usize>>,
+    /// Which of `copies` each track that has one is in.
+    copied: HashMap<usize, usize>,
+    genres: Spelling,
+    /// Artists and album artists together, as one name is either.
+    artists: Spelling,
 }
 
 impl Checks {
     pub fn of(library: &Library) -> Self {
-        let twins = twins(library);
         let mut by_album: HashMap<ObjectId, Vec<Check>> = HashMap::new();
         for album in library.albums() {
             let tracks: Vec<&Track> = album
@@ -46,20 +52,136 @@ impl Checks {
                 .filter_map(|at| library.tracks().get(*at))
                 .collect();
             let mut found = incomplete(library, album);
-            found.extend(twins.get(&album.id).map(|folder| Check::Twin {
-                folder: folder.clone(),
-            }));
             found.extend(unmarked(album, &tracks));
             found.extend(small_cover(album));
             if !found.is_empty() {
                 by_album.insert(album.id.clone(), found);
             }
         }
-        Self { by_album }
+        let copies = recordings(library.tracks());
+        let copied = copies
+            .iter()
+            .enumerate()
+            .flat_map(|(group, tracks)| tracks.iter().map(move |at| (*at, group)))
+            .collect();
+        let tracks = library.tracks();
+        Self {
+            by_album,
+            copies,
+            copied,
+            genres: Spelling::of(tracks, |track| track.genres.iter().map(String::as_str)),
+            artists: Spelling::of(tracks, |track| {
+                track
+                    .artists
+                    .iter()
+                    .chain(&track.album_artists)
+                    .map(|one| one.name.as_str())
+            }),
+        }
     }
 
     pub fn on(&self, album: &ObjectId) -> &[Check] {
         self.by_album.get(album).map_or(&[], Vec::as_slice)
+    }
+
+    pub fn copied(&self, track: usize) -> bool {
+        self.copied.contains_key(&track)
+    }
+
+    pub fn genres(&self) -> &Spelling {
+        &self.genres
+    }
+
+    pub fn artists(&self) -> &Spelling {
+        &self.artists
+    }
+
+    /// The other tracks holding the recording this one holds.
+    pub fn copies_of(&self, track: usize) -> impl Iterator<Item = usize> + '_ {
+        self.copied
+            .get(&track)
+            .into_iter()
+            .flat_map(|group| self.copies[*group].iter().copied())
+            .filter(move |at| *at != track)
+    }
+}
+
+/// One recording is one MusicBrainz recording, or one title by one artist at about one length.
+fn recordings(tracks: &[Track]) -> Vec<Vec<usize>> {
+    let mut joined = Joined::new(tracks.len());
+    let mut recorded: HashMap<&str, usize> = HashMap::new();
+    let mut named: HashMap<(String, Vec<String>), Vec<usize>> = HashMap::new();
+    for (at, track) in tracks.iter().enumerate() {
+        if let Some(recording) = track.recording_mbid.as_deref() {
+            let first = *recorded.entry(recording).or_insert(at);
+            if first != at {
+                joined.join(first, at);
+            }
+        }
+        // A title the file name stood in for, or no artist, says nothing of the recording.
+        if !track.title_tagged || track.artists.is_empty() {
+            continue;
+        }
+        let mut artists: Vec<String> = track.artists.iter().map(|one| fold(&one.name)).collect();
+        artists.sort_unstable();
+        artists.dedup();
+        named
+            .entry((fold(&track.title), artists))
+            .or_default()
+            .push(at);
+    }
+    for mut alike in named.into_values().filter(|alike| alike.len() > 1) {
+        alike.sort_by_key(|at| tracks[*at].duration);
+        for pair in alike.windows(2) {
+            let apart = tracks[pair[1]].duration - tracks[pair[0]].duration;
+            if apart <= SAME_LENGTH {
+                joined.join(pair[0], pair[1]);
+            }
+        }
+    }
+    joined.groups()
+}
+
+/// Tracks found to hold one recording, merged as they are found.
+struct Joined {
+    parent: Vec<usize>,
+    touched: Vec<usize>,
+}
+
+impl Joined {
+    fn new(tracks: usize) -> Self {
+        Self {
+            parent: (0..tracks).collect(),
+            touched: Vec::new(),
+        }
+    }
+
+    fn root(&mut self, mut at: usize) -> usize {
+        while self.parent[at] != at {
+            self.parent[at] = self.parent[self.parent[at]];
+            at = self.parent[at];
+        }
+        at
+    }
+
+    fn join(&mut self, one: usize, other: usize) {
+        let (one_root, other_root) = (self.root(one), self.root(other));
+        if one_root != other_root {
+            self.parent[other_root] = one_root;
+        }
+        self.touched.extend([one, other]);
+    }
+
+    fn groups(mut self) -> Vec<Vec<usize>> {
+        let mut by_root: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+        for at in std::mem::take(&mut self.touched) {
+            let root = self.root(at);
+            by_root.entry(root).or_default().insert(at);
+        }
+        by_root
+            .into_values()
+            .map(|group| group.into_iter().collect())
+            .collect()
     }
 }
 
@@ -104,91 +226,6 @@ fn agreed_total(tracks: &[&Track]) -> Option<u32> {
     rest.iter()
         .all(|track| track.track_total == Some(total))
         .then_some(total)
-}
-
-/// Each album whose title and credit another album carries, with the folder of one such other.
-fn twins(library: &Library) -> HashMap<ObjectId, String> {
-    let mut alike: HashMap<(String, Vec<String>), Vec<&Album>> = HashMap::new();
-    for album in library.albums() {
-        let credit = album.artists.iter().map(|one| fold(&one.name)).collect();
-        alike
-            .entry((fold(&album.title), credit))
-            .or_default()
-            .push(album);
-    }
-    let mut twins = HashMap::new();
-    for group in alike.values().filter(|group| group.len() > 1) {
-        let folders: Vec<String> = group
-            .iter()
-            .map(|album| folder_of(library, album))
-            .collect();
-        for (at, album) in group.iter().enumerate() {
-            let other = group.iter().enumerate().find(|(elsewhere, other)| {
-                *elsewhere != at
-                    && folders[*elsewhere] != folders[at]
-                    && copies(library, album, other)
-            });
-            if let Some((elsewhere, _)) = other {
-                twins.insert(album.id.clone(), folders[elsewhere].clone());
-            }
-        }
-    }
-    twins
-}
-
-/// Two copies of one album: each holds most of it, and neither is a few tracks of the other.
-fn copies(library: &Library, one: &Album, other: &Album) -> bool {
-    let (small, large) = if one.tracks.len() <= other.tracks.len() {
-        (one.tracks.len(), other.tracks.len())
-    } else {
-        (other.tracks.len(), one.tracks.len())
-    };
-    whole(library, one) && whole(library, other) && small * 2 >= large
-}
-
-/// Whether an album holds most of the tracks its files say it has, where they say it.
-fn whole(library: &Library, album: &Album) -> bool {
-    let totals: Option<Vec<u32>> = album
-        .discs
-        .iter()
-        .map(|disc| {
-            let tracks: Vec<&Track> = disc
-                .tracks
-                .iter()
-                .filter_map(|at| library.tracks().get(*at))
-                .collect();
-            agreed_total(&tracks)
-        })
-        .collect();
-    totals.is_none_or(|totals| album.tracks.len() * 2 > totals.iter().sum::<u32>() as usize)
-}
-
-/// The deepest folder holding every track of an album, which is the album's own for one on discs.
-fn folder_of(library: &Library, album: &Album) -> String {
-    let mut folders = album
-        .tracks
-        .iter()
-        .filter_map(|at| library.tracks().get(*at))
-        .map(|track| {
-            track
-                .relative
-                .rfind('/')
-                .map_or("", |cut| &track.relative[..cut])
-        });
-    let Some(first) = folders.next() else {
-        return String::new();
-    };
-    let mut shared: Vec<&str> = first.split('/').collect();
-    for folder in folders {
-        let parts: Vec<&str> = folder.split('/').collect();
-        let same = shared
-            .iter()
-            .zip(&parts)
-            .take_while(|(left, right)| left == right)
-            .count();
-        shared.truncate(same);
-    }
-    shared.join("/")
 }
 
 fn unmarked(album: &Album, tracks: &[&Track]) -> Option<Check> {
@@ -311,76 +348,6 @@ mod tests {
     }
 
     #[test]
-    fn the_same_album_in_two_folders_names_the_other_folder() {
-        let mut files = of_twelve("_FLAC/Harvest", &(1..=12).collect::<Vec<_>>());
-        files.extend(of_twelve("_ITUNES/Harvest", &(1..=12).collect::<Vec<_>>()));
-        let checks = checks_of(&files);
-        assert_eq!(checks.len(), 2, "two albums");
-        let others: Vec<&Check> = checks.iter().flatten().collect();
-        assert!(others.contains(&&Check::Twin {
-            folder: "_ITUNES/Harvest".to_owned()
-        }));
-        assert!(others.contains(&&Check::Twin {
-            folder: "_FLAC/Harvest".to_owned()
-        }));
-    }
-
-    #[test]
-    fn a_few_tracks_copied_out_of_an_album_do_not_make_a_twin_of_it() {
-        let mut files = of_twelve("_FLAC/Harvest", &(1..=12).collect::<Vec<_>>());
-        files.extend(of_twelve("_mariage/selection", &[3]));
-        files.extend(of_twelve("_best/Harvest", &[1, 2, 3]));
-        assert!(
-            checks_of(&files)
-                .iter()
-                .flatten()
-                .all(|check| !matches!(check, Check::Twin { .. })),
-            "a selection folder is not a second copy"
-        );
-    }
-
-    #[test]
-    fn a_two_track_ep_in_two_folders_is_a_twin_with_or_without_a_total() {
-        let ep = |folder: &str, total: Option<u32>| -> Vec<Scanned> {
-            (1..=2)
-                .map(|n| {
-                    let mut one = file(&format!("{folder}/{n}.flac"), "Fauna", "Motin", Some(n));
-                    one.tags.track_total = total;
-                    one
-                })
-                .collect()
-        };
-        for total in [Some(2), None] {
-            let mut files = ep("_FLAC/Fauna", total);
-            files.extend(ep("_ITUNES/Fauna", total));
-            let twins = checks_of(&files)
-                .iter()
-                .flatten()
-                .filter(|check| matches!(check, Check::Twin { .. }))
-                .count();
-            assert_eq!(twins, 2, "total {total:?}");
-        }
-    }
-
-    #[test]
-    fn the_discs_of_one_album_are_not_twins() {
-        let mut files = Vec::new();
-        for disc in [1, 2] {
-            for n in 1..=3 {
-                let mut one = file(
-                    &format!("The Wall/CD{disc}/{n:02}.flac"),
-                    "The Wall",
-                    "Pink Floyd",
-                    Some(n),
-                );
-                one.tags.disc_number = Some(disc);
-                files.push(one);
-            }
-        }
-        assert_eq!(checks_of(&files), vec![Vec::<Check>::new()]);
-    }
-
-    #[test]
     fn tracks_by_many_artists_with_no_album_artist_and_no_flag_are_an_unmarked_compilation() {
         let files: Vec<Scanned> = ["Ana", "Bo", "Cy", "Di"]
             .iter()
@@ -461,5 +428,105 @@ mod tests {
             one.artwork = Some(cover(SMALL_COVER, SMALL_COVER));
         }
         assert_eq!(checks_of(&large), vec![Vec::<Check>::new()]);
+    }
+
+    fn recording(relative: &str, title: Option<&str>, artist: &str, seconds: u64) -> Scanned {
+        let mut one = file(relative, relative, artist, None);
+        one.tags.title = title.map(str::to_owned);
+        one.properties.duration = Duration::from_secs(seconds);
+        one
+    }
+
+    /// Every track with a copy, by path, with the paths of its copies.
+    fn copied(files: &[Scanned]) -> Vec<(String, Vec<String>)> {
+        let library = Library::build("Music".to_owned(), files);
+        let checks = Checks::of(&library);
+        let tracks = library.tracks();
+        let mut found: Vec<(String, Vec<String>)> = (0..tracks.len())
+            .filter(|at| checks.copied(*at))
+            .map(|at| {
+                let mut others: Vec<String> = checks
+                    .copies_of(at)
+                    .map(|other| tracks[other].relative.clone())
+                    .collect();
+                others.sort();
+                (tracks[at].relative.clone(), others)
+            })
+            .collect();
+        found.sort();
+        found
+    }
+
+    #[test]
+    fn one_title_by_one_artist_at_about_one_length_is_one_recording_in_two_places() {
+        let files = [
+            recording("Harvest/05.flac", Some("Harvest Moon"), "Neil Young", 300),
+            recording(
+                "Selection/harvest moon.mp3",
+                Some("harvest moon"),
+                "NEIL YOUNG",
+                301,
+            ),
+        ];
+        assert_eq!(
+            copied(&files),
+            [
+                (
+                    "Harvest/05.flac".to_owned(),
+                    vec!["Selection/harvest moon.mp3".to_owned()]
+                ),
+                (
+                    "Selection/harvest moon.mp3".to_owned(),
+                    vec!["Harvest/05.flac".to_owned()]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_longer_version_another_artist_or_a_file_with_no_title_is_no_copy() {
+        let files = [
+            recording("Harvest/05.flac", Some("Harvest Moon"), "Neil Young", 300),
+            recording("Live/05.flac", Some("Harvest Moon"), "Neil Young", 420),
+            recording(
+                "Covers/05.flac",
+                Some("Harvest Moon"),
+                "Cassandra Wilson",
+                300,
+            ),
+            recording("Loose/harvest.mp3", None, "Neil Young", 300),
+        ];
+        assert!(copied(&files).is_empty(), "{:?}", copied(&files));
+    }
+
+    #[test]
+    fn one_musicbrainz_recording_is_one_recording_whatever_its_tags_say() {
+        let mut album = recording("Harvest/05.flac", Some("Harvest Moon"), "Neil Young", 300);
+        let mut compilation = recording(
+            "Various/12.flac",
+            Some("Harvest Moon (Remastered)"),
+            "Various",
+            297,
+        );
+        for one in [&mut album, &mut compilation] {
+            one.tags.musicbrainz_recording_id =
+                Some("2f1d6c3e-8b4a-4c6e-9a1d-3b5e7f9a1c2d".to_owned());
+        }
+        assert_eq!(copied(&[album, compilation]).len(), 2);
+    }
+
+    #[test]
+    fn copies_a_little_apart_each_are_one_group() {
+        let files = [
+            recording("a.flac", Some("Intro"), "Batida", 60),
+            recording("b.mp3", Some("Intro"), "Batida", 61),
+            recording("c/intro.flac", Some("Intro"), "Batida", 62),
+        ];
+        let found = copied(&files);
+        assert_eq!(found.len(), 3);
+        assert!(
+            found.iter().all(|(_, others)| others.len() == 2),
+            "{found:?}"
+        );
     }
 }

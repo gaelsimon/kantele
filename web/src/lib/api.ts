@@ -98,22 +98,30 @@ export type FolderRow = {
   notes: number;
   /// What the checks found in the albums below it.
   checks: number;
-  missing: number;
+  /// Files below it holding one of the flags asked for, each counted once.
+  found: number;
+  /// Playlist links below it that a flag asked for.
+  links: number;
   changed: boolean;
   artwork?: string;
   says: string;
   issues: Issue[];
 };
 
-/// A tag the tree can be narrowed to the folders that lack it.
-export type Missing =
-  | 'artist'
-  | 'album'
-  | 'album-artist'
-  | 'date'
-  | 'genre'
-  | 'track-number'
-  | 'artwork';
+/// What the tree can be narrowed to, one box each.
+/// A check's name as `only=` takes it. The server declares them, so the page knows none by heart.
+export type Flag = string;
+
+/// One check the tree can be narrowed to, as the server declares it.
+export type Declared = {
+  flag: Flag;
+  /// Where the fix is made: `files` in a file manager or a playlist, `tags` in a tagger.
+  group: string;
+  label: string;
+  says: string;
+  /// Whether a line parts it from the checks above it.
+  apart: boolean;
+};
 
 export type FolderListing = {
   under: string;
@@ -141,6 +149,8 @@ export type Setting = {
   tag: string;
   writable: boolean;
   choices?: Choice[];
+  /// What the server does with it that the value does not say.
+  note?: string;
 };
 
 export type Written = {
@@ -224,7 +234,7 @@ export type FolderAlbum = {
   folders: string[];
   says?: string;
   /// What a listener would want fixed in its tags.
-  checks: { says: string; folder?: string }[];
+  checks: { says: string }[];
 };
 
 export type FolderFiles = {
@@ -245,13 +255,24 @@ export type TrackDetail = {
   format: string;
   bytes: number;
   seconds: number;
+  /// The other files holding the same recording.
+  copies?: string[];
+  /// A sentence per name this file writes as fewer files do.
+  spellings?: string[];
 };
 
 export const getStatus = () => ask<Status>('/api/status');
 export const getProgress = () => ask<Progress>('/api/progress');
 export const getConfiguration = () => ask<Configuration>('/api/config');
-export const getFiles = (folder: string) =>
-  ask<FolderFiles>(`/api/files${folder ? `?folder=${encodeURIComponent(folder)}` : ''}`);
+export function getFiles(folder: string, only: Flag[] = []) {
+  const asked = new URLSearchParams();
+  if (folder) asked.set('folder', folder);
+  if (only.length > 0) asked.set('only', only.join(','));
+  const query = asked.toString();
+  return ask<FolderFiles>(`/api/files${query ? `?${query}` : ''}`);
+}
+
+export const getFlags = () => ask<Declared[]>('/api/flags');
 
 export const getTrack = (path: string) =>
   ask<TrackDetail>(`/api/track?path=${encodeURIComponent(path)}`);
@@ -259,19 +280,12 @@ export const getTrack = (path: string) =>
 export const getMenu = (at = '') =>
   ask<Menu>(`/api/menu${at ? `?at=${encodeURIComponent(at)}` : ''}`);
 
-export function getFolders(
-  under: string,
-  search: string,
-  changed: boolean,
-  missing: Missing | null = null,
-  review = false,
-) {
+export function getFolders(under: string, search: string, changed: boolean, only: Flag[] = []) {
   const asked = new URLSearchParams();
   if (under) asked.set('under', under);
   if (search) asked.set('q', search);
   if (changed) asked.set('changed', 'true');
-  if (missing) asked.set('missing', missing);
-  if (review) asked.set('review', 'true');
+  if (only.length > 0) asked.set('only', only.join(','));
   const query = asked.toString();
   return ask<FolderListing>(`/api/folders${query ? `?${query}` : ''}`);
 }

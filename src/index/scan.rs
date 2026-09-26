@@ -365,7 +365,7 @@ fn under(path: &str, folder: &str) -> bool {
     path.len() > folder.len() && path.starts_with(folder) && path.as_bytes()[folder.len()] == b'/'
 }
 
-const SKIPPED_FOLDERS: &[&str] = &[
+pub const SKIPPED_FOLDERS: &[&str] = &[
     "@eaDir",
     "#recycle",
     "#snapshot",

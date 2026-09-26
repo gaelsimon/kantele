@@ -12,6 +12,7 @@ export type Kind =
   | 'read';
 
 /// How a key is edited, and the words beside the control that make the value read as a sentence.
+/// A note here is about the control; what the server does with the value is `Setting.note`.
 export type Shape = { kind: Kind; before?: string; after?: string; note?: string };
 
 export type Section = {
@@ -31,7 +32,7 @@ const shapes: Record<string, Shape> = {
   },
   'scan.exclude': {
     kind: 'words',
-    note: 'The server does not scan these names or paths. Separate the entries with commas. The server does not scan @eaDir and #recycle.',
+    note: 'Separate the entries with commas.',
   },
   friendly_name: { kind: 'text' },
   'menus.axes': {
@@ -105,7 +106,7 @@ const sections: { title: string; each: boolean; note?: string; keys: string[] }[
       'clients',
       'log level',
     ],
-    note: 'To apply a setting that needs a restart, open the DSM Package Center and restart the server. To change the device profiles and the log level, edit kantele.toml.',
+    note: 'To apply a setting that needs a restart, open the DSM Package Center and restart the server.',
   },
 ];
 

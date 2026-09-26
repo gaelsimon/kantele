@@ -2,7 +2,6 @@
   import Zoom from './Zoom.svelte';
   import { getProblems, type FolderAlbum, type FolderRow, type Issue, type ProblemFiles } from './api';
   import { count, many } from './say';
-  import { leaf } from './selection';
 
   let {
     row,
@@ -10,7 +9,6 @@
     busy,
     onopen,
     onrescan,
-    onfind,
   }: {
     row: FolderRow;
     /// What the files of this folder belong to, once its column has been read.
@@ -18,8 +16,6 @@
     busy: boolean;
     onopen: (path: string, under: string) => void;
     onrescan: (path: string) => void;
-    /// Lists the folders of that name, which is how the pane shows an album's twin beside it.
-    onfind: (name: string) => void;
   } = $props();
 
   /// The files behind one issue, keyed by folder and cause, fetched when it is opened.
@@ -88,11 +84,6 @@
             <div class="line fix">
               <span aria-hidden="true">✎</span>
               {check.says}.
-              {#if check.folder}
-                <button class="quiet find" onclick={() => onfind(leaf(check.folder ?? ''))}>
-                  Show both
-                </button>
-              {/if}
             </div>
           {/each}
         </div>
@@ -122,14 +113,18 @@
           {#if behind[key] === 'asking'}
             <span class="dim">Reading.</span>
           {:else if behind[key].shown.length === 0}
-            <span class="dim">The server keeps a maximum of one hundred examples of each problem. It did not keep these names.</span>
+            <span class="dim">The server counted these and did not keep their names.</span>
           {:else}
+            {@const rest = behind[key].total - behind[key].shown.length}
             <!-- Unkeyed: the links of one playlist all name that playlist. -->
             {#each behind[key].shown as one}
               <button class="file" onclick={() => onopen(one.subject, row.path)}>
                 {one.subject}{one.detail ? ` — ${one.detail}` : ''}
               </button>
             {/each}
+            {#if rest > 0}
+              <span class="dim">{count(rest)} more {rest === 1 ? 'is' : 'are'} not listed.</span>
+            {/if}
           {/if}
         </div>
       {/if}
@@ -254,11 +249,6 @@
 
   .fix {
     color: var(--ink-soft);
-  }
-
-  .find {
-    font-size: 12px;
-    margin-left: 4px;
   }
 
   .acts {

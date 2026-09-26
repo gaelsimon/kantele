@@ -1,18 +1,6 @@
 // Numbers and times in the words the page uses. One place, so the tabs agree.
 
-import type { Missing } from './api';
-
 export const count = (n: number) => n.toLocaleString();
-
-export const tagName: Record<Missing, string> = {
-  artist: 'artist',
-  album: 'album',
-  'album-artist': 'album artist',
-  date: 'date',
-  genre: 'genre',
-  'track-number': 'track number',
-  artwork: 'cover art',
-};
 
 /// The noun alone, singular where there is one of whatever it counts.
 export function noun(n: number, singular: string, plural = `${singular}s`): string {

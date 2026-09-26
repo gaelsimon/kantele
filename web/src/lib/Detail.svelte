@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { FolderAlbum, FolderRow } from './api';
+  import { above } from './columns';
   import FilePane from './FilePane.svelte';
   import FolderPane from './FolderPane.svelte';
   import { leaf } from './selection';
@@ -12,7 +13,6 @@
     onopen,
     onback,
     onrescan,
-    onfind,
   }: {
     /// The folder the pane is showing, which is the library itself when nothing is picked.
     row: FolderRow | null;
@@ -23,7 +23,6 @@
     onopen: (path: string, under: string) => void;
     onback: () => void;
     onrescan: (path: string) => void;
-    onfind: (name: string) => void;
   } = $props();
 </script>
 
@@ -33,11 +32,11 @@
       ‹ {file.under || 'the whole library'}
     </button>
     <h2 class="heading mono">{leaf(file.path)}</h2>
-    <FilePane path={file.path} />
+    <FilePane path={file.path} onopen={(path) => onopen(path, above(path))} />
   {:else if row}
     {#if row.path}<div class="crumb mono">{row.path}</div>{/if}
     <h2 class="heading mono">{leaf(row.path) || 'The whole library'}</h2>
-    <FolderPane {row} {albums} {busy} {onopen} {onrescan} {onfind} />
+    <FolderPane {row} {albums} {busy} {onopen} {onrescan} />
   {:else}
     <div class="empty dim">Reading the library.</div>
   {/if}

@@ -1,19 +1,24 @@
 <script lang="ts">
+  import { onMount, untrack } from 'svelte';
   import {
     getFiles,
+    getFlags,
     getFolders,
     rescan,
     type FileRow,
     type Configuration,
+    type Declared,
     type FolderAlbum,
+    type Flag,
     type FolderRow,
-    type Missing,
     type Status,
   } from './api';
-  import { ago, count, extension, many, noun, tagName, took } from './say';
+  import { ago, count, extension, many, noun, took } from './say';
   import Columns from './Columns.svelte';
   import { above, type Entry, type Level } from './columns';
   import Detail from './Detail.svelte';
+  import FilterMenu from './FilterMenu.svelte';
+  import { href, parse } from './route';
   import { leaf, type Selection } from './selection';
 
   /// What a column of this listing carries back: the row of a folder, or the file itself.
@@ -33,12 +38,40 @@
 
   let search = $state('');
   let changedFirst = $state(false);
-  let review = $state(false);
-  let lacking = $state<Missing | null>(null);
+  /// Where the address says to open, read once: from then on the page writes the address.
+  const arrived = parse(location.pathname, location.search);
+  let ticked = $state<Flag[]>(arrived.only);
   let asking = $state(false);
   let said = $state('');
   /// What the detail pane is showing. One at a time.
   let selection = $state<Selection | null>(null);
+  /// What the columns open down to: the address's path, then each one picked.
+  let landing = $state(arrived.path);
+
+  /// A click is a step Back can undo; an arrow key or a check ticked only corrects the address.
+  function write(how: 'push' | 'replace') {
+    const at = href({ tab: 'library', path: landing, only: ticked });
+    if (at === `${location.pathname}${location.search}`) return;
+    if (how === 'push') history.pushState(null, '', at);
+    else history.replaceState(history.state, '', at);
+  }
+
+  $effect(() => {
+    void ticked;
+    untrack(() => write('replace'));
+  });
+
+  $effect(() => {
+    const moved = () => {
+      const now = parse(location.pathname, location.search);
+      if (now.tab !== 'library') return;
+      if (now.only.join() !== ticked.join()) ticked = now.only;
+      if (!now.path) selection = null;
+      landing = now.path;
+    };
+    window.addEventListener('popstate', moved);
+    return () => window.removeEventListener('popstate', moved);
+  });
   /// What the files of each folder read belong to, which the pane shows for the one selected.
   let albums = $state<Record<string, FolderAlbum[]>>({});
   /// The library's own row, which the pane shows while nothing else is picked.
@@ -68,13 +101,12 @@
   const fill = $derived.by(() => {
     const wanted = applied;
     const only = changedFirst;
-    // Every level keeps to either, so the columns lead down to what needs fixing and nowhere else.
-    const tag = lacking;
-    const fixing = review && !tag;
+    // Every level keeps to what is ticked, so the columns lead down to it and nowhere else.
+    const flags = ticked;
     return async (path: string, first: boolean): Promise<Level<Held>> => {
       const [folders, files] = await Promise.all([
-        getFolders(path, first ? wanted : '', first && only, tag, fixing),
-        getFiles(path),
+        getFolders(path, first ? wanted : '', first && only, flags),
+        getFiles(path, flags),
       ]);
       albums = { ...albums, [path]: files.albums };
       if (first) root = folders.here;
@@ -106,13 +138,23 @@
   function back() {
     const up = selection?.kind === 'file' ? known[selection.under] : undefined;
     selection = up?.path ? { kind: 'folder', row: up } : null;
+    landing = up?.path ?? '';
+    write('push');
   }
 
-  function picked(entry: Entry<Held>) {
+  function picked(entry: Entry<Held>, how: 'click' | 'key' | 'land') {
     selection =
       entry.of.kind === 'folder'
         ? { kind: 'folder', row: entry.of.row }
         : { kind: 'file', path: entry.path, under: above(entry.path) };
+    landing = entry.path;
+    if (how !== 'land') write(how === 'click' ? 'push' : 'replace');
+  }
+
+  function opened(path: string, under: string) {
+    selection = { kind: 'file', path, under };
+    landing = path;
+    write('push');
   }
 
   const counts = $derived([
@@ -147,20 +189,30 @@
       : 'The server looks only when something changes.';
   });
 
-  /// The tags a listener will miss, counted against the whole library. Each one narrows the tree
-  /// to the folders holding them, which is the only way from the number to the files.
-  const missing = $derived.by(() => {
-    const coverage = status?.library.coverage;
-    if (!coverage || coverage.tracks === 0) return [];
-    return (
-      [
-        { of: 'date', n: coverage.tracks - coverage.date },
-        { of: 'genre', n: coverage.tracks - coverage.genre },
-        { of: 'artwork', n: coverage.tracks - coverage.artwork },
-        { of: 'artist', n: coverage.tracks - coverage.artist },
-      ] as { of: Missing; n: number }[]
-    ).filter((one) => one.n > 0);
+  /// The checks the server offers. A new one appears here without the page knowing its name.
+  let declared = $state<Declared[]>([]);
+  onMount(() => {
+    getFlags()
+      .then((flags) => (declared = flags))
+      .catch(() => {});
   });
+
+  /// Where a fix is made, which is how the checks are grouped.
+  const groups = [
+    { id: 'files', name: 'Files', glyph: '▲', warn: true },
+    { id: 'tags', name: 'Tags', glyph: '✎', warn: false },
+  ];
+  const every = $derived(declared.map((one) => one.flag));
+
+  /// Kept in the order of the boxes, so the same boxes ask the server the same question.
+  function tick(flags: Flag[], on: boolean) {
+    ticked = every.filter((one) => (flags.includes(one) ? on : ticked.includes(one)));
+  }
+
+  function holding(row: FolderRow): string {
+    const links = row.links > 0 ? `, ${many(row.links, 'playlist link')}` : '';
+    return `${many(row.found, 'file')}${links}`;
+  }
 
   async function askForAPass(which?: string) {
     asking = true;
@@ -189,16 +241,10 @@
 
 {#snippet mark(entry: Entry<Held>)}
   {#if entry.of.kind === 'folder'}
-    {#if entry.of.row.changed}<span class="fresh">read again</span>{/if}
-    {#if lacking && entry.of.row.missing > 0}
-      <span class="dim num">{count(entry.of.row.missing)}</span>
-    {:else if entry.of.row.problems > 0}
-      <!-- The colour alone says nothing to a reader who cannot tell it apart. -->
-      <span class="problem num mark"><span aria-hidden="true">▲</span>
-        {count(entry.of.row.problems)}</span>
-    {:else if entry.of.row.checks > 0}
-      <span class="fix num mark" title="Tags to fix"><span aria-hidden="true">✎</span>
-        {count(entry.of.row.checks)}</span>
+    {@const row = entry.of.row}
+    {#if changedFirst && row.changed}<span class="fresh">read again</span>{/if}
+    {#if ticked.length > 0 && row.found + row.links > 0}
+      <span class="dim num" title={holding(row)}>{count(row.found + row.links)}</span>
     {/if}
   {/if}
 {/snippet}
@@ -210,14 +256,12 @@
 <!-- A column lists the folders and the tracks, so an empty one is not an empty folder: what is
      left in it is what the library does not index. -->
 {#snippet nothing(at: number)}
-  {#if at > 0}
-    This folder has no subfolder and no track.
-  {:else if applied}
+  {#if at === 0 && applied}
     No folder in this library has that name.
-  {:else if lacking}
-    Every track has {lacking === 'artwork' ? tagName[lacking] : `a ${tagName[lacking]}`}.
-  {:else if review}
+  {:else if ticked.length > 0}
     Nothing to fix here.
+  {:else if at > 0}
+    This folder has no subfolder and no track.
   {:else if changedFirst}
     The last check found no change.
   {:else}
@@ -264,53 +308,42 @@
         <div class="mono where">{folder}</div>
         <div class="dim aside">Select a folder or a file to see how it shows on your players.</div>
       </div>
-      <div class="tools">
-        <input class="search" type="search" placeholder="Search folders" bind:value={search} />
-        <label class="filter">
-          <!-- A missing tag is one of the things to fix, so the box says so while one is picked. -->
-          <input
-            type="checkbox"
-            checked={review || lacking !== null}
-            onchange={(event) => {
-              review = event.currentTarget.checked;
-              lacking = null;
-            }}
-          />
-          Something to fix
-        </label>
-        <label class="filter">
-          <input type="checkbox" bind:checked={changedFirst} />
-          Changed at the last check
-        </label>
-      </div>
     </div>
-    {#if missing.length > 0}
-      <div class="missing">
-        <span class="dim">Missing tags</span>
-        {#each missing as one (one.of)}
-          <button
-            class="tag"
-            class:here={lacking === one.of}
-            title="List the folders that hold these tracks"
-            onclick={() => {
-              lacking = lacking === one.of ? null : one.of;
-              review = false;
-            }}
-          >
-            {many(one.n, 'track')} with no {tagName[one.of]}
-          </button>
-        {/each}
-        {#if lacking}
-          <button class="quiet" onclick={() => (lacking = null)}>All folders</button>
+    <div class="bar">
+      <input class="search" type="search" placeholder="Search folders" bind:value={search} />
+      {#each groups as group (group.id)}
+        {@const boxes = declared.filter((one) => one.group === group.id)}
+        {#if boxes.length > 0}
+          <FilterMenu
+            name={group.name}
+            glyph={group.glyph}
+            warn={group.warn}
+            {boxes}
+            {ticked}
+            ontick={tick}
+          />
         {/if}
-      </div>
-    {:else if status && status.library.tracks > 0}
-      <div class="dim missing">All tracks have a date, a genre, an artist, and cover art.</div>
-    {/if}
+      {/each}
+      <button
+        class="filter-chip"
+        class:on={changedFirst}
+        aria-pressed={changedFirst}
+        onclick={() => (changedFirst = !changedFirst)}
+      >
+        Changed at the last check
+      </button>
+      {#if ticked.length > 0 && root}
+        <span class="found num">
+          {holding(root)}
+          <button class="quiet" onclick={() => (ticked = [])}>Clear</button>
+        </span>
+      {/if}
+    </div>
     <div class="panes">
       <Columns
         framed={false}
         load={fill}
+        {landing}
         reload={status?.system_update_id ?? 0}
         selected={selection?.kind === 'folder' ? selection.row.path : (selection?.path ?? null)}
         onpick={picked}
@@ -325,8 +358,7 @@
         file={selection?.kind === 'file' ? { path: selection.path, under: selection.under } : null}
         albums={held}
         busy={asking}
-        onopen={(path, under) => (selection = { kind: 'file', path, under })}
-        onfind={(name) => (search = name)}
+        onopen={opened}
         onback={back}
         onrescan={askForAPass}
       />
@@ -428,14 +460,6 @@
     overflow-wrap: anywhere;
   }
 
-  .tools {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-    min-width: 0;
-  }
-
   .search {
     width: 260px;
     height: 36px;
@@ -445,19 +469,21 @@
     font-size: 14px;
   }
 
-  .filter {
-    height: 36px;
-    padding: 0 12px;
-    border: 1px solid var(--hairline);
+  /* One line under the folder's name: the search, the filters, and what they hold at the far end. */
+  .bar {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 13px;
-    color: var(--ink-soft);
+    flex-wrap: wrap;
   }
 
-  .missing {
+  .found {
+    margin-left: auto;
+    display: inline-flex;
+    gap: 10px;
+    align-items: baseline;
     font-size: 13px;
+    white-space: nowrap;
   }
 
   .fresh {
@@ -466,45 +492,10 @@
     white-space: nowrap;
   }
 
-  .mark {
-    font-size: 12px;
-    white-space: nowrap;
-  }
-
-  .fix {
-    color: var(--ink-soft);
-  }
-
   .format {
     font-size: 11px;
     letter-spacing: 0.04em;
     white-space: nowrap;
-  }
-
-  .missing {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .tag {
-    padding: 4px 9px;
-    border: 1px solid var(--hairline);
-    font-size: 13px;
-    color: var(--ink-soft);
-    background: var(--surface);
-  }
-
-  .tag:hover {
-    border-color: var(--link);
-    color: var(--link);
-  }
-
-  .tag.here {
-    border-color: var(--ink);
-    color: var(--surface);
-    background: var(--ink);
   }
 
   @media (max-width: 720px) {
@@ -537,10 +528,6 @@
       justify-content: center;
     }
 
-    .tools {
-      width: 100%;
-    }
-
     .search {
       flex: 1 1 100%;
       width: auto;
@@ -548,8 +535,13 @@
       height: 44px;
     }
 
-    .filter {
+    .bar :global(.filter-chip) {
       height: 44px;
+    }
+
+    .found {
+      margin-left: 0;
+      flex-basis: 100%;
     }
   }
 </style>

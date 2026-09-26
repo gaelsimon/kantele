@@ -72,25 +72,42 @@ The rest are problems:
 | Repeated playlist link | A playlist names the same track twice |
 | Empty playlist | None of the playlist's files are there, so the playlist is not shown |
 
-Under the folders, a line counts the tracks with no artist, no date, no genre or no cover. Each
-count opens onto the folders that hold those tracks. [Tagging your music](tagging.md) says how
-albums, discs and artists are formed.
+[Tagging your music](tagging.md) says how albums, discs and artists are formed.
 
-## Finding what to fix in your tags
+## Finding what to fix
 
-Tick **Something to fix** above the folders on the Library tab. Every column then keeps only the
-folders that hold a problem, or an album one of these checks found wanting, so you can follow them
-down to the album. Under the album, the page says what it found:
+Above the folders on the Library tab, two menus narrow the tree, grouped by where the fix is made.
+**Files** is fixed in a file manager or a playlist, **Tags** in your tagger. **All** in a menu
+ticks every check in it. The address follows the folder shown and the checks ticked, so a link or a
+bookmark opens the same view.
+
+| Check | What it keeps |
+|---|---|
+| Files not served | The problems above, apart from playlist links |
+| Broken playlist links | Broken and repeated playlist links |
+| Duplicate tracks | One recording in two places: the same title and artist at about the same length, or the same MusicBrainz recording. The file's pane lists the other copies |
+| No artist, No album, No genre, No cover, No date | Tracks without that tag |
+| Genres spelled several ways | Tracks that write a genre as fewer files do, such as `Drum n Bass` where most write `Drum & Bass`. The file's pane says how the others write it |
+| Artists spelled several ways | The same for artists and album artists, such as `Notorious B.I.G` where most write `The Notorious B.I.G.` |
+| Small cover | Albums whose cover shows blurred on a large screen |
+| Unmarked compilations | Albums by many artists with no album artist and no compilation flag |
+| Gaps in track numbers | Albums holding fewer files than their track total says |
+
+Once a check is ticked, every column keeps only the folders holding what it names, and each folder
+says how many of its files that is. The count beside the menus is the same for the whole library.
+A file answering two checks counts once. Playlist links are counted apart, since they are lines in
+a playlist and not files of their own. Under the album, the page says what it found:
 
 | The page says | What to do in your tagger |
 |---|---|
 | Tracks 7 and 9 of 12 are missing | Find the missing files, or correct the track total |
-| Same title and artist as the album in another folder | Keep one copy, or tell the two apart in the album title. **Show both** lists the two folders |
 | No album artist and not marked as a compilation | Set `ALBUMARTIST`, or `COMPILATION` to 1 ([compilations](tagging.md#artists)) |
 | The cover is 300 × 300 | Replace it with a larger one ([covers](tagging.md#covers)) |
 
-A folder holding one or two tracks of a longer album is not reported as incomplete: that is taken
-for a choice. Neither is an album whose files give different track totals, or no total at all.
+The page cannot tell a lost file from a track you chose not to keep, or from a wrong track total: it
+only compares the files with the total they carry. A folder holding one or two tracks of a longer
+album is not reported, since that is taken for a choice. Neither is an album whose files give
+different track totals, or no total at all.
 
 ## A track will not play, or will not seek
 

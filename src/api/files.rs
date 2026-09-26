@@ -3,8 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::flags::{Asking, Flag};
 use crate::browse::{Served, albums_of, tracks_in};
-use crate::index::{Check, Track};
+use crate::index::Track;
 
 /// Rows one answer carries. A folder of a thousand files is read as far as this and says so.
 const MOST: usize = 500;
@@ -14,6 +15,9 @@ pub struct Asked {
     /// The folder to list, empty for the top of the library.
     #[serde(default)]
     pub folder: String,
+    /// Only the files holding one of these, as the folders are narrowed.
+    #[serde(default, deserialize_with = "super::flags::listed")]
+    pub only: Vec<Flag>,
 }
 
 /// One file, as a pane lists it before anybody opens it.
@@ -61,9 +65,6 @@ pub struct Album {
 #[derive(Debug, Serialize)]
 pub struct Checked {
     pub says: String,
-    /// The other folder, for an album another one carries as well.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub folder: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -87,7 +88,20 @@ pub fn listing(
         return None;
     }
     let at = tracks_in(&served.view, &asked.folder);
-    let files = at
+    let asking = Asking::new(served, &asked.only);
+    let kept: Vec<usize> = at
+        .iter()
+        .copied()
+        .filter(|at| {
+            !asking.anything()
+                || served
+                    .library
+                    .tracks()
+                    .get(*at)
+                    .is_some_and(|track| asking.holds(*at, track))
+        })
+        .collect();
+    let files = kept
         .iter()
         .take(MOST)
         .filter_map(|at| served.library.tracks().get(*at))
@@ -103,7 +117,7 @@ pub fn listing(
         albums: albums_here(served, &asked.folder, &at),
         folder: asked.folder.clone(),
         files,
-        more: at.len() > MOST,
+        more: kept.len() > MOST,
     })
 }
 
@@ -159,10 +173,6 @@ fn albums_here(served: &Served, folder: &str, here: &[usize]) -> Vec<Album> {
                     .iter()
                     .map(|check| Checked {
                         says: crate::report::check(check),
-                        folder: match check {
-                            Check::Twin { folder } => Some(folder.clone()),
-                            _ => None,
-                        },
                     })
                     .collect(),
             }
@@ -257,11 +267,47 @@ mod tests {
             &served,
             &Asked {
                 folder: folder.to_owned(),
+                ..Asked::default()
             },
             |_| false,
         )
         .expect("the folder is in the tree")
         .albums
+    }
+
+    #[test]
+    fn a_folder_narrowed_by_a_flag_lists_only_the_files_holding_it() {
+        let mut credited = track("Mix/01.flac", "Mix", None, false);
+        credited.tags.artists = vec!["Ray Armando".to_owned()];
+        let bare = track("Mix/02.flac", "Mix", None, false);
+        let served = Served::new(
+            Library::build("Music".to_owned(), &[credited, bare]),
+            crate::browse::Settings::default(),
+        );
+        let listed = |only: Vec<Flag>| -> Vec<String> {
+            listing(
+                &served,
+                &Asked {
+                    folder: "Mix".to_owned(),
+                    only,
+                },
+                |_| false,
+            )
+            .expect("the folder is in the tree")
+            .files
+            .into_iter()
+            .map(|file| file.path)
+            .collect()
+        };
+        assert_eq!(
+            listed(vec![Flag::Lacking(crate::index::Missing::Artist)]),
+            ["Mix/02.flac"]
+        );
+        assert_eq!(
+            listed(Vec::new()).len(),
+            2,
+            "and every file where nothing is asked"
+        );
     }
 
     #[test]

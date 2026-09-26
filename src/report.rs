@@ -88,9 +88,6 @@ pub fn check(check: &Check) -> String {
                 None => capitalised(&gone),
             }
         }
-        Check::Twin { folder } => {
-            format!("Same title and artist as the album in {folder}, so your players show both")
-        }
         Check::Unmarked { artists } => format!(
             "No album artist and not marked as a compilation, so Artist lists it under {artists} names"
         ),
@@ -100,11 +97,25 @@ pub fn check(check: &Check) -> String {
     }
 }
 
-fn listed(numbers: &[u32]) -> String {
-    match numbers.split_last() {
+/// A name one file writes as fewer files do, and how the rest write it, commonest first.
+pub fn spelled(tag: &str, name: &str, others: &[(String, usize)]) -> String {
+    let ways: Vec<String> = others
+        .iter()
+        .enumerate()
+        .map(|(at, (written, files))| match (at, files) {
+            (0, 1) => format!("{written} on 1 file"),
+            (0, _) => format!("{written} on {files} files"),
+            _ => format!("{written} on {files}"),
+        })
+        .collect();
+    format!("{tag} {name} is written {}", listed(&ways))
+}
+
+fn listed<T: std::fmt::Display>(items: &[T]) -> String {
+    match items.split_last() {
         Some((last, [])) => last.to_string(),
         Some((last, rest)) => {
-            let rest: Vec<String> = rest.iter().map(u32::to_string).collect();
+            let rest: Vec<String> = rest.iter().map(T::to_string).collect();
             format!("{} and {last}", rest.join(", "))
         }
         None => String::new(),
@@ -346,6 +357,35 @@ mod tests {
                 height: 300
             }),
             "The cover is 300 × 300, which shows blurred on a large screen"
+        );
+    }
+
+    #[test]
+    fn a_minority_spelling_names_the_others_commonest_first_with_their_files() {
+        let others = |ways: &[(&str, usize)]| -> Vec<(String, usize)> {
+            ways.iter()
+                .map(|(written, files)| ((*written).to_owned(), *files))
+                .collect()
+        };
+        assert_eq!(
+            spelled(
+                "Genre",
+                "Drum n Bass",
+                &others(&[("Drum & Bass", 120), ("Drum and Bass", 30)])
+            ),
+            "Genre Drum n Bass is written Drum & Bass on 120 files and Drum and Bass on 30"
+        );
+        assert_eq!(
+            spelled(
+                "Artist",
+                "Tok",
+                &others(&[("T.O.K.", 4), ("T.O.K", 2), ("TOK", 1)])
+            ),
+            "Artist Tok is written T.O.K. on 4 files, T.O.K on 2 and TOK on 1"
+        );
+        assert_eq!(
+            spelled("Genre", "Afrobeat", &others(&[("Afro Beat", 1)])),
+            "Genre Afrobeat is written Afro Beat on 1 file"
         );
     }
     use crate::index::Scanned;

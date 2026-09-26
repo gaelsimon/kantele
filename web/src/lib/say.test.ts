@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ago, extension, length, listed, many, noun, size, tagName, took, uptime } from './say';
+import { ago, extension, length, listed, many, noun, size, took, uptime } from './say';
 
 describe('a count and the noun beside it', () => {
   it('is singular where there is one', () => {
@@ -107,25 +107,6 @@ describe('a list in prose', () => {
 
   it('commas the rest and keeps the and for the last', () => {
     expect(listed(['a', 'b', 'c'])).toBe('a, b and c');
-  });
-});
-
-describe('the tags a listener misses', () => {
-  it('spells each one the way the page says it', () => {
-    expect(tagName['album-artist']).toBe('album artist');
-    expect(tagName['track-number']).toBe('track number');
-  });
-
-  it('has a word for every tag the server will narrow by', () => {
-    expect(Object.keys(tagName).sort()).toEqual([
-      'album',
-      'album-artist',
-      'artist',
-      'artwork',
-      'date',
-      'genre',
-      'track-number',
-    ]);
   });
 });
 

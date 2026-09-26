@@ -145,6 +145,37 @@ a:hover {
   background: var(--ink-soft);
 }
 
+/* A filter: a button that stays filled while it narrows what is listed. */
+.filter-chip {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.filter-chip:hover {
+  border-color: var(--faint);
+  color: var(--ink);
+}
+.filter-chip:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 1px;
+}
+.filter-chip[aria-expanded='true'] {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+}
+.filter-chip.on {
+  background: var(--link-paper);
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
 .quiet {
   color: var(--link);
   font-size: 13px;

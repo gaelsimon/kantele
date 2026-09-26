@@ -121,7 +121,21 @@ pub struct Refusal {
 #[derive(Clone, Debug, Default)]
 struct Kept {
     held: Vec<Refusal>,
+    /// How many of `held` sit in each folder, which is what the bound is on.
+    per_folder: std::collections::HashMap<Option<String>, usize>,
     total: usize,
+}
+
+impl Kept {
+    /// A bound on the whole cause let the folders walked first use it up, and a folder walked
+    /// later counted refusals it could not name.
+    fn keep(&mut self, refusal: Refusal) {
+        let here = self.per_folder.entry(refusal.folder.clone()).or_default();
+        if *here < Refusals::KEPT {
+            *here += 1;
+            self.held.push(refusal);
+        }
+    }
 }
 
 /// What fell in one folder, by cause.
@@ -131,7 +145,7 @@ pub type Tally = std::collections::BTreeMap<Cause, usize>;
 pub struct Refusals {
     by_cause: std::collections::BTreeMap<Cause, Kept>,
     /// What each folder refused and for what, counted as the refusals are made, so a tally is right
-    /// past the hundred each cause keeps.
+    /// past the hundred each folder keeps.
     by_folder: std::collections::BTreeMap<String, Tally>,
 }
 
@@ -144,7 +158,7 @@ pub struct Reported {
 }
 
 impl Refusals {
-    /// Kept per cause; the rest are only counted.
+    /// Kept per cause in each folder, and named per answer; the rest are only counted.
     pub const KEPT: usize = 100;
 
     pub fn refuse(&mut self, cause: Cause, subject: impl Into<String>, detail: Option<String>) {
@@ -181,13 +195,11 @@ impl Refusals {
         }
         let kept = self.by_cause.entry(cause).or_default();
         kept.total += 1;
-        if kept.held.len() < Self::KEPT {
-            kept.held.push(Refusal {
-                subject,
-                detail,
-                folder,
-            });
-        }
+        kept.keep(Refusal {
+            subject,
+            detail,
+            folder,
+        });
     }
 
     /// What each folder refused and for what, by its path relative to the content root.
@@ -219,8 +231,7 @@ impl Refusals {
             .map_or(&[], |kept| kept.held.as_slice())
     }
 
-    /// What was kept for one cause under one folder, with how many fell there in all. Only the first
-    /// hundred of each cause are kept, so a deep folder can count and show nothing.
+    /// What was kept for one cause under one folder, the first hundred of them.
     pub fn held_under(&self, cause: Cause, folder: &str) -> Vec<&Refusal> {
         self.held(cause)
             .iter()
@@ -230,10 +241,11 @@ impl Refusals {
                     .as_deref()
                     .is_some_and(|at| at == folder || at.starts_with(&with_slash(folder)))
             })
+            .take(Self::KEPT)
             .collect()
     }
 
-    /// What a folder really refused, which the hundred kept per cause cannot say.
+    /// What a folder really refused, which the hundred it keeps cannot say.
     pub fn total_under(&self, cause: Cause, folder: &str) -> usize {
         self.by_folder
             .iter()
@@ -250,7 +262,7 @@ impl Refusals {
                 cause: *cause,
                 origin: cause.origin(),
                 total: self.total_of(*cause),
-                shown: self.held(*cause).to_vec(),
+                shown: self.held(*cause).iter().take(Self::KEPT).cloned().collect(),
             })
             .collect()
     }
@@ -263,8 +275,9 @@ impl Refusals {
         for (cause, kept) in other.by_cause {
             let mine = self.by_cause.entry(cause).or_default();
             mine.total += kept.total;
-            let room = Self::KEPT.saturating_sub(mine.held.len());
-            mine.held.extend(kept.held.into_iter().take(room));
+            for refusal in kept.held {
+                mine.keep(refusal);
+            }
         }
         for (folder, tally) in other.by_folder {
             let mine = self.by_folder.entry(folder).or_default();
@@ -294,7 +307,14 @@ impl Refusals {
             let dropped = kept.held.len() - held.len();
             let total = kept.total.saturating_sub(dropped);
             if total > 0 {
-                carried.by_cause.insert(*cause, Kept { held, total });
+                let mut still = Kept {
+                    total,
+                    ..Kept::default()
+                };
+                for refusal in held {
+                    still.keep(refusal);
+                }
+                carried.by_cause.insert(*cause, still);
             }
         }
         carried.by_folder = previous
@@ -372,16 +392,47 @@ mod tests {
     }
 
     #[test]
-    fn absorbing_adds_the_totals_and_keeps_the_bound() {
+    fn absorbing_adds_the_totals_and_keeps_the_bound_of_each_folder() {
         let mut left = Refusals::default();
         let mut right = Refusals::default();
         for at in 0..80 {
             left.refuse(Cause::UnreadableFile, format!("a/{at}.mp3"), None);
+            right.refuse(Cause::UnreadableFile, format!("a/{}.mp3", at + 80), None);
             right.refuse(Cause::UnreadableFile, format!("b/{at}.mp3"), None);
         }
         left.absorb(right);
-        assert_eq!(left.total_of(Cause::UnreadableFile), 160);
-        assert_eq!(left.held(Cause::UnreadableFile).len(), Refusals::KEPT);
+        assert_eq!(left.total_of(Cause::UnreadableFile), 240);
+        assert_eq!(
+            left.held_under(Cause::UnreadableFile, "a").len(),
+            Refusals::KEPT
+        );
+        assert_eq!(left.held_under(Cause::UnreadableFile, "b").len(), 80);
+    }
+
+    #[test]
+    fn a_folder_names_what_it_counts_whatever_the_folders_before_it_refused() {
+        let mut refusals = Refusals::default();
+        for at in 0..150 {
+            refusals.refuse(Cause::MissingEntry, "a/list.m3u", Some(format!("{at}")));
+        }
+        for at in 0..3 {
+            refusals.refuse(Cause::MissingEntry, "b/list.m3u", Some(format!("{at}")));
+        }
+        assert_eq!(refusals.held_under(Cause::MissingEntry, "b").len(), 3);
+        assert_eq!(
+            refusals.held_under(Cause::MissingEntry, "a").len(),
+            Refusals::KEPT
+        );
+        assert_eq!(
+            refusals.held_under(Cause::MissingEntry, "").len(),
+            Refusals::KEPT,
+            "one answer names no more than a hundred"
+        );
+        assert_eq!(
+            refusals.reported()[0].shown.len(),
+            Refusals::KEPT,
+            "and neither does the status"
+        );
     }
 
     #[test]

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::browse::{self, Place, Served, format_name};
-use crate::index::{Album, Library, Rule, Track};
+use crate::index::{Album, Library, Rule, Spelling, Track, fold};
 use crate::report;
 
 #[derive(Debug, Default, Deserialize)]
@@ -46,6 +46,12 @@ pub struct Found {
     pub format: String,
     pub bytes: u64,
     pub seconds: u64,
+    /// The other files holding this recording.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub copies: Vec<String>,
+    /// A sentence per name this file writes as fewer files do.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub spellings: Vec<String>,
 }
 
 fn format(track: &Track) -> String {
@@ -138,7 +144,57 @@ pub fn found(served: &Served, asked: &Asked) -> Option<Found> {
         format: format(track),
         bytes: track.size,
         seconds: track.duration.as_secs(),
+        copies: copies(served, at),
+        spellings: spellings(served, track),
     })
+}
+
+fn spellings(served: &Served, track: &Track) -> Vec<String> {
+    let checks = &served.counts.checks;
+    let artists = track
+        .artists
+        .iter()
+        .chain(&track.album_artists)
+        .map(|one| one.name.as_str());
+    let mut said = spelled(
+        "Genre",
+        checks.genres(),
+        track.genres.iter().map(String::as_str),
+    );
+    said.extend(spelled("Artist", checks.artists(), artists));
+    said
+}
+
+/// Once per name, where a file writes one name twice or as both artist and album artist.
+fn spelled<'a>(
+    tag: &str,
+    spelling: &Spelling,
+    names: impl Iterator<Item = &'a str>,
+) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    names
+        .filter(|name| spelling.minor(name))
+        .filter(|name| {
+            let folded = fold(name);
+            let first = !seen.contains(&folded);
+            seen.push(folded);
+            first
+        })
+        .map(|name| report::spelled(tag, name, &spelling.others(name)))
+        .collect()
+}
+
+fn copies(served: &Served, at: usize) -> Vec<String> {
+    let tracks = served.library.tracks();
+    let mut paths: Vec<String> = served
+        .counts
+        .checks
+        .copies_of(at)
+        .filter_map(|other| tracks.get(other))
+        .map(|other| other.relative.clone())
+        .collect();
+    paths.sort();
+    paths
 }
 
 /// The same, for a shell with no `jq`.
@@ -170,6 +226,12 @@ pub fn lines(found: &Found) -> Vec<(String, String)> {
                 }
             ),
         ));
+    }
+    for (at, copy) in found.copies.iter().enumerate() {
+        lines.push((format!("copy.{}", at + 1), copy.clone()));
+    }
+    for (at, spelled) in found.spellings.iter().enumerate() {
+        lines.push((format!("spelled.{}", at + 1), spelled.clone()));
     }
     for (at, place) in found.places.iter().enumerate() {
         lines.push((

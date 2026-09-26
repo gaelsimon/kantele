@@ -573,6 +573,22 @@ async fn the_page_opens_without_credentials_and_is_html() {
     }
 }
 
+#[tokio::test]
+async fn an_address_under_the_page_is_the_page_which_reads_the_rest_itself() {
+    let tree = library_with_a_broken_playlist("page-addresses");
+    let server = serving(&tree, None);
+    let page = body_of(ask(&server, get("/config")).await).await;
+    for address in [
+        "/config/settings",
+        "/config/library",
+        "/config/library/Blue%20Note/Sierra%20Maestra/01.wav?only=no-genre",
+    ] {
+        let response = ask(&server, get(address)).await;
+        assert_eq!(response.status(), StatusCode::OK, "{address}");
+        assert_eq!(body_of(response).await, page, "{address}");
+    }
+}
+
 /// Absolute URLs that reach nothing: a namespace the DOM is built with, and the address in a
 /// warning string. Anything else in a page is a font, a stylesheet or a script from elsewhere.
 const INERT: &[&str] = &["http://www.w3.org/", "https://svelte.dev/"];
