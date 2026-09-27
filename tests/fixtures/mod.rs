@@ -93,6 +93,11 @@ pub fn jpeg() -> Vec<u8> {
 
 /// A FLAC: stream marker, `STREAMINFO`, the given Vorbis comments, a `PICTURE` block if asked.
 pub fn flac(comments: &[(&str, &str)], picture: bool) -> Vec<u8> {
+    flac_with_cover(comments, picture.then(jpeg))
+}
+
+/// The same with the given bytes as its picture.
+pub fn flac_with_cover(comments: &[(&str, &str)], cover: Option<Vec<u8>>) -> Vec<u8> {
     const RATE: u32 = 44_100;
     const CHANNELS: u32 = 2;
     const BITS: u32 = 16;
@@ -119,7 +124,8 @@ pub fn flac(comments: &[(&str, &str)], picture: bool) -> Vec<u8> {
         vorbis.extend_from_slice(line.as_bytes());
     }
 
-    let cover = jpeg();
+    let picture = cover.is_some();
+    let cover = cover.unwrap_or_default();
     let mut art = Vec::new();
     art.extend_from_slice(&3u32.to_be_bytes()); // picture type 3, front cover
     art.extend_from_slice(&(b"image/jpeg".len() as u32).to_be_bytes());
@@ -138,6 +144,129 @@ pub fn flac(comments: &[(&str, &str)], picture: bool) -> Vec<u8> {
         block(&mut file, 6, &art, true);
     }
     file
+}
+
+/// Ten frames of MPEG-1 layer III silence at 128 kbit/s and 44.1 kHz.
+pub fn mpeg_frames() -> Vec<u8> {
+    let mut frame = vec![0xFF, 0xFB, 0x90, 0x00];
+    frame.resize(417, 0);
+    frame.repeat(10)
+}
+
+fn synchsafe(size: u32) -> [u8; 4] {
+    [
+        ((size >> 21) & 0x7F) as u8,
+        ((size >> 14) & 0x7F) as u8,
+        ((size >> 7) & 0x7F) as u8,
+        (size & 0x7F) as u8,
+    ]
+}
+
+/// An ID3v2 tag of version 2.3 or 2.4 around the given frames, with the given header flags.
+pub fn id3v2(version: u8, flags: u8, frames: &[Vec<u8>]) -> Vec<u8> {
+    let body = frames.concat();
+    let mut tag = b"ID3".to_vec();
+    tag.extend_from_slice(&[version, 0, flags]);
+    tag.extend_from_slice(&synchsafe(body.len() as u32));
+    tag.extend_from_slice(&body);
+    tag
+}
+
+/// One frame with the size its version writes and no frame flags.
+pub fn id3v2_frame(version: u8, id: &[u8; 4], body: &[u8]) -> Vec<u8> {
+    let size = body.len() as u32;
+    let mut frame = id.to_vec();
+    frame.extend_from_slice(&match version {
+        4 => synchsafe(size),
+        _ => size.to_be_bytes(),
+    });
+    frame.extend_from_slice(&[0, 0]);
+    frame.extend_from_slice(body);
+    frame
+}
+
+/// A text frame in ISO-8859-1, which the values the tests write are.
+pub fn id3v2_text(version: u8, id: &[u8; 4], value: &str) -> Vec<u8> {
+    let mut body = vec![0u8];
+    body.extend_from_slice(value.as_bytes());
+    id3v2_frame(version, id, &body)
+}
+
+/// The 128 bytes of an ID3v1 tag, with a genre byte.
+pub fn id3v1(title: &str, artist: &str, album: &str, genre: u8) -> Vec<u8> {
+    let padded = |value: &str, width: usize| {
+        let mut field = value.as_bytes().to_vec();
+        field.resize(width, 0);
+        field
+    };
+    let mut tag = b"TAG".to_vec();
+    tag.extend_from_slice(&padded(title, 30));
+    tag.extend_from_slice(&padded(artist, 30));
+    tag.extend_from_slice(&padded(album, 30));
+    tag.extend_from_slice(&padded("", 4));
+    tag.extend_from_slice(&padded("", 30));
+    tag.push(genre);
+    tag
+}
+
+/// The given tags, then the audio, then an optional ID3v1 tag.
+pub fn mp3(tags: &[Vec<u8>], trailer: Option<Vec<u8>>) -> Vec<u8> {
+    let mut file = tags.concat();
+    file.extend_from_slice(&mpeg_frames());
+    file.extend(trailer.unwrap_or_default());
+    file
+}
+
+fn atom(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+    let mut atom = (8 + body.len() as u32).to_be_bytes().to_vec();
+    atom.extend_from_slice(kind);
+    atom.extend_from_slice(body);
+    atom
+}
+
+fn data(kind: u32, payload: &[u8]) -> Vec<u8> {
+    let mut body = kind.to_be_bytes().to_vec();
+    body.extend_from_slice(&0u32.to_be_bytes());
+    body.extend_from_slice(payload);
+    atom(b"data", &body)
+}
+
+fn handler(kind: &[u8; 4]) -> Vec<u8> {
+    let mut body = vec![0u8; 8];
+    body.extend_from_slice(kind);
+    body.extend_from_slice(&[0u8; 13]);
+    atom(b"hdlr", &body)
+}
+
+/// An M4A holding one second of nothing, a title, and a cover of the given size.
+pub fn m4a(title: &str, cover: usize) -> Vec<u8> {
+    let mut ftyp = b"M4A ".to_vec();
+    ftyp.extend_from_slice(&0u32.to_be_bytes());
+    ftyp.extend_from_slice(b"M4A isom");
+    let mut mdhd = Vec::new();
+    for value in [0u32, 0, 0, 44_100, 44_100, 0] {
+        mdhd.extend_from_slice(&value.to_be_bytes());
+    }
+    let mdia = [atom(b"mdhd", &mdhd), handler(b"soun")].concat();
+    let mut items = atom(&[0xA9, b'n', b'a', b'm'], &data(1, title.as_bytes()));
+    if cover > 0 {
+        let mut picture = jpeg();
+        picture.resize(cover, 0);
+        items.extend(atom(b"covr", &data(13, &picture)));
+    }
+    let meta = [vec![0u8; 4], handler(b"mdir"), atom(b"ilst", &items)].concat();
+    let moov = [
+        atom(b"mvhd", &[0u8; 100]),
+        atom(b"trak", &atom(b"mdia", &mdia)),
+        atom(b"udta", &atom(b"meta", &meta)),
+    ]
+    .concat();
+    [
+        atom(b"ftyp", &ftyp),
+        atom(b"moov", &moov),
+        atom(b"mdat", &[0u8; 1000]),
+    ]
+    .concat()
 }
 
 fn block(file: &mut Vec<u8>, kind: u8, body: &[u8], last: bool) {

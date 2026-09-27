@@ -88,6 +88,7 @@
     albums: status?.library.albums ?? 0,
     tracks: status?.library.tracks ?? 0,
     untagged: status?.library.untagged ?? 0,
+    compilations: status?.library.compilations ?? 0,
     playlists: status?.library.playlists ?? 0,
   });
 

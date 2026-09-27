@@ -105,6 +105,8 @@ struct LibraryCounts {
     playlists: usize,
     /// Tracks no tag axis reaches.
     untagged: usize,
+    /// Albums no Artist entry stands for.
+    compilations: usize,
     /// How many tracks carry each tag.
     coverage: Coverage,
 }
@@ -234,6 +236,7 @@ pub(super) async fn status(State(control): State<Shared>, headers: HeaderMap) ->
             artists: library.artists().len(),
             playlists: library.playlists().len(),
             untagged: served.counts.untagged,
+            compilations: served.view.compilations().len(),
             coverage: served.counts.coverage.clone(),
         },
         store: StoreStatus {
@@ -370,6 +373,7 @@ fn counted(status: &Status) -> Vec<(String, String)> {
         line("artists", status.library.artists.to_string()),
         line("playlists", status.library.playlists.to_string()),
         line("untagged", status.library.untagged.to_string()),
+        line("compilations", status.library.compilations.to_string()),
         line(
             "sweep_minutes_effective",
             status
@@ -510,6 +514,7 @@ mod tests {
                 artists: 1,
                 playlists: 1,
                 untagged: 1,
+                compilations: 0,
                 coverage: Coverage {
                     tracks: 1,
                     artist: 1,

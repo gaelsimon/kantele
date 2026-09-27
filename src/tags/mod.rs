@@ -1,14 +1,16 @@
 //! Reading what is on disk, and nothing else.
 
 pub mod dsd;
+pub mod id3v2;
 pub mod vorbis;
+pub mod windows_1252;
 
 use std::fs::File;
-use std::io::{BufReader, Seek};
+use std::io::{BufReader, Cursor, Read, Seek};
 use std::path::Path;
 use std::time::Duration;
 
-use lofty::config::ParseOptions;
+use lofty::config::{GlobalOptions, ParseOptions, apply_global_options};
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::prelude::ItemKey;
 use lofty::probe::Probe;
@@ -61,7 +63,7 @@ pub struct FileTags {
 
 impl FileTags {
     /// A whitespace-only value is no value and takes the entries aligned with it. What remains is
-    /// published in NFC.
+    /// published trimmed and in NFC.
     pub fn tidied(mut self) -> Self {
         for field in [
             &mut self.title,
@@ -72,14 +74,11 @@ impl FileTags {
             &mut self.movement_name,
             &mut self.grouping,
         ] {
-            if field
-                .as_deref()
-                .is_some_and(|value| value.trim().is_empty())
-            {
-                *field = None;
-            }
             if let Some(value) = field {
-                composed(value);
+                cleaned(value);
+            }
+            if field.as_deref().is_some_and(str::is_empty) {
+                *field = None;
             }
         }
         for list in [
@@ -92,9 +91,9 @@ impl FileTags {
             &mut self.conductors,
             &mut self.genres,
         ] {
-            list.iter_mut().for_each(composed);
+            list.iter_mut().for_each(cleaned);
         }
-        self.genres.retain(|genre| !genre.trim().is_empty());
+        self.genres.retain(|genre| !genre.is_empty());
         drop_blank(
             &mut self.artists,
             &mut [&mut self.artist_sorts, &mut self.musicbrainz_artist_ids],
@@ -112,8 +111,15 @@ impl FileTags {
     }
 }
 
-fn composed(value: &mut String) {
+fn cleaned(value: &mut String) {
     use unicode_normalization::UnicodeNormalization;
+    if let Some(letters) = windows_1252::repaired(value) {
+        *value = letters;
+    }
+    let trimmed = value.trim();
+    if trimmed.len() != value.len() {
+        *value = trimmed.to_owned();
+    }
     if !unicode_normalization::is_nfc(value) {
         *value = value.nfc().collect();
     }
@@ -224,7 +230,8 @@ fn containers(tagged: &lofty::file::TaggedFile) -> Vec<&lofty::tag::Tag> {
 /// the run a track belongs to, beside the `GROUPING` the crate reads.
 fn tags_from(file: &mut File, tagged: &lofty::file::TaggedFile) -> FileTags {
     let mut tags = tags_of(tagged);
-    let wanted = tags.composer_sorts.is_empty() || tags.grouping.is_none();
+    let wanted =
+        tags.composer_sorts.is_empty() || tags.grouping.is_none() || tags.album_artists.len() > 1;
     if wanted
         && tagged.file_type() == lofty::file::FileType::Flac
         && let Some(block) = vorbis::block(file)
@@ -235,11 +242,18 @@ fn tags_from(file: &mut File, tagged: &lofty::file::TaggedFile) -> FileTags {
         if tags.grouping.is_none() {
             tags.grouping = vorbis::values(&block, "GROUP").into_iter().next();
         }
+        // lofty reads `ALBUM ARTIST`, an older tagger's key, as more of `ALBUMARTIST`.
+        if tags.album_artists.len() > 1 && vorbis::values(&block, "ALBUMARTISTS").is_empty() {
+            let named = vorbis::values(&block, "ALBUMARTIST");
+            if !named.is_empty() {
+                tags.album_artists = named;
+            }
+        }
     }
     tags
 }
 
-/// Two things go wrong on a real library, and the file is worth serving after either.
+/// What goes wrong on a real library, and the file is worth serving after any of it.
 fn read_again(
     file: &mut File,
     path: &Path,
@@ -259,6 +273,28 @@ fn read_again(
             wanted(&tagged),
         ));
     }
+    let mut skipping = options;
+    skipping.read_cover_art(false);
+    if let Ok(tagged) = roomier(|| probe(file, path, skipping)) {
+        tracing::warn!(
+            path = %path.display(),
+            cause = %causes(&refused),
+            "a tag larger than lofty reads at once; read again without its picture"
+        );
+        return Ok((tags_from(file, &tagged), properties_of(&tagged), None));
+    }
+    if let Some(tagged) = salvaged(file, path, options) {
+        tracing::warn!(
+            path = %path.display(),
+            cause = %causes(&refused),
+            "an ID3v2 frame will not parse; the rest of the tag is read without it"
+        );
+        return Ok((
+            tags_from(file, &tagged),
+            properties_of(&tagged),
+            wanted(&tagged),
+        ));
+    }
     tracing::warn!(
         path = %path.display(),
         cause = %causes(&refused),
@@ -268,6 +304,44 @@ fn read_again(
     Ok((FileTags::default(), properties_of(&tagged), None))
 }
 
+/// lofty refuses any one allocation above 16 MiB, and an M4A is read `ilst` whole, cover included.
+const ROOMIER: usize = 64 * 1024 * 1024;
+
+/// The limit is lofty's per thread, and is put back however the read ends.
+fn roomier<T>(read: impl FnOnce() -> T) -> T {
+    struct Restored;
+    impl Drop for Restored {
+        fn drop(&mut self) {
+            apply_global_options(GlobalOptions::new());
+        }
+    }
+    apply_global_options(GlobalOptions::new().allocation_limit(ROOMIER));
+    let _restored = Restored;
+    read()
+}
+
+fn salvaged(
+    file: &mut File,
+    path: &Path,
+    options: ParseOptions,
+) -> Option<lofty::file::TaggedFile> {
+    let heading = id3v2::heading(file).ok()??;
+    let spliced = id3v2::salvaged(file, heading, |tag| id3v2_parses(tag, options)).ok()?;
+    probe_from(spliced, path, options).ok()
+}
+
+/// Whether lofty reads this tag, put in front of two frames of silence.
+fn id3v2_parses(tag: &[u8], options: ParseOptions) -> bool {
+    let mut silence = [0xFF, 0xFB, 0x90, 0x00].to_vec();
+    silence.resize(417, 0);
+    let file = [tag, &silence, &silence].concat();
+    Probe::new(Cursor::new(file))
+        .set_file_type(lofty::file::FileType::Mpeg)
+        .options(options)
+        .read()
+        .is_ok()
+}
+
 /// A parse of the open file as the format its name says, from its first byte. Buffered, as
 /// `Probe::open` buffers, or every read the parser makes is a system call.
 fn probe(
@@ -275,8 +349,24 @@ fn probe(
     path: &Path,
     options: ParseOptions,
 ) -> Result<lofty::file::TaggedFile, TagError> {
+    let heading = id3v2::heading(file).map_err(|source| refusal(path, source.into()))?;
+    if let Some(heading) = heading
+        && let Some(first) =
+            id3v2::first_only(file, heading).map_err(|source| refusal(path, source.into()))?
+    {
+        tracing::debug!(path = %path.display(), tags = heading.count, "ID3v2 tags stacked; the first is read");
+        return probe_from(first, path, options);
+    }
     rewound(file, path)?;
-    let mut probe = Probe::new(BufReader::new(file)).options(options);
+    probe_from(file, path, options)
+}
+
+fn probe_from<R: Read + Seek>(
+    reader: R,
+    path: &Path,
+    options: ParseOptions,
+) -> Result<lofty::file::TaggedFile, TagError> {
+    let mut probe = Probe::new(BufReader::new(reader)).options(options);
     if let Some(kind) = lofty::file::FileType::from_path(path) {
         probe = probe.set_file_type(kind);
     }
@@ -359,7 +449,11 @@ fn tags_of(tagged: &lofty::file::TaggedFile) -> FileTags {
         album: one(ItemKey::AlbumTitle),
         composers: many(ItemKey::Composer),
         conductors: many(ItemKey::Conductor),
-        genres: many(ItemKey::Genre),
+        genres: tags
+            .iter()
+            .map(|tag| genres_in(tag))
+            .find(|values| !values.is_empty())
+            .unwrap_or_default(),
         date: one(ItemKey::RecordingDate).or_else(|| one(ItemKey::Year)),
         track_number: one(ItemKey::TrackNumber).and_then(|v| leading_number(&v)),
         track_total: one(ItemKey::TrackTotal).and_then(|v| leading_number(&v)),
@@ -383,6 +477,15 @@ fn tags_of(tagged: &lofty::file::TaggedFile) -> FileTags {
             .map(canonical)
             .collect(),
     }
+}
+
+/// ID3v1 gives the genre one byte, and an encoder nobody asked leaves it at 0, Blues, or 12, Other.
+fn genres_in(tag: &lofty::tag::Tag) -> Vec<String> {
+    let mut genres = once_each(tag.get_strings(ItemKey::Genre));
+    if tag.tag_type() == lofty::tag::TagType::Id3v1 {
+        genres.retain(|genre| genre != "Blues" && genre != "Other");
+    }
+    genres
 }
 
 /// The values of one tag, with an exact repeat kept once.
@@ -456,6 +559,40 @@ mod tests {
         assert_eq!(tags.composer_sorts, vec!["Coltrane, John".to_owned()]);
         assert_eq!(tags.genres, vec!["Son".to_owned()]);
         assert_eq!(tags.work.as_deref(), Some("Kind of Blue"));
+    }
+
+    #[test]
+    fn the_spaces_around_a_value_are_not_part_of_it() {
+        let tags = FileTags {
+            title: Some("It Had To Be You              ".to_owned()),
+            album: Some(" Double Trouble ".to_owned()),
+            artists: vec!["Tricky ".to_owned()],
+            album_artists: vec!["P-Square ".to_owned()],
+            composers: vec![" Poté".to_owned()],
+            genres: vec![" Reggae".to_owned()],
+            ..FileTags::default()
+        }
+        .tidied();
+        assert_eq!(tags.title.as_deref(), Some("It Had To Be You"));
+        assert_eq!(tags.album.as_deref(), Some("Double Trouble"));
+        assert_eq!(tags.artists, ["Tricky"]);
+        assert_eq!(tags.album_artists, ["P-Square"]);
+        assert_eq!(tags.composers, ["Poté"]);
+        assert_eq!(tags.genres, ["Reggae"]);
+    }
+
+    #[test]
+    fn a_windows_1252_letter_read_as_a_latin_1_control_is_the_letter_again() {
+        let tags = FileTags {
+            artists: vec!["Libor Pe\u{9a}ek".to_owned()],
+            album: Some("Àëåêñàíäð Íóæäèí \u{96} FMCAFE".to_owned()),
+            composers: vec!["juan carlos \u{91}chongo\u{92} puello".to_owned()],
+            ..FileTags::default()
+        }
+        .tidied();
+        assert_eq!(tags.artists, ["Libor Pešek"]);
+        assert_eq!(tags.album.as_deref(), Some("Àëåêñàíäð Íóæäèí – FMCAFE"));
+        assert_eq!(tags.composers, ["juan carlos ‘chongo’ puello"]);
     }
 
     #[test]

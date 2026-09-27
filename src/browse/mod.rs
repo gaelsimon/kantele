@@ -56,11 +56,11 @@ pub const FACETS: &[Facet] = &[
 
 /// The axes a menu offers unless the file says otherwise.
 pub const DEFAULT_AXES: &[Facet] = &[
-    Facet::Genre,
     Facet::Artist,
-    Facet::AllArtists,
+    Facet::Genre,
     Facet::Composer,
     Facet::Date,
+    Facet::AllArtists,
     Facet::Quality,
 ];
 
@@ -89,18 +89,17 @@ impl Facet {
     /// What a client shows as the menu entry.
     pub const fn title(self) -> &'static str {
         match self {
-            Self::Genre => "Genre",
-            Self::Artist => "Artist",
-            Self::AllArtists => "All Artists",
-            Self::Composer => "Composer",
-            Self::Work => "Work",
-            Self::Date => "Date",
-            // The names the competitor with the most axes uses, because a listener has seen them.
-            Self::Quality => "Quality",
-            Self::Bits => "Bits",
+            Self::Genre => "Genres",
+            Self::Artist => "Artists",
+            Self::AllArtists => "Track artists",
+            Self::Composer => "Composers",
+            Self::Work => "Works",
+            Self::Date => "Years",
+            Self::Quality => "Audio quality",
+            Self::Bits => "Bit depths",
             Self::Channels => "Channels",
-            Self::Frequency => "Frequency",
-            Self::Type => "Type",
+            Self::Frequency => "Sample rates",
+            Self::Type => "Formats",
         }
     }
 
@@ -122,13 +121,9 @@ impl Facet {
     fn values(self, track: &Track) -> Values<'_> {
         match self {
             Self::Genre => Values::Many(&track.genres),
-            // A compilation is served under its own credit but stands under no artist: one entry
-            // holding every compilation is not an artist anybody looks for.
-            Self::Artist => Values::Credited(match () {
-                () if track.compilation => &[],
-                () if !track.album_artists.is_empty() => &track.album_artists,
-                () => &track.artists,
-            }),
+            // A compilation stands under the album artist it names, and under nobody otherwise:
+            // one entry holding every other compilation is not an artist anybody looks for.
+            Self::Artist => Values::Credited(artist_credits(track)),
             Self::AllArtists => Values::Credited(&track.artists),
             Self::Composer => Values::Credited(&track.composers),
             Self::Work => Values::One(track.work.as_deref()),
@@ -169,6 +164,38 @@ impl Facet {
 }
 
 /// The year inside a date tag, which is the first run of four digits wherever a tagger put it.
+/// The albums no Artist entry stands for: a compilation, none of whose tracks names an artist.
+pub fn compilations(library: &Library) -> Vec<usize> {
+    library
+        .albums()
+        .iter()
+        .enumerate()
+        .filter(|(_, album)| {
+            let tracks: Vec<&Track> = library.album_tracks(album).collect();
+            tracks.iter().any(|track| track.compilation)
+                && tracks.iter().all(|track| artist_credits(track).is_empty())
+        })
+        .map(|(at, _)| at)
+        .collect()
+}
+
+/// Who a track stands under in Artists. Without an album there is no compilation, so a loose track
+/// credited to Various Artists stands under its own artist.
+fn artist_credits(track: &Track) -> &[Credit] {
+    match () {
+        () if names_somebody(&track.album_artists) => &track.album_artists,
+        () if track.compilation && track.album_id.is_some() => &[],
+        () => &track.artists,
+    }
+}
+
+fn names_somebody(credits: &[Credit]) -> bool {
+    !credits.is_empty()
+        && credits
+            .iter()
+            .all(|credit| credit.name != crate::index::credits::VARIOUS_ARTISTS)
+}
+
 fn year(date: &str) -> Option<&str> {
     let bytes = date.as_bytes();
     (0..bytes.len().checked_sub(3)?)
@@ -311,6 +338,36 @@ pub struct Position {
     pub listing: Option<Facet>,
     /// Where inside a listing's letter index this position is, or nothing for the listing itself.
     pub grouped: Option<Grouped>,
+    /// The whole selection, as the root's albums and items show the whole library.
+    pub shown: Option<Shown>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shown {
+    Albums,
+    Tracks,
+}
+
+impl Shown {
+    const fn code(self) -> char {
+        match self {
+            Self::Albums => 'r',
+            Self::Tracks => 'i',
+        }
+    }
+
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Albums => "All albums",
+            Self::Tracks => "All tracks",
+        }
+    }
+
+    fn from_code(code: char) -> Option<Self> {
+        [Self::Albums, Self::Tracks]
+            .into_iter()
+            .find(|shown| shown.code() == code)
+    }
 }
 
 /// A position inside the letter index of one listing.
@@ -348,6 +405,10 @@ impl Position {
             id.push(facet.code());
             id.push_str(value);
         }
+        if let Some(shown) = self.shown {
+            id.push('-');
+            id.push(shown.code());
+        }
         if let Some(facet) = self.listing {
             id.push('-');
             id.push(facet.code());
@@ -379,6 +440,16 @@ impl Position {
             let code = characters.next()?;
             let value: String = characters.collect();
             let hex = value.len() == DIGEST && value.chars().all(|c| c.is_ascii_hexdigit());
+            if position.shown.is_some() {
+                return None;
+            }
+            if let Some(shown) = Shown::from_code(code) {
+                if !value.is_empty() || position.chosen.is_empty() || position.listing.is_some() {
+                    return None;
+                }
+                position.shown = Some(shown);
+                continue;
+            }
             if code == GROUP {
                 // The index and its letters both live inside a listing.
                 if position.listing.is_none() || position.grouped.is_some() {
@@ -431,6 +502,18 @@ impl Position {
             chosen,
             listing: None,
             grouped: None,
+            shown: None,
+        }
+    }
+
+    /// The same choices, showing the whole selection.
+    pub fn showing(&self, shown: Shown) -> Self {
+        Self {
+            scope: self.scope.clone(),
+            chosen: self.chosen.clone(),
+            listing: None,
+            grouped: None,
+            shown: Some(shown),
         }
     }
 
@@ -457,6 +540,7 @@ impl Position {
             chosen: self.chosen.clone(),
             listing: Some(facet),
             grouped: None,
+            shown: None,
         }
     }
 
@@ -484,8 +568,9 @@ fn digest_of(bytes: &[u8]) -> String {
 /// What a position offers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Menu<'a> {
-    /// The axes that still narrow something, each with the number of values it offers.
-    Facets(Vec<(Facet, Position, usize)>),
+    /// The axes that still narrow something, each with the number of values it offers, and below
+    /// the root the way to the whole selection.
+    Facets(Vec<(Facet, Position, usize)>, Option<Whole>),
     /// One axis and its values, borrowed so a page can be minted rather than the whole list, and
     /// the selection they were drawn from.
     Values(Facet, Vec<Entry<'a>>, Vec<usize>),
@@ -493,6 +578,40 @@ pub enum Menu<'a> {
     Letters(Facet, Vec<Group>),
     /// Nothing narrows any further, so the selection itself is shown, as indices into the tracks.
     Tracks(Vec<usize>),
+    /// The albums the selection's tracks belong to, the selection given as indices into the tracks.
+    Albums(Vec<usize>),
+    /// Every track of the selection, as indices into the tracks.
+    Items(Vec<usize>),
+}
+
+/// How much of the selection a narrowed menu's first two entries show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Whole {
+    pub albums: usize,
+    pub tracks: usize,
+}
+
+impl Whole {
+    fn of(library: &Library, selected: &[usize]) -> Self {
+        Self {
+            albums: albums_in(library, selected).len(),
+            tracks: selected.len(),
+        }
+    }
+
+    /// An entry with nothing behind it is not offered.
+    pub fn entries(&self) -> usize {
+        usize::from(self.albums > 0) + usize::from(self.tracks > 0)
+    }
+
+    /// The entries leading to it from `at`, first in its menu: where, what it is called, children.
+    pub fn leading(&self, at: &Position) -> Vec<(Position, String, usize)> {
+        [(Shown::Albums, self.albums), (Shown::Tracks, self.tracks)]
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .map(|(shown, count)| (at.showing(shown), shown.title().to_owned(), count))
+            .collect()
+    }
 }
 
 /// One letter group of one axis.
@@ -617,6 +736,11 @@ fn resolve(view: &View, chosen: &[(Facet, String)]) -> Option<Vec<(Facet, u32)>>
 /// What to show at a position, or nothing where the position names no object.
 pub fn menu<'a>(library: &'a Library, view: &'a View, position: &Position) -> Option<Menu<'a>> {
     let selected = selection(library, view, position)?;
+    match position.shown {
+        Some(Shown::Albums) => return Some(Menu::Albums(selected)),
+        Some(Shown::Tracks) => return Some(Menu::Items(selected)),
+        None => {}
+    }
     if let Some(facet) = position.listing {
         let values = view.axes().distinct(facet, &selected);
         return Some(match position.grouped {
@@ -638,6 +762,7 @@ pub fn menu<'a>(library: &'a Library, view: &'a View, position: &Position) -> Op
     if offered.is_empty() {
         return Some(Menu::Tracks(selected));
     }
+    let whole = (!position.chosen.is_empty()).then(|| Whole::of(library, &selected));
     Some(Menu::Facets(
         offered
             .into_iter()
@@ -647,6 +772,7 @@ pub fn menu<'a>(library: &'a Library, view: &'a View, position: &Position) -> Op
                 (facet, at, size)
             })
             .collect(),
+        whole,
     ))
 }
 
@@ -700,7 +826,7 @@ pub fn choice_sizes(
         .iter()
         .map(|held| match narrowing(library, view, &made, held).len() {
             0 => shown_size(library, held),
-            axes => axes,
+            axes => axes + Whole::of(library, held).entries(),
         })
         .collect()
 }
@@ -944,6 +1070,189 @@ mod tests {
     }
 
     #[test]
+    fn a_narrowed_menu_offers_every_album_and_every_track_of_its_selection() {
+        let library = library();
+        let view = eager_view(&library);
+        let reggae = Position::default().narrowed(Facet::Genre, "Reggae");
+        let Some(Menu::Facets(_, whole)) = menu(&library, &view, &reggae) else {
+            panic!("reggae varies by artist, so it offers menus");
+        };
+        assert_eq!(
+            whole,
+            Some(Whole {
+                albums: 2,
+                tracks: 2
+            })
+        );
+
+        let albums = reggae.showing(Shown::Albums);
+        assert_eq!(Position::parse(&albums.id()), Some(albums.clone()));
+        let Some(Menu::Albums(selected)) = menu(&library, &view, &albums) else {
+            panic!("the albums of a selection are an object");
+        };
+        assert_eq!(albums_in(&library, &selected).len(), 2);
+
+        let tracks = reggae.showing(Shown::Tracks);
+        assert_eq!(Position::parse(&tracks.id()), Some(tracks.clone()));
+        assert!(matches!(
+            menu(&library, &view, &tracks),
+            Some(Menu::Items(selected)) if selected.len() == 2
+        ));
+    }
+
+    #[test]
+    fn the_root_offers_no_way_to_the_whole_library_beside_its_own() {
+        let library = library();
+        let view = eager_view(&library);
+        assert!(matches!(
+            menu(&library, &view, &Position::default()),
+            Some(Menu::Facets(_, None))
+        ));
+    }
+
+    #[test]
+    fn a_value_counts_the_ways_to_its_whole_selection_among_its_children() {
+        let library = library();
+        let view = eager_view(&library);
+        let listing = Position::default().listing(Facet::Genre);
+        let selected: Vec<usize> = (0..library.tracks().len()).collect();
+        let values = view.axes().distinct(Facet::Genre, &selected);
+        let sizes = choice_sizes(&library, &view, &listing, Facet::Genre, &selected, &values);
+        let reggae = values
+            .iter()
+            .position(|entry| entry.display == "Reggae")
+            .expect("reggae is a genre");
+        let opened = menu(
+            &library,
+            &view,
+            &listing.chose(Facet::Genre, values[reggae].digest),
+        );
+        let Some(Menu::Facets(axes, Some(whole))) = opened else {
+            panic!("reggae offers menus");
+        };
+        assert_eq!(sizes[reggae], axes.len() + whole.entries());
+    }
+
+    /// A best-of that names its album artist, a Various Artists album, a compilation naming nobody.
+    fn blues_compilations() -> Library {
+        let mut best_of = tagged("The Chess Box", "My Babe", "Willie Dixon", "Blues", 1);
+        best_of.artists = vec!["Little Walter".to_owned()];
+        best_of.compilation = true;
+        let mut various = tagged(
+            "Pure Blues",
+            "Hoochie Coochie Man",
+            "Various Artists",
+            "Blues",
+            1,
+        );
+        various.artists = vec!["Muddy Waters".to_owned()];
+        let mut nameless = tagged("Blues Box", "Boom Boom", "Nobody", "Blues", 1);
+        nameless.album_artists.clear();
+        nameless.artists = vec!["John Lee Hooker".to_owned()];
+        nameless.compilation = true;
+        Library::build(
+            "Music".to_owned(),
+            &[
+                file("chess/1.flac", best_of),
+                file("pure/1.flac", various),
+                file("box/1.flac", nameless),
+            ],
+        )
+    }
+
+    #[test]
+    fn a_loose_track_credited_to_various_artists_stands_under_its_own_artist() {
+        let mut single = tagged("", "Gal A Bubble", "Various Artists", "Reggae", 1);
+        single.album = None;
+        single.artists = vec!["Konshens".to_owned()];
+        let library = Library::build("Music".to_owned(), &[file("loose/1.mp3", single)]);
+        let view = eager_view(&library);
+        let artists: Vec<String> = places(&view, 0)
+            .into_iter()
+            .filter(|place| place.facet == Facet::Artist)
+            .map(|place| place.value)
+            .collect();
+        assert_eq!(
+            artists,
+            ["Konshens"],
+            "without an album there is no compilation"
+        );
+    }
+
+    #[test]
+    fn an_album_none_of_whose_tracks_names_an_artist_is_a_compilation() {
+        let mut flagged = tagged("Beach Diggin", "One", "Nobody", "Soul", 1);
+        flagged.album_artists.clear();
+        flagged.artists = vec!["Gene Lawrence".to_owned()];
+        flagged.compilation = true;
+        let mut bare = tagged("Beach Diggin", "Two", "Nobody", "Soul", 2);
+        bare.album_artists.clear();
+        bare.artists.clear();
+        let library = Library::build(
+            "Music".to_owned(),
+            &[file("beach/1.flac", flagged), file("beach/2.flac", bare)],
+        );
+        assert_eq!(eager_view(&library).compilations().len(), 1);
+    }
+
+    #[test]
+    fn the_compilations_are_the_albums_no_artist_stands_for() {
+        let library = blues_compilations();
+        let view = eager_view(&library);
+        let titles: Vec<&str> = view
+            .compilations()
+            .iter()
+            .map(|at| library.albums()[*at].title.as_str())
+            .collect();
+        assert_eq!(titles, ["Blues Box", "Pure Blues"]);
+    }
+
+    #[test]
+    fn the_root_offers_the_compilations_only_where_there_are_some() {
+        let library = blues_compilations();
+        let entry = root::entries(&library, &eager_view(&library))
+            .into_iter()
+            .find(|entry| entry.opens == root::Opens::Compilations)
+            .expect("two albums stand under no artist");
+        assert_eq!((entry.title.as_str(), entry.children), ("Compilations", 2));
+
+        let plain = self::library();
+        assert!(
+            root::entries(&plain, &eager_view(&plain))
+                .iter()
+                .all(|entry| entry.opens != root::Opens::Compilations)
+        );
+    }
+
+    #[test]
+    fn a_compilation_that_names_its_album_artist_stands_under_that_artist() {
+        let library = blues_compilations();
+        let view = eager_view(&library);
+        let under = |relative: &str| -> Vec<String> {
+            let at = library
+                .tracks()
+                .iter()
+                .position(|track| track.relative == relative)
+                .expect("the track");
+            places(&view, at)
+                .into_iter()
+                .filter(|place| place.facet == Facet::Artist)
+                .map(|place| place.value)
+                .collect()
+        };
+        assert_eq!(
+            under("chess/1.flac"),
+            ["Willie Dixon"],
+            "a best-of flagged as a compilation is still somebody's album"
+        );
+        assert!(under("pure/1.flac").is_empty(), "Various Artists is nobody");
+        assert!(
+            under("box/1.flac").is_empty(),
+            "a compilation naming nobody does not borrow its performers"
+        );
+    }
+
+    #[test]
     fn an_identifier_survives_a_round_trip() {
         let position = Position {
             scope: None,
@@ -953,6 +1262,7 @@ mod tests {
             ],
             listing: Some(Facet::Date),
             grouped: None,
+            shown: None,
         };
         assert_eq!(Position::parse(&position.id()), Some(position));
     }
@@ -962,14 +1272,14 @@ mod tests {
         let library = library();
         let entries = root::entries(&library, &eager_view(&library));
         let titles: Vec<&str> = entries.iter().map(|entry| entry.title.as_str()).collect();
-        assert_eq!(titles.first().copied(), Some("4 albums"));
-        assert!(titles.contains(&"Genre"), "{titles:?}");
-        assert!(titles.contains(&"Artist"), "{titles:?}");
+        assert_eq!(titles.first().copied(), Some("Albums"));
+        assert!(titles.contains(&"Genres"), "{titles:?}");
+        assert!(titles.contains(&"Artists"), "{titles:?}");
         assert!(
-            !titles.contains(&"Quality"),
-            "every file is 16 bit 44.1 kHz, so Quality narrows nothing: {titles:?}"
+            !titles.contains(&"Audio quality"),
+            "every file is 16 bit 44.1 kHz, so Audio quality narrows nothing: {titles:?}"
         );
-        assert_eq!(titles.last().copied(), Some("[folder view]"));
+        assert_eq!(titles.last().copied(), Some("Tracks"));
     }
 
     #[test]
@@ -1020,9 +1330,9 @@ mod tests {
         match menu(&library, &eager_view(&library), &Position::default())
             .expect("a position naming an object")
         {
-            Menu::Facets(offered) => {
+            Menu::Facets(offered, _) => {
                 let axes: Vec<Facet> = offered.iter().map(|(facet, _, _)| *facet).collect();
-                assert_eq!(axes, vec![Facet::Genre, Facet::Artist, Facet::AllArtists]);
+                assert_eq!(axes, vec![Facet::Artist, Facet::Genre, Facet::AllArtists]);
             }
             other => panic!("expected a menu of axes, got {other:?}"),
         }
@@ -1040,7 +1350,7 @@ mod tests {
         match menu(&library, &eager_view(&library), &Position::default())
             .expect("a position naming an object")
         {
-            Menu::Facets(offered) => assert!(
+            Menu::Facets(offered, _) => assert!(
                 offered.is_empty() || !offered.iter().any(|(facet, _, _)| *facet == Facet::Genre),
                 "one genre across the library cannot narrow anything"
             ),
@@ -1054,7 +1364,7 @@ mod tests {
         let library = library();
         let reggae = Position::default().narrowed(Facet::Genre, "Reggae");
         match menu(&library, &eager_view(&library), &reggae).expect("a position naming an object") {
-            Menu::Facets(offered) => {
+            Menu::Facets(offered, _) => {
                 let axes: Vec<Facet> = offered.iter().map(|(facet, _, _)| *facet).collect();
                 assert!(!axes.contains(&Facet::Genre));
                 assert!(axes.contains(&Facet::Artist));
@@ -1166,7 +1476,7 @@ mod tests {
         assert!(
             matches!(
                 menu(&library, &view, &Position::default()),
-                Some(Menu::Facets(_))
+                Some(Menu::Facets(..))
             ),
             "the menus an owner chose are what a device meets first, whatever the library holds"
         );
@@ -1175,6 +1485,7 @@ mod tests {
             chosen: vec![(Facet::Genre, digest("Latin"))],
             listing: None,
             grouped: None,
+            shown: None,
         };
         assert!(
             matches!(menu(&library, &view, &narrowed), Some(Menu::Tracks(_))),
@@ -1223,7 +1534,7 @@ mod tests {
             2
         );
         match menu(&library, &eager_view(&library), &inside).expect("a position naming an object") {
-            Menu::Facets(offered) => {
+            Menu::Facets(offered, _) => {
                 let axes: Vec<Facet> = offered.iter().map(|(f, _, _)| *f).collect();
                 assert!(!axes.contains(&Facet::Genre), "{axes:?}");
                 assert!(axes.contains(&Facet::Artist));

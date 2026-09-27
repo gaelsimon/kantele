@@ -15,8 +15,7 @@ server, browses it, searches it and plays from it.
 | BubbleUPnP (Android) | the Android device itself |
 
 **Denon and Marantz with HEOS.** A profile is built in. HEOS opens on its own any first-screen
-entry with "folder" in its name, so for HEOS the folder view is called **📁 Directories** and sits
-at the end of the list.
+entry with "folder" in its name, so for HEOS **Folders** is called **📁 Directories**.
 
 ## Report your player
 

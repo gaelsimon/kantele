@@ -1,8 +1,11 @@
 //! The ContentDirectory service.
 
-pub use crate::browse::root::{ALBUMS, FOLDERS, MUSIC, PLAYLISTS, RECENT, UNTAGGED};
+pub use crate::browse::root::{ALBUMS, COMPILATIONS, FOLDERS, MUSIC, PLAYLISTS, RECENT, UNTAGGED};
 
-use crate::browse::root::{FOLDERS_TITLE, PLAYLISTS_TITLE, RECENT_TITLE, UNTAGGED_TITLE};
+use crate::browse::root::{
+    ALBUMS_TITLE, COMPILATIONS_TITLE, FOLDERS_TITLE, MUSIC_TITLE, PLAYLISTS_TITLE, RECENT_TITLE,
+    UNTAGGED_TITLE,
+};
 use crate::upnp::{ObjectId, didl, search};
 
 #[derive(Clone, Debug)]
@@ -40,7 +43,7 @@ impl Fault {
 }
 
 pub const ARTISTS: &str = "artists";
-const TAG_VIEW_TITLE: &str = "[tag view]";
+const TAG_VIEW_TITLE: &str = "By tags";
 
 struct Menus {
     root: ObjectId,
@@ -51,6 +54,7 @@ struct Menus {
     playlists: ObjectId,
     folders: ObjectId,
     recent: ObjectId,
+    compilations: ObjectId,
 }
 
 /// The fixed identifiers, minted once: every browse and every search names them.
@@ -67,6 +71,7 @@ static MENUS: std::sync::LazyLock<Menus> = std::sync::LazyLock::new(|| {
         playlists: fixed(PLAYLISTS),
         folders: fixed(FOLDERS),
         recent: fixed(RECENT),
+        compilations: fixed(COMPILATIONS),
     }
 });
 
@@ -277,8 +282,8 @@ mod tests {
                 root.result
             );
         }
-        assert!(root.result.contains("<dc:title>1 album</dc:title>"));
-        assert!(root.result.contains("<dc:title>3 items</dc:title>"));
+        assert!(root.result.contains("<dc:title>Albums</dc:title>"));
+        assert!(root.result.contains("<dc:title>Tracks</dc:title>"));
         assert!(!root.result.contains(r#"id="artists""#));
         assert!(!root.result.contains("<item "));
     }
@@ -288,13 +293,13 @@ mod tests {
         let served = serving(library());
         let root = ask(&served, ObjectId::ROOT, BrowseFlag::DirectChildren);
         assert!(
-            !root.result.contains("[untagged]"),
+            !root.result.contains(UNTAGGED_TITLE),
             "every track here carries a tag"
         );
 
         let bare = serving(untagged_library());
         let root = ask(&bare, ObjectId::ROOT, BrowseFlag::DirectChildren);
-        assert!(root.result.contains("<dc:title>[untagged]</dc:title>"));
+        assert!(root.result.contains("<dc:title>Untagged tracks</dc:title>"));
         let listing = ask(&bare, UNTAGGED, BrowseFlag::DirectChildren);
         assert_eq!(listing.total_matches, 1);
         assert!(listing.result.contains("Nameless"));
@@ -621,6 +626,131 @@ mod tests {
         assert_eq!(second.total_matches, 2);
         assert!(second.result.contains("<item "));
         assert!(!second.result.contains("<container "));
+    }
+
+    fn reggae_and_latin() -> Library {
+        use crate::index::Scanned;
+        use crate::tags::{AudioProperties, FileTags};
+        use std::path::{Path, PathBuf};
+        use std::time::Duration;
+
+        let file = |relative: &str, album: Option<&str>, artist: &str, genre: &str| Scanned {
+            path: Path::new("/music").join(relative),
+            relative: PathBuf::from(relative),
+            tags: FileTags {
+                title: Some(relative.to_owned()),
+                album: album.map(str::to_owned),
+                artists: vec![artist.to_owned()],
+                genres: vec![genre.to_owned()],
+                track_number: Some(1),
+                ..FileTags::default()
+            },
+            properties: AudioProperties {
+                duration: Duration::from_secs(180),
+                ..AudioProperties::default()
+            },
+            size: 1,
+            artwork: None,
+        };
+        Library::build(
+            "Music".to_owned(),
+            &[
+                file("Dub/1.flac", Some("Dub"), "Scientist", "Reggae"),
+                file("Roots/1.flac", Some("Roots"), "Burning Spear", "Reggae"),
+                file("Loose/1.flac", None, "Burning Spear", "Reggae"),
+                file("Cuban/1.flac", Some("Cuban"), "Sierra Maestra", "Latin"),
+            ],
+        )
+    }
+
+    /// The `childCount` a listing gives the container `id`.
+    fn child_count_of(didl: &str, id: &str) -> Option<usize> {
+        let (_, after) = didl.split_once(&format!(r#"id="{id}""#))?;
+        let tag = after.split_once('>')?.0;
+        let (_, count) = tag.split_once(r#"childCount=""#)?;
+        count.split_once('"')?.0.parse().ok()
+    }
+
+    #[test]
+    fn the_compilations_are_a_root_entry_that_lists_their_albums() {
+        use crate::index::Scanned;
+        use crate::tags::FileTags;
+        use std::path::{Path, PathBuf};
+
+        let file = |relative: &str, album: &str, artist: &str, compilation: bool| Scanned {
+            path: Path::new("/music").join(relative),
+            relative: PathBuf::from(relative),
+            tags: FileTags {
+                title: Some(relative.to_owned()),
+                album: Some(album.to_owned()),
+                artists: vec![artist.to_owned()],
+                compilation,
+                ..FileTags::default()
+            },
+            properties: Default::default(),
+            size: 1,
+            artwork: None,
+        };
+        let served = serving(Library::build(
+            "Music".to_owned(),
+            &[
+                file("Kicks/1.flac", "DJ-Kicks", "Kruder & Dorfmeister", true),
+                file("Kicks/2.flac", "DJ-Kicks", "Rockers Hi-Fi", true),
+                file("Dub/1.flac", "Dub", "Scientist", false),
+            ],
+        ));
+
+        let root = ask(&served, ObjectId::ROOT, BrowseFlag::DirectChildren);
+        assert_eq!(child_count_of(&root.result, COMPILATIONS), Some(1));
+        let listed = ask(&served, COMPILATIONS, BrowseFlag::DirectChildren);
+        assert_eq!(titles(&listed.result), ["DJ-Kicks"]);
+        assert!(listed.result.contains(r#"parentID="compilations""#));
+        let itself = ask(&served, COMPILATIONS, BrowseFlag::Metadata);
+        assert_eq!(titles(&itself.result), ["Compilations"]);
+    }
+
+    #[test]
+    fn a_narrowed_menu_opens_on_its_albums_and_its_items_and_says_so_from_above() {
+        let served = serving_with(
+            reggae_and_latin(),
+            browse::Settings {
+                album_threshold: 0,
+                ..browse::Settings::default()
+            },
+        );
+        let listing = browse::Position::default().listing(browse::Facet::Genre);
+        let Some(browse::Menu::Values(facet, values, _)) =
+            browse::menu(&served.library, &served.view, &listing)
+        else {
+            panic!("the genre listing is an object");
+        };
+        let digest = values
+            .iter()
+            .find(|entry| entry.display == "Reggae")
+            .expect("reggae is a genre")
+            .digest;
+        let reggae = listing.chose(facet, digest);
+
+        let opened = ask(&served, &reggae.id(), BrowseFlag::DirectChildren);
+        assert_eq!(titles(&opened.result)[..2], ["All albums", "All tracks"]);
+        let listed = ask(&served, &listing.id(), BrowseFlag::DirectChildren);
+        assert_eq!(
+            child_count_of(&listed.result, &reggae.id()),
+            Some(opened.total_matches),
+            "a count that disagrees with the children makes a client stop short"
+        );
+
+        let albums = reggae.showing(browse::Shown::Albums);
+        let shown = ask(&served, &albums.id(), BrowseFlag::DirectChildren);
+        assert_eq!(titles(&shown.result), ["Dub", "Roots"]);
+        let itself = ask(&served, &albums.id(), BrowseFlag::Metadata);
+        assert_eq!(titles(&itself.result), ["All albums"]);
+        assert_eq!(child_count_of(&itself.result, &albums.id()), Some(2));
+
+        let items = reggae.showing(browse::Shown::Tracks);
+        let shown = ask(&served, &items.id(), BrowseFlag::DirectChildren);
+        assert_eq!(shown.total_matches, 3);
+        assert!(!shown.result.contains("<container "));
     }
 
     fn titles(didl: &str) -> Vec<String> {

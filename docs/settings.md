@@ -29,8 +29,9 @@ matter. Everything inside an excluded folder is left out too.
 
 **Server name.** The name your player lists the server under.
 
-**Menu sequence.** Which menus the first screen offers, and in what order. The choices are Genre,
-Artist, All Artists, Composer, Work, Date, Quality, Bits, Channels, Frequency and Type.
+**Menu sequence.** Which menus the first screen offers, and in what order. The choices are Artists,
+Genres, Composers, Years, Track artists, Works, Audio quality, Bit depths, Channels, Sample rates
+and Formats.
 [Your library on your player](on-your-player.md) says what each holds.
 
 **Recently added.** How many of the newest files **Recently added** is built from. Zero removes it.

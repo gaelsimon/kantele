@@ -7,8 +7,9 @@ use crate::upnp::{ObjectId, didl};
 use super::paging::{Listing, Window};
 use super::parts;
 use super::{
-    ALBUMS, ARTISTS, FOLDERS, FOLDERS_TITLE, MUSIC, Menus, PLAYLISTS, PLAYLISTS_TITLE, RECENT,
-    RECENT_TITLE, TAG_VIEW_TITLE, UNTAGGED, UNTAGGED_TITLE,
+    ALBUMS, ALBUMS_TITLE, ARTISTS, COMPILATIONS, COMPILATIONS_TITLE, FOLDERS, FOLDERS_TITLE, MUSIC,
+    MUSIC_TITLE, Menus, PLAYLISTS, PLAYLISTS_TITLE, RECENT, RECENT_TITLE, TAG_VIEW_TITLE, UNTAGGED,
+    UNTAGGED_TITLE,
 };
 
 enum Named {
@@ -20,6 +21,7 @@ enum Named {
     Playlists,
     Folders,
     Recent,
+    Compilations,
     Folder(String),
     Position(browse::Position),
     /// A disc or a run inside an album, which only the library can say exists.
@@ -38,6 +40,7 @@ fn named(view: &View, id: &str) -> Named {
         PLAYLISTS => Named::Playlists,
         FOLDERS => Named::Folders,
         RECENT => Named::Recent,
+        COMPILATIONS => Named::Compilations,
         other => {
             if let Some(path) = browse::folder_from_id(view, other) {
                 return Named::Folder(path);
@@ -89,6 +92,12 @@ pub(super) fn children<'a>(
         }),
         Named::Folders => all(folder_children(library, view, menus, "", &menus.folders)),
         Named::Recent => all(recent_children(library, view, menus)),
+        Named::Compilations => flat(view.compilations().len(), &|at| {
+            album_child(
+                &library.albums()[view.compilations()[at]],
+                &menus.compilations,
+            )
+        }),
         Named::Folder(path) => {
             let here = folder_object(&path)?;
             all(folder_children(library, view, menus, &path, &here))
@@ -146,7 +155,7 @@ fn tag_view_inside(library: &Library, view: &View, path: &str) -> bool {
     !path.is_empty()
         && matches!(
             browse::menu(library, view, &browse::Position::inside(path)),
-            Some(browse::Menu::Facets(_))
+            Some(browse::Menu::Facets(..))
         )
 }
 
@@ -198,6 +207,7 @@ fn root_children<'a>(
                 browse::root::Opens::Untagged => menus.untagged.clone(),
                 browse::root::Opens::Playlists => menus.playlists.clone(),
                 browse::root::Opens::Recent => menus.recent.clone(),
+                browse::root::Opens::Compilations => menus.compilations.clone(),
                 browse::root::Opens::Folders => menus.folders.clone(),
             };
             let spec = match entry.opens {
@@ -232,13 +242,13 @@ fn folder_children<'a>(
     // The root menu already offers these axes.
     let scoped = browse::Position::inside(path);
     if !path.is_empty()
-        && let Some(browse::Menu::Facets(axes)) = browse::menu(library, view, &scoped)
+        && let Some(browse::Menu::Facets(axes, whole)) = browse::menu(library, view, &scoped)
     {
         children.push(didl::Child::Container(didl::ContainerSpec::menu(
             ObjectId::new(scoped.id()).expect("a position identifier is inside the alphabet"),
             here.clone(),
             TAG_VIEW_TITLE,
-            axes.len(),
+            axes.len() + whole.map_or(0, |whole| whole.entries()),
         )));
     }
 
@@ -290,12 +300,15 @@ fn facet_children<'a>(
     };
 
     match menu {
-        browse::Menu::Facets(offered) => Listing::All(
-            offered
+        browse::Menu::Facets(offered, whole) => Listing::All(
+            whole
+                .map(|whole| whole.leading(position))
+                .unwrap_or_default()
                 .into_iter()
-                .map(|(facet, at, values)| {
+                .map(|(at, title, children)| container(at.id(), title, children, didl::MENU))
+                .chain(offered.into_iter().map(|(facet, at, values)| {
                     container(at.id(), facet.title().to_owned(), values, didl::MENU)
-                })
+                }))
                 .collect(),
         ),
         browse::Menu::Letters(_, groups) => Listing::All(
@@ -353,6 +366,23 @@ fn facet_children<'a>(
             );
             Listing::All(albums.chain(loose).collect())
         }
+        browse::Menu::Albums(selected) => {
+            let albums = browse::albums_in(library, &selected);
+            let page = window
+                .range(albums.len())
+                .filter_map(|at| library.albums().get(albums[at]))
+                .map(|album| album_child(album, parent))
+                .collect();
+            Listing::Page(page, albums.len())
+        }
+        browse::Menu::Items(selected) => {
+            let page = window
+                .range(selected.len())
+                .filter_map(|at| library.tracks().get(selected[at]))
+                .map(|track| didl::Child::item_under(track, parent.clone()))
+                .collect();
+            Listing::Page(page, selected.len())
+        }
     }
 }
 
@@ -391,7 +421,7 @@ pub(super) fn metadata<'a>(
         Named::Albums => menu(didl::ContainerSpec::menu(
             menus.albums.clone(),
             menus.root.clone(),
-            browse::root::counted(library.albums().len(), "album"),
+            ALBUMS_TITLE,
             library.albums().len(),
         )),
         Named::Artists => menu(didl::ContainerSpec::menu(
@@ -414,6 +444,12 @@ pub(super) fn metadata<'a>(
             RECENT_TITLE,
             view.recent().len(),
         )),
+        Named::Compilations => menu(didl::ContainerSpec::menu(
+            menus.compilations.clone(),
+            menus.root.clone(),
+            COMPILATIONS_TITLE,
+            view.compilations().len(),
+        )),
         Named::Folders => menu(didl::ContainerSpec::folder_view(
             menus.folders.clone(),
             menus.root.clone(),
@@ -435,6 +471,7 @@ pub(super) fn metadata<'a>(
             )
             .total();
             let title = match (position.grouped, position.listing) {
+                _ if let Some(shown) = position.shown => shown.title().to_owned(),
                 (Some(browse::Grouped::Letter(letter)), _) => browse::group_display(letter),
                 (Some(browse::Grouped::Index), _) => browse::INDEX_TITLE.to_owned(),
                 (None, Some(facet)) => facet.title().to_owned(),
@@ -499,7 +536,7 @@ fn music_spec<'a>(library: &'a Library, menus: &'a Menus) -> didl::ContainerSpec
         ..didl::ContainerSpec::menu(
             menus.music.clone(),
             menus.root.clone(),
-            browse::root::counted(library.len(), "item"),
+            MUSIC_TITLE,
             library.len(),
         )
     }

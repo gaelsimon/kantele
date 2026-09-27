@@ -639,13 +639,10 @@ async fn the_root_menu_is_the_one_the_server_builds_rather_than_a_copy_of_the_ru
     };
 
     assert!(
-        titled("4 items").is_some(),
-        "every item leads: {entries:#?}"
+        titled("Tracks").is_some(),
+        "every track is listed: {entries:#?}"
     );
-    assert!(
-        titled("[folder view]").is_some(),
-        "and the folder view closes"
-    );
+    assert!(titled("Folders").is_some(), "and the folder view closes");
     for entry in entries {
         assert!(
             entry["at"].as_str().is_some_and(|at| !at.is_empty()),

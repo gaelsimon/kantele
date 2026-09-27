@@ -71,6 +71,7 @@ export type Status = {
     artists: number;
     playlists: number;
     untagged: number;
+    compilations: number;
     coverage: Coverage;
   };
   store: { path?: string; open: boolean };

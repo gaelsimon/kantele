@@ -2,7 +2,7 @@
 source: src/index/store/mod.rs
 expression: "format!(\"schema {SCHEMA_VERSION} playlist {PLAYLIST_VERSION}\\n{payload}\\n{playlist}\")"
 ---
-schema 2 playlist 1
+schema 2 playlist 2
 {
   "tags": {
     "title": "Juana Peña",

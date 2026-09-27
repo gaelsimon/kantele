@@ -12,15 +12,15 @@ the tags it carries and where they put it.
 | Tag | What it does |
 |---|---|
 | `TITLE` | The track title. With none, the file name is used |
-| `ARTIST`, `ARTISTS` | The track's performers. **All Artists** lists them |
-| `ALBUMARTIST`, `ALBUMARTISTS` | Who the album is by. **Artist** lists it |
+| `ARTIST`, `ARTISTS` | The track's performers. **Track artists** lists them |
+| `ALBUMARTIST`, `ALBUMARTISTS` | Who the album is by. **Artists** lists it |
 | `ALBUM` | The album title |
 | `TRACKNUMBER`, `DISCNUMBER`, `DISCTOTAL` | The order of the tracks, and which disc they are on |
 | `DISCSUBTITLE` | The name of a disc, which also shows the album disc by disc |
-| `DATE` or `YEAR` | The **Date** menu, which keeps the year only |
-| `GENRE` | The **Genre** menu |
-| `COMPOSER` | The **Composer** menu |
-| `WORK` | The **Work** menu, when you turn it on |
+| `DATE` or `YEAR` | The **Years** menu, which keeps the year only |
+| `GENRE` | The **Genres** menu |
+| `COMPOSER` | The **Composers** menu |
+| `WORK` | The **Works** menu, when you turn it on |
 | `GROUPING` | Joins consecutive tracks into one entry, such as the movements of a symphony |
 | `COMPILATION` | Marks an album by various artists |
 | `ARTISTSORT`, `ALBUMARTISTSORT`, `COMPOSERSORT` | How a name is sorted, such as `Bach, Johann Sebastian` |
@@ -61,23 +61,29 @@ How a multi-disc album shows depends on what you tagged:
 
 ## Artists
 
-**Artist** shows who the album is by: `ALBUMARTIST` where it is set, and the track artist where it
+**Artists** shows who the album is by: `ALBUMARTIST` where it is set, and the track artist where it
 is not.
 
-**All Artists** shows everyone who plays on a track, so a guest on a compilation can be found by
+**Track artists** shows everyone who plays on a track, so a guest on a compilation can be found by
 name.
 
-**A compilation** is an album by nobody in particular. Set `COMPILATION` to 1, or `ALBUMARTIST` to
-`Various Artists`. The album is then not listed under any one artist in **Artist**, and each track
-is still found under its performer in **All Artists**. `Various`, `VA`, `V/A`, `Unknown Artist` and
-`None` are treated the same way as `Various Artists`. **Unmarked compilations** on the Library tab
-finds the albums by many artists that carry neither.
+**A compilation** is an album by nobody in particular. Set `ALBUMARTIST` to `Various Artists`, or
+leave it empty and set `COMPILATION` to 1. The album is then not listed under any one artist in
+**Artists**: it is under **Compilations** on the first screen, and each track is still found under
+its performer in **Track artists**. `Various`, `VA`, `V/A`, `Unknown Artist` and `None` are treated
+the same way as `Various Artists`. A compilation that names its `ALBUMARTIST`, as a best-of or a
+DJ mix does, is listed under that artist. **Unmarked compilations** on the Library tab finds the
+albums by many artists that carry neither.
 
 ## Several values in one tag
 
-Write two artists on one track as two values of `ARTIST`. Kantele never splits a value on a
+Write two artists on one track as two values of `ARTIST`. Kantele never splits an artist on a
 separator, because `Simon & Garfunkel` is one act and `Barbra Streisand & Barry Gibb` is two,
 and nothing in the text says which is which.
+
+`COMPOSER` is the exception: songwriters written one after another with `/`, as in
+`Louis Freese / Lawrence Muggerud`, are listed one by one. A web address, and a name with a part of
+one or two letters such as `AC/DC`, are kept whole.
 
 How you enter several values depends on the tagger: foobar2000 splits a field on `;`, and Mp3tag
 on `\\`. MusicBrainz Picard writes an `ARTISTS` tag with one value per person, which Kantele prefers
@@ -95,7 +101,7 @@ When several files disagree on how one name sorts, the spelling most of them use
 
 ## Dates
 
-Any date works: `1963`, `1963-04-12` or `12/04/1963`. The **Date** menu keeps the year.
+Any date works: `1963`, `1963-04-12` or `12/04/1963`. The **Years** menu keeps the year.
 
 ## Covers
 
@@ -112,6 +118,6 @@ again.
 
 ## Tracks with no tags
 
-A track with no tags at all is under **[untagged]**, titled by its file name, and in the folder
+A track with no tags at all is under **Untagged tracks**, titled by its file name, and in the folder
 view. On the Library tab, the **Tags** menu keeps the folders holding tracks with no artist, no
 album, no genre, no cover or no date.

@@ -11,11 +11,15 @@ pub const UNTAGGED: &str = "untagged";
 pub const PLAYLISTS: &str = "playlists";
 pub const FOLDERS: &str = "folders";
 pub const RECENT: &str = "recent";
+pub const COMPILATIONS: &str = "compilations";
 
-pub const UNTAGGED_TITLE: &str = "[untagged]";
+pub const ALBUMS_TITLE: &str = "Albums";
+pub const MUSIC_TITLE: &str = "Tracks";
+pub const UNTAGGED_TITLE: &str = "Untagged tracks";
 pub const PLAYLISTS_TITLE: &str = "Playlists";
-pub const FOLDERS_TITLE: &str = "[folder view]";
+pub const FOLDERS_TITLE: &str = "Folders";
 pub const RECENT_TITLE: &str = "Recently added";
+pub const COMPILATIONS_TITLE: &str = "Compilations";
 
 /// What one root entry opens onto. The caller mints the identifier it publishes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,6 +28,7 @@ pub enum Opens {
     Music,
     /// One axis the owner chose, with the position that lists its values.
     Axis(Facet, Position),
+    Compilations,
     Untagged,
     Playlists,
     Recent,
@@ -37,6 +42,7 @@ impl Opens {
             Self::Albums => ALBUMS.to_owned(),
             Self::Music => MUSIC.to_owned(),
             Self::Axis(_, at) => at.id(),
+            Self::Compilations => COMPILATIONS.to_owned(),
             Self::Untagged => UNTAGGED.to_owned(),
             Self::Playlists => PLAYLISTS.to_owned(),
             Self::Recent => RECENT.to_owned(),
@@ -58,7 +64,8 @@ pub fn counted(count: usize, noun: &str) -> String {
     format!("{count} {noun}{plural}")
 }
 
-/// The root, in the order a device reads it. An entry with nothing behind it is not offered.
+/// The root, in the order a device reads it, most used first. An entry with nothing behind it is
+/// not offered.
 pub fn entries(library: &Library, view: &View) -> Vec<Entry> {
     let mut entries = Vec::new();
     let mut offer = |opens, title: String, children| {
@@ -71,31 +78,40 @@ pub fn entries(library: &Library, view: &View) -> Vec<Entry> {
 
     let albums = library.albums().len();
     if albums > 0 {
-        offer(Opens::Albums, counted(albums, "album"), albums);
+        offer(Opens::Albums, ALBUMS_TITLE.to_owned(), albums);
     }
-    offer(Opens::Music, counted(library.len(), "item"), library.len());
 
-    if let Some(Menu::Facets(offered)) = menu(library, view, &Position::default()) {
+    if let Some(Menu::Facets(offered, _)) = menu(library, view, &Position::default()) {
         for (facet, at, values) in offered {
             offer(Opens::Axis(facet, at), facet.title().to_owned(), values);
         }
     }
 
-    let untagged = untagged_count(library, view);
-    if untagged > 0 {
-        offer(Opens::Untagged, UNTAGGED_TITLE.to_owned(), untagged);
-    }
-    let playlists = library.playlists().len();
-    if playlists > 0 {
-        offer(Opens::Playlists, PLAYLISTS_TITLE.to_owned(), playlists);
+    let compilations = view.compilations().len();
+    if compilations > 0 {
+        offer(
+            Opens::Compilations,
+            COMPILATIONS_TITLE.to_owned(),
+            compilations,
+        );
     }
     let recent = view.recent().len();
     if recent > 0 {
         offer(Opens::Recent, RECENT_TITLE.to_owned(), recent);
     }
+    let playlists = library.playlists().len();
+    if playlists > 0 {
+        offer(Opens::Playlists, PLAYLISTS_TITLE.to_owned(), playlists);
+    }
     let (folders, loose) = folder_size(view, "");
     if folders + loose > 0 {
         offer(Opens::Folders, FOLDERS_TITLE.to_owned(), folders + loose);
+    }
+    // The two lists of tens of thousands of lines, which nobody opens first on an amplifier.
+    offer(Opens::Music, MUSIC_TITLE.to_owned(), library.len());
+    let untagged = untagged_count(library, view);
+    if untagged > 0 {
+        offer(Opens::Untagged, UNTAGGED_TITLE.to_owned(), untagged);
     }
     entries
 }

@@ -11,14 +11,15 @@ folder. Give it a different **Server name** so your player lists both, and compa
 ## What is the same
 
 - **Menus that narrow.** Choosing a genre offers the other menus that split it, until few enough
-  albums are left to list them.
+  albums are left to list them. Those menus start with the genre's albums and items, as
+  MinimServer's do.
 - **Multi-disc albums.** A disc number alone plays the discs as one list; a disc subtitle, or a
   disc marker in the album title, opens the album disc by disc. An album that showed one way in
   MinimServer shows the same way here.
 - **`GROUPING`** joins consecutive tracks into one entry inside the album.
 - **Playlists**: `.m3u`, `.m3u8` and `.pls`, one entry per file, in the file's order.
 - **Covers**: the picture in the file wins, and the folder's image fills in where a file has none.
-- **Quality**: the same words, from Lossy through CD and HD to DSD.
+- **Audio quality**: the same words, from Lossy through CD and HD to DSD.
 - **Recently added**, built from the newest few hundred files.
 
 ## Settings you may be looking for
@@ -47,7 +48,8 @@ All of them are on the Settings page, and none of them needs a restart.
   with letters beyond Latin-1 after Z.
 - **Recently added** uses the date Kantele first saw a file, so retagging an album does not bring
   it back to the top.
-- **`Various Artists`** and its variants are not listed as an artist.
+- **`Various Artists`** and its variants are not listed as an artist. Their albums are under
+  **Compilations** on the first screen.
 - **Setup** is a page with a folder picker. There is no Java to install, and nothing to buy.
 
 ## What Kantele does not do yet

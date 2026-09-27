@@ -73,11 +73,11 @@ alpha_group = 100
 recent = 300
 
 # The menus a listener is offered, in this order. An axis left out is offered nowhere; the folder
-# view, the playlists and `[untagged]` do not depend on it. `date` offers years. `quality` sums a
+# view, the playlists and the untagged tracks do not depend on it. `date` offers years. `quality` sums a
 # file up in one word, from Lossy up through CD, HD, DXD and DSD64; `bits`, `channels`,
 # `frequency` and `type` offer the four figures behind that word. `work` offers the works a
 # tagger named.
-axes = ["genre", "artist", "all-artists", "composer", "date", "quality"]
+axes = ["artist", "genre", "composer", "date", "all-artists", "quality"]
 
 # Words looked past when ordering a name or a title that has no sort tag, so The Beatles files
 # under B. A whole word, or a prefix ending in an apostrophe such as "L'". A sort tag a tagger wrote

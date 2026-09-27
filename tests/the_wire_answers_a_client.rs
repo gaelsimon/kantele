@@ -914,7 +914,7 @@ async fn the_folder_view_can_be_walked_from_the_root_to_a_track() {
     let root = children_of(&server, "0").await;
     let (folders, _) = root
         .iter()
-        .find(|(_, title)| title == "[folder view]")
+        .find(|(_, title)| title == "Folders")
         .expect("the folder view is offered")
         .clone();
 
@@ -930,7 +930,7 @@ async fn the_folder_view_can_be_walked_from_the_root_to_a_track() {
         "the folders below: {inside:?}"
     );
     assert!(
-        inside.iter().any(|(_, title)| title == "[tag view]"),
+        inside.iter().any(|(_, title)| title == "By tags"),
         "a folder is one more thing to filter on: {inside:?}"
     );
 
@@ -938,7 +938,7 @@ async fn the_folder_view_can_be_walked_from_the_root_to_a_track() {
     let (latin, _) = top[0].clone();
     let quiet = children_of(&server, &latin).await;
     assert!(
-        !quiet.iter().any(|(_, title)| title == "[tag view]"),
+        !quiet.iter().any(|(_, title)| title == "By tags"),
         "{quiet:?}"
     );
 
@@ -971,7 +971,7 @@ async fn in_the_folder_view_a_track_belongs_to_the_folder_it_sits_in() {
     let root = children_of(&server, "0").await;
     let (folders, _) = root
         .iter()
-        .find(|(_, title)| title == "[folder view]")
+        .find(|(_, title)| title == "Folders")
         .expect("the folder view is offered")
         .clone();
     let (latin, _) = children_of(&server, &folders).await[0].clone();
@@ -1008,7 +1008,7 @@ async fn a_container_describes_itself_the_way_its_parent_listed_it() {
     // And a nested folder answers the folder it sits in, not the top of the view.
     let (folders, _) = root
         .iter()
-        .find(|(_, title)| title == "[folder view]")
+        .find(|(_, title)| title == "Folders")
         .expect("the folder view is offered")
         .clone();
     let (latin, _) = children_of(&server, &folders).await[0].clone();
@@ -1030,7 +1030,7 @@ async fn a_folder_counts_the_children_it_renders() {
     let root = children_of(&server, "0").await;
     let (folders, _) = root
         .iter()
-        .find(|(_, title)| title == "[folder view]")
+        .find(|(_, title)| title == "Folders")
         .expect("the folder view is offered")
         .clone();
     // Reggae holds two artists, so the tag rule offers a view inside it and that is a child too.
@@ -1175,7 +1175,7 @@ async fn a_chosen_value_counts_the_albums_it_renders_rather_than_its_tracks() {
     let root = children_of(&server, "0").await;
     let (artists, _) = root
         .iter()
-        .find(|(_, title)| title == "Artist")
+        .find(|(_, title)| title == "Artists")
         .expect("the artist axis is offered")
         .clone();
 
@@ -1293,7 +1293,7 @@ async fn a_faceted_position_narrows_until_it_offers_the_albums() {
     let root = children_of(&server, "0").await;
     let (genre, _) = root
         .iter()
-        .find(|(_, title)| title == "Genre")
+        .find(|(_, title)| title == "Genres")
         .expect("an axis that still narrows something")
         .clone();
     assert!(genre.starts_with('f'), "a faceted position: {genre}");
@@ -1307,7 +1307,7 @@ async fn a_faceted_position_narrows_until_it_offers_the_albums() {
 
     let metadata = body_of(ask(&server, browse(&genre, "BrowseMetadata", 0, 0)).await).await;
     assert!(
-        metadata.contains("&lt;dc:title&gt;Genre&lt;/dc:title&gt;"),
+        metadata.contains("&lt;dc:title&gt;Genres&lt;/dc:title&gt;"),
         "{metadata}"
     );
 
@@ -1328,7 +1328,7 @@ async fn a_search_scoped_to_a_folder_container_stays_inside_it() {
     let root = children_of(&server, "0").await;
     let (albums, _) = root
         .iter()
-        .find(|(_, title)| title.ends_with("albums"))
+        .find(|(_, title)| title == "Albums")
         .expect("an album index")
         .clone();
 
