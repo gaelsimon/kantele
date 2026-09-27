@@ -2,6 +2,7 @@
 
 pub mod dsd;
 pub mod vorbis;
+pub mod windows_1252;
 
 use std::fs::File;
 use std::io::{BufReader, Seek};
@@ -111,6 +112,9 @@ impl FileTags {
 
 fn cleaned(value: &mut String) {
     use unicode_normalization::UnicodeNormalization;
+    if let Some(letters) = windows_1252::repaired(value) {
+        *value = letters;
+    }
     let trimmed = value.trim();
     if trimmed.len() != value.len() {
         *value = trimmed.to_owned();
@@ -477,6 +481,20 @@ mod tests {
         assert_eq!(tags.album_artists, ["P-Square"]);
         assert_eq!(tags.composers, ["Poté"]);
         assert_eq!(tags.genres, ["Reggae"]);
+    }
+
+    #[test]
+    fn a_windows_1252_letter_read_as_a_latin_1_control_is_the_letter_again() {
+        let tags = FileTags {
+            artists: vec!["Libor Pe\u{9a}ek".to_owned()],
+            album: Some("Àëåêñàíäð Íóæäèí \u{96} FMCAFE".to_owned()),
+            composers: vec!["juan carlos \u{91}chongo\u{92} puello".to_owned()],
+            ..FileTags::default()
+        }
+        .tidied();
+        assert_eq!(tags.artists, ["Libor Pešek"]);
+        assert_eq!(tags.album.as_deref(), Some("Àëåêñàíäð Íóæäèí – FMCAFE"));
+        assert_eq!(tags.composers, ["juan carlos ‘chongo’ puello"]);
     }
 
     #[test]
