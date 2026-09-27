@@ -21,7 +21,7 @@ const SAMPLE: usize = 16;
 /// Bump when a row becomes unsafe to read back at all: every one is deleted and read again.
 const SCHEMA_VERSION: &str = "2";
 /// Versioned apart so a parser change rereads no audio file.
-const PLAYLIST_VERSION: &str = "1";
+const PLAYLIST_VERSION: &str = "2";
 /// Bump when a reader learns a field an older row cannot carry. Stamped on every row it writes:
 /// rows from another reader are still served, so the library answers from the first second, and
 /// they miss in the cache, so the pass reads those files again and replaces them one by one.

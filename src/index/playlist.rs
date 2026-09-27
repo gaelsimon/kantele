@@ -264,7 +264,7 @@ fn read_bounded(path: &Path) -> std::io::Result<Vec<u8>> {
     std::fs::read(path)
 }
 
-/// UTF-16 where a byte order mark says so, else UTF-8, falling back to Latin-1.
+/// UTF-16 where a byte order mark says so, else UTF-8, falling back to Windows-1252.
 fn decode(bytes: Vec<u8>) -> String {
     let unit: Option<fn([u8; 2]) -> u16> = match bytes.get(..2) {
         Some([0xff, 0xfe]) => Some(u16::from_le_bytes),
@@ -285,7 +285,7 @@ fn decode(bytes: Vec<u8>) -> String {
         Err(refused) => refused
             .into_bytes()
             .into_iter()
-            .map(|byte| byte as char)
+            .map(crate::tags::windows_1252::decoded)
             .collect(),
     };
     // A BOM would turn the first directive into a path.
@@ -709,6 +709,12 @@ mod tests {
     fn latin_1_bytes_are_read_rather_than_refused() {
         let bytes = vec![b'C', b'a', b'f', 0xe9, b'\n'];
         assert_eq!(decode(bytes), "Café\n");
+    }
+
+    #[test]
+    fn a_list_written_in_windows_1252_names_its_files_with_their_letters() {
+        let bytes = b"16 Malcolm\x92s Theme.flac\n".to_vec();
+        assert_eq!(decode(bytes), "16 Malcolm’s Theme.flac\n");
     }
 
     #[test]
