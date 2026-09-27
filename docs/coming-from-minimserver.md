@@ -19,7 +19,7 @@ folder. Give it a different **Server name** so your player lists both, and compa
 - **`GROUPING`** joins consecutive tracks into one entry inside the album.
 - **Playlists**: `.m3u`, `.m3u8` and `.pls`, one entry per file, in the file's order.
 - **Covers**: the picture in the file wins, and the folder's image fills in where a file has none.
-- **Quality**: the same words, from Lossy through CD and HD to DSD.
+- **Audio quality**: the same words, from Lossy through CD and HD to DSD.
 - **Recently added**, built from the newest few hundred files.
 
 ## Settings you may be looking for

@@ -1,5 +1,5 @@
 //! WAV carries its tags in three incompatible places. A library migrated from another server
-//! brings all three, and a file whose tags are not read is a file in [untagged].
+//! brings all three, and a file whose tags are not read is a file in Untagged tracks.
 
 use kantele::tags;
 

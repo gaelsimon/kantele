@@ -3,7 +3,8 @@
 pub use crate::browse::root::{ALBUMS, COMPILATIONS, FOLDERS, MUSIC, PLAYLISTS, RECENT, UNTAGGED};
 
 use crate::browse::root::{
-    COMPILATIONS_TITLE, FOLDERS_TITLE, PLAYLISTS_TITLE, RECENT_TITLE, UNTAGGED_TITLE,
+    ALBUMS_TITLE, COMPILATIONS_TITLE, FOLDERS_TITLE, MUSIC_TITLE, PLAYLISTS_TITLE, RECENT_TITLE,
+    UNTAGGED_TITLE,
 };
 use crate::upnp::{ObjectId, didl, search};
 
@@ -42,7 +43,7 @@ impl Fault {
 }
 
 pub const ARTISTS: &str = "artists";
-const TAG_VIEW_TITLE: &str = "[tag view]";
+const TAG_VIEW_TITLE: &str = "By tags";
 
 struct Menus {
     root: ObjectId,
@@ -281,8 +282,8 @@ mod tests {
                 root.result
             );
         }
-        assert!(root.result.contains("<dc:title>1 album</dc:title>"));
-        assert!(root.result.contains("<dc:title>3 items</dc:title>"));
+        assert!(root.result.contains("<dc:title>Albums</dc:title>"));
+        assert!(root.result.contains("<dc:title>Tracks</dc:title>"));
         assert!(!root.result.contains(r#"id="artists""#));
         assert!(!root.result.contains("<item "));
     }
@@ -292,13 +293,13 @@ mod tests {
         let served = serving(library());
         let root = ask(&served, ObjectId::ROOT, BrowseFlag::DirectChildren);
         assert!(
-            !root.result.contains("[untagged]"),
+            !root.result.contains(UNTAGGED_TITLE),
             "every track here carries a tag"
         );
 
         let bare = serving(untagged_library());
         let root = ask(&bare, ObjectId::ROOT, BrowseFlag::DirectChildren);
-        assert!(root.result.contains("<dc:title>[untagged]</dc:title>"));
+        assert!(root.result.contains("<dc:title>Untagged tracks</dc:title>"));
         let listing = ask(&bare, UNTAGGED, BrowseFlag::DirectChildren);
         assert_eq!(listing.total_matches, 1);
         assert!(listing.result.contains("Nameless"));
@@ -731,7 +732,7 @@ mod tests {
         let reggae = listing.chose(facet, digest);
 
         let opened = ask(&served, &reggae.id(), BrowseFlag::DirectChildren);
-        assert_eq!(titles(&opened.result)[..2], ["2 albums", "3 items"]);
+        assert_eq!(titles(&opened.result)[..2], ["All albums", "All tracks"]);
         let listed = ask(&served, &listing.id(), BrowseFlag::DirectChildren);
         assert_eq!(
             child_count_of(&listed.result, &reggae.id()),
@@ -743,7 +744,7 @@ mod tests {
         let shown = ask(&served, &albums.id(), BrowseFlag::DirectChildren);
         assert_eq!(titles(&shown.result), ["Dub", "Roots"]);
         let itself = ask(&served, &albums.id(), BrowseFlag::Metadata);
-        assert_eq!(titles(&itself.result), ["2 albums"]);
+        assert_eq!(titles(&itself.result), ["All albums"]);
         assert_eq!(child_count_of(&itself.result, &albums.id()), Some(2));
 
         let items = reggae.showing(browse::Shown::Tracks);

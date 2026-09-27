@@ -56,11 +56,11 @@ pub const FACETS: &[Facet] = &[
 
 /// The axes a menu offers unless the file says otherwise.
 pub const DEFAULT_AXES: &[Facet] = &[
-    Facet::Genre,
     Facet::Artist,
-    Facet::AllArtists,
+    Facet::Genre,
     Facet::Composer,
     Facet::Date,
+    Facet::AllArtists,
     Facet::Quality,
 ];
 
@@ -89,18 +89,17 @@ impl Facet {
     /// What a client shows as the menu entry.
     pub const fn title(self) -> &'static str {
         match self {
-            Self::Genre => "Genre",
-            Self::Artist => "Artist",
-            Self::AllArtists => "All Artists",
-            Self::Composer => "Composer",
-            Self::Work => "Work",
-            Self::Date => "Date",
-            // The names the competitor with the most axes uses, because a listener has seen them.
-            Self::Quality => "Quality",
-            Self::Bits => "Bits",
+            Self::Genre => "Genres",
+            Self::Artist => "Artists",
+            Self::AllArtists => "Track artists",
+            Self::Composer => "Composers",
+            Self::Work => "Works",
+            Self::Date => "Years",
+            Self::Quality => "Audio quality",
+            Self::Bits => "Bit depths",
             Self::Channels => "Channels",
-            Self::Frequency => "Frequency",
-            Self::Type => "Type",
+            Self::Frequency => "Sample rates",
+            Self::Type => "Formats",
         }
     }
 
@@ -351,6 +350,13 @@ impl Shown {
         }
     }
 
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Albums => "All albums",
+            Self::Tracks => "All tracks",
+        }
+    }
+
     fn from_code(code: char) -> Option<Self> {
         [Self::Albums, Self::Tracks]
             .into_iter()
@@ -594,14 +600,11 @@ impl Whole {
 
     /// The entries leading to it from `at`, first in its menu: where, what it is called, children.
     pub fn leading(&self, at: &Position) -> Vec<(Position, String, usize)> {
-        [
-            (Shown::Albums, self.albums, "album"),
-            (Shown::Tracks, self.tracks, "item"),
-        ]
-        .into_iter()
-        .filter(|(_, count, _)| *count > 0)
-        .map(|(shown, count, noun)| (at.showing(shown), root::counted(count, noun), count))
-        .collect()
+        [(Shown::Albums, self.albums), (Shown::Tracks, self.tracks)]
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .map(|(shown, count)| (at.showing(shown), shown.title().to_owned(), count))
+            .collect()
     }
 }
 
@@ -1228,14 +1231,14 @@ mod tests {
         let library = library();
         let entries = root::entries(&library, &eager_view(&library));
         let titles: Vec<&str> = entries.iter().map(|entry| entry.title.as_str()).collect();
-        assert_eq!(titles.first().copied(), Some("4 albums"));
-        assert!(titles.contains(&"Genre"), "{titles:?}");
-        assert!(titles.contains(&"Artist"), "{titles:?}");
+        assert_eq!(titles.first().copied(), Some("Albums"));
+        assert!(titles.contains(&"Genres"), "{titles:?}");
+        assert!(titles.contains(&"Artists"), "{titles:?}");
         assert!(
-            !titles.contains(&"Quality"),
-            "every file is 16 bit 44.1 kHz, so Quality narrows nothing: {titles:?}"
+            !titles.contains(&"Audio quality"),
+            "every file is 16 bit 44.1 kHz, so Audio quality narrows nothing: {titles:?}"
         );
-        assert_eq!(titles.last().copied(), Some("[folder view]"));
+        assert_eq!(titles.last().copied(), Some("Tracks"));
     }
 
     #[test]
@@ -1288,7 +1291,7 @@ mod tests {
         {
             Menu::Facets(offered, _) => {
                 let axes: Vec<Facet> = offered.iter().map(|(facet, _, _)| *facet).collect();
-                assert_eq!(axes, vec![Facet::Genre, Facet::Artist, Facet::AllArtists]);
+                assert_eq!(axes, vec![Facet::Artist, Facet::Genre, Facet::AllArtists]);
             }
             other => panic!("expected a menu of axes, got {other:?}"),
         }

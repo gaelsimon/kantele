@@ -500,7 +500,7 @@ fn a_heos_client_is_shown_a_folder_view_it_does_not_open_by_itself() {
     server.wait_for_tracks(3);
 
     let anyone = browse(server.port, "0", 50).text();
-    assert!(anyone.contains("[folder view]"), "{anyone}");
+    assert!(anyone.contains("Folders"), "{anyone}");
 
     let heos = browse_as(
         server.port,
@@ -510,7 +510,7 @@ fn a_heos_client_is_shown_a_folder_view_it_does_not_open_by_itself() {
     )
     .text();
     assert!(heos.contains("📁 Directories"), "{heos}");
-    assert!(!heos.contains("[folder view]"), "{heos}");
+    assert!(!heos.contains("Folders"), "{heos}");
     server.stop();
 }
 

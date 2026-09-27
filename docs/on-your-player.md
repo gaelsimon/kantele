@@ -6,41 +6,40 @@ What your player shows when you open Kantele, and how to get from there to an al
 
 | Entry | What it holds |
 |---|---|
-| **2481 albums** | Every album, in order of title |
-| **30112 items** | Every track, as one list |
-| **Genre** | The genres your tags name |
-| **Artist** | The album artist, or the track artist where an album names none |
-| **All Artists** | Everyone credited on a track, including the guests on a compilation |
-| **Composer** | The composers your tags name |
-| **Date** | Years |
-| **Quality** | One word per file: Lossy, Below CD, CD, CD+, HD, HD+, DXD, DSD64 and up |
-| **Compilations** | The albums by nobody in particular, which no entry in **Artist** stands for |
-| **[untagged]** | Tracks no menu above can reach, because their tags are missing |
-| **Playlists** | Your `.m3u`, `.m3u8` and `.pls` files |
+| **Albums** | Every album, in order of title |
+| **Artists** | The album artist, or the track artist where an album names none |
+| **Genres** | The genres your tags name |
+| **Composers** | The composers your tags name |
+| **Years** | Years |
+| **Track artists** | Everyone credited on a track, including the guests on a compilation |
+| **Audio quality** | One word per file: Lossy, Below CD, CD, CD+, HD, HD+, DXD, DSD64 and up |
+| **Compilations** | The albums by nobody in particular, which no entry in **Artists** stands for |
 | **Recently added** | The albums you added last, newest first |
-| **[folder view]** | Your music folder as folders and files |
+| **Playlists** | Your `.m3u`, `.m3u8` and `.pls` files |
+| **Folders** | Your music folder as folders and files |
+| **Tracks** | Every track, as one list |
+| **Untagged tracks** | Tracks no menu above can reach, because their tags are missing |
 
-The two counts are your library's. An entry with nothing in it is not shown, so a library with no
-playlists has no **Playlists**.
+An entry with nothing in it is not shown, so a library with no playlists has no **Playlists**.
 
-The menus from **Genre** to **Quality** are the default ones. You choose which appear, and in what
-order, on the Settings page. Also available: **Work**, and the four figures behind **Quality**: **Bits**, **Channels**,
-**Frequency** and **Type**.
+The menus from **Artists** to **Audio quality** are the default ones. You choose which appear, and
+in what order, on the Settings page. Also available: **Works**, and the four figures behind
+**Audio quality**: **Bit depths**, **Channels**, **Sample rates** and **Formats**.
 
-On Denon and Marantz players using HEOS, the folder view is called **📁 Directories**, because HEOS
+On Denon and Marantz players using HEOS, **Folders** is called **📁 Directories**, because HEOS
 opens any first-screen entry with "folder" in its name on its own.
 
 ## How a menu narrows
 
-Open **Genre**, then **Jazz**. If Jazz holds only a few albums, you see them. If it holds many, you
-are offered the other menus instead, **Artist**, **Date**, **Quality**, and so on, each narrowing
-Jazz further. Choose **Artist**, then **Miles Davis**, and you see his jazz albums.
+Open **Genres**, then **Jazz**. If Jazz holds only a few albums, you see them. If it holds many, you
+are offered the other menus instead, **Artists**, **Years**, **Audio quality**, and so on, each narrowing
+Jazz further. Choose **Artists**, then **Miles Davis**, and you see his jazz albums.
 
-Those menus are headed by **312 albums** and **2140 items**, every album and every track of Jazz
+Those menus are headed by **All albums** and **All tracks**, every album and every track of Jazz
 as two lists, so the whole of a genre can be played or shuffled from there.
 
 A menu that would not narrow anything is left out. If every jazz track in your library is from the
-same year, **Date** is not offered inside Jazz.
+same year, **Years** is not offered inside Jazz.
 
 **Albums shown in a list** on the Settings page decides when the albums are shown instead of more
 menus.

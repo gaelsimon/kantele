@@ -7,8 +7,9 @@ use crate::upnp::{ObjectId, didl};
 use super::paging::{Listing, Window};
 use super::parts;
 use super::{
-    ALBUMS, ARTISTS, COMPILATIONS, COMPILATIONS_TITLE, FOLDERS, FOLDERS_TITLE, MUSIC, Menus,
-    PLAYLISTS, PLAYLISTS_TITLE, RECENT, RECENT_TITLE, TAG_VIEW_TITLE, UNTAGGED, UNTAGGED_TITLE,
+    ALBUMS, ALBUMS_TITLE, ARTISTS, COMPILATIONS, COMPILATIONS_TITLE, FOLDERS, FOLDERS_TITLE, MUSIC,
+    MUSIC_TITLE, Menus, PLAYLISTS, PLAYLISTS_TITLE, RECENT, RECENT_TITLE, TAG_VIEW_TITLE, UNTAGGED,
+    UNTAGGED_TITLE,
 };
 
 enum Named {
@@ -420,7 +421,7 @@ pub(super) fn metadata<'a>(
         Named::Albums => menu(didl::ContainerSpec::menu(
             menus.albums.clone(),
             menus.root.clone(),
-            browse::root::counted(library.albums().len(), "album"),
+            ALBUMS_TITLE,
             library.albums().len(),
         )),
         Named::Artists => menu(didl::ContainerSpec::menu(
@@ -470,12 +471,7 @@ pub(super) fn metadata<'a>(
             )
             .total();
             let title = match (position.grouped, position.listing) {
-                _ if position.shown == Some(browse::Shown::Albums) => {
-                    browse::root::counted(children, "album")
-                }
-                _ if position.shown == Some(browse::Shown::Tracks) => {
-                    browse::root::counted(children, "item")
-                }
+                _ if let Some(shown) = position.shown => shown.title().to_owned(),
                 (Some(browse::Grouped::Letter(letter)), _) => browse::group_display(letter),
                 (Some(browse::Grouped::Index), _) => browse::INDEX_TITLE.to_owned(),
                 (None, Some(facet)) => facet.title().to_owned(),
@@ -540,7 +536,7 @@ fn music_spec<'a>(library: &'a Library, menus: &'a Menus) -> didl::ContainerSpec
         ..didl::ContainerSpec::menu(
             menus.music.clone(),
             menus.root.clone(),
-            browse::root::counted(library.len(), "item"),
+            MUSIC_TITLE,
             library.len(),
         )
     }
