@@ -123,11 +123,7 @@ impl Facet {
             Self::Genre => Values::Many(&track.genres),
             // A compilation stands under the album artist it names, and under nobody otherwise:
             // one entry holding every other compilation is not an artist anybody looks for.
-            Self::Artist => Values::Credited(match () {
-                () if names_somebody(&track.album_artists) => &track.album_artists,
-                () if track.compilation => &[],
-                () => &track.artists,
-            }),
+            Self::Artist => Values::Credited(artist_credits(track)),
             Self::AllArtists => Values::Credited(&track.artists),
             Self::Composer => Values::Credited(&track.composers),
             Self::Work => Values::One(track.work.as_deref()),
@@ -168,19 +164,29 @@ impl Facet {
 }
 
 /// The year inside a date tag, which is the first run of four digits wherever a tagger put it.
-/// The albums no Artist entry stands for: every track a compilation that names nobody.
+/// The albums no Artist entry stands for: a compilation, none of whose tracks names an artist.
 pub fn compilations(library: &Library) -> Vec<usize> {
     library
         .albums()
         .iter()
         .enumerate()
         .filter(|(_, album)| {
-            let mut tracks = library.album_tracks(album).peekable();
-            tracks.peek().is_some()
-                && tracks.all(|track| track.compilation && !names_somebody(&track.album_artists))
+            let tracks: Vec<&Track> = library.album_tracks(album).collect();
+            tracks.iter().any(|track| track.compilation)
+                && tracks.iter().all(|track| artist_credits(track).is_empty())
         })
         .map(|(at, _)| at)
         .collect()
+}
+
+/// Who a track stands under in Artists. Without an album there is no compilation, so a loose track
+/// credited to Various Artists stands under its own artist.
+fn artist_credits(track: &Track) -> &[Credit] {
+    match () {
+        () if names_somebody(&track.album_artists) => &track.album_artists,
+        () if track.compilation && track.album_id.is_some() => &[],
+        () => &track.artists,
+    }
 }
 
 fn names_somebody(credits: &[Credit]) -> bool {
@@ -1152,6 +1158,41 @@ mod tests {
                 file("box/1.flac", nameless),
             ],
         )
+    }
+
+    #[test]
+    fn a_loose_track_credited_to_various_artists_stands_under_its_own_artist() {
+        let mut single = tagged("", "Gal A Bubble", "Various Artists", "Reggae", 1);
+        single.album = None;
+        single.artists = vec!["Konshens".to_owned()];
+        let library = Library::build("Music".to_owned(), &[file("loose/1.mp3", single)]);
+        let view = eager_view(&library);
+        let artists: Vec<String> = places(&view, 0)
+            .into_iter()
+            .filter(|place| place.facet == Facet::Artist)
+            .map(|place| place.value)
+            .collect();
+        assert_eq!(
+            artists,
+            ["Konshens"],
+            "without an album there is no compilation"
+        );
+    }
+
+    #[test]
+    fn an_album_none_of_whose_tracks_names_an_artist_is_a_compilation() {
+        let mut flagged = tagged("Beach Diggin", "One", "Nobody", "Soul", 1);
+        flagged.album_artists.clear();
+        flagged.artists = vec!["Gene Lawrence".to_owned()];
+        flagged.compilation = true;
+        let mut bare = tagged("Beach Diggin", "Two", "Nobody", "Soul", 2);
+        bare.album_artists.clear();
+        bare.artists.clear();
+        let library = Library::build(
+            "Music".to_owned(),
+            &[file("beach/1.flac", flagged), file("beach/2.flac", bare)],
+        );
+        assert_eq!(eager_view(&library).compilations().len(), 1);
     }
 
     #[test]
