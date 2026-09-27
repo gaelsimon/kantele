@@ -317,3 +317,15 @@ fn a_header_claiming_a_millisecond_of_a_large_stream_reads_without_a_bitrate() {
         "eight million kbps is past what bits per second can hold, and a wrapped value is a lie"
     );
 }
+
+#[test]
+fn an_m4a_whose_cover_outgrows_what_lofty_allocates_keeps_its_tags() {
+    let tree = Tree::new("tags-m4a-huge-cover");
+    // iTunes on the real library: a 34 MB cover, and lofty reads the whole `ilst` at once.
+    let file = fixtures::m4a("Más Que Nada", 17 * 1024 * 1024);
+    std::fs::write(tree.path("01.m4a"), file).expect("writing it");
+
+    let (read, _, _) =
+        tags::read_keeping(&tree.path("01.m4a"), tags::Cover::Wanted).expect("an m4a parses");
+    assert_eq!(read.title.as_deref(), Some("Más Que Nada"));
+}

@@ -6,11 +6,11 @@ pub mod vorbis;
 pub mod windows_1252;
 
 use std::fs::File;
-use std::io::{BufReader, Read, Seek};
+use std::io::{BufReader, Cursor, Read, Seek};
 use std::path::Path;
 use std::time::Duration;
 
-use lofty::config::ParseOptions;
+use lofty::config::{GlobalOptions, ParseOptions, apply_global_options};
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::prelude::ItemKey;
 use lofty::probe::Probe;
@@ -245,7 +245,7 @@ fn tags_from(file: &mut File, tagged: &lofty::file::TaggedFile) -> FileTags {
     tags
 }
 
-/// Two things go wrong on a real library, and the file is worth serving after either.
+/// What goes wrong on a real library, and the file is worth serving after any of it.
 fn read_again(
     file: &mut File,
     path: &Path,
@@ -265,6 +265,28 @@ fn read_again(
             wanted(&tagged),
         ));
     }
+    let mut skipping = options;
+    skipping.read_cover_art(false);
+    if let Ok(tagged) = roomier(|| probe(file, path, skipping)) {
+        tracing::warn!(
+            path = %path.display(),
+            cause = %causes(&refused),
+            "a tag larger than lofty reads at once; read again without its picture"
+        );
+        return Ok((tags_from(file, &tagged), properties_of(&tagged), None));
+    }
+    if let Some(tagged) = salvaged(file, path, options) {
+        tracing::warn!(
+            path = %path.display(),
+            cause = %causes(&refused),
+            "an ID3v2 frame will not parse; the rest of the tag is read without it"
+        );
+        return Ok((
+            tags_from(file, &tagged),
+            properties_of(&tagged),
+            wanted(&tagged),
+        ));
+    }
     tracing::warn!(
         path = %path.display(),
         cause = %causes(&refused),
@@ -272,6 +294,44 @@ fn read_again(
     );
     let tagged = probe(file, path, ParseOptions::new().read_tags(false))?;
     Ok((FileTags::default(), properties_of(&tagged), None))
+}
+
+/// lofty refuses any one allocation above 16 MiB, and an M4A is read `ilst` whole, cover included.
+const ROOMIER: usize = 64 * 1024 * 1024;
+
+/// The limit is lofty's per thread, and is put back however the read ends.
+fn roomier<T>(read: impl FnOnce() -> T) -> T {
+    struct Restored;
+    impl Drop for Restored {
+        fn drop(&mut self) {
+            apply_global_options(GlobalOptions::new());
+        }
+    }
+    apply_global_options(GlobalOptions::new().allocation_limit(ROOMIER));
+    let _restored = Restored;
+    read()
+}
+
+fn salvaged(
+    file: &mut File,
+    path: &Path,
+    options: ParseOptions,
+) -> Option<lofty::file::TaggedFile> {
+    let heading = id3v2::heading(file).ok()??;
+    let spliced = id3v2::salvaged(file, heading, |tag| id3v2_parses(tag, options)).ok()?;
+    probe_from(spliced, path, options).ok()
+}
+
+/// Whether lofty reads this tag, put in front of two frames of silence.
+fn id3v2_parses(tag: &[u8], options: ParseOptions) -> bool {
+    let mut silence = [0xFF, 0xFB, 0x90, 0x00].to_vec();
+    silence.resize(417, 0);
+    let file = [tag, &silence, &silence].concat();
+    Probe::new(Cursor::new(file))
+        .set_file_type(lofty::file::FileType::Mpeg)
+        .options(options)
+        .read()
+        .is_ok()
 }
 
 /// A parse of the open file as the format its name says, from its first byte. Buffered, as

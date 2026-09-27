@@ -93,6 +93,11 @@ pub fn jpeg() -> Vec<u8> {
 
 /// A FLAC: stream marker, `STREAMINFO`, the given Vorbis comments, a `PICTURE` block if asked.
 pub fn flac(comments: &[(&str, &str)], picture: bool) -> Vec<u8> {
+    flac_with_cover(comments, picture.then(jpeg))
+}
+
+/// The same with the given bytes as its picture.
+pub fn flac_with_cover(comments: &[(&str, &str)], cover: Option<Vec<u8>>) -> Vec<u8> {
     const RATE: u32 = 44_100;
     const CHANNELS: u32 = 2;
     const BITS: u32 = 16;
@@ -119,7 +124,8 @@ pub fn flac(comments: &[(&str, &str)], picture: bool) -> Vec<u8> {
         vorbis.extend_from_slice(line.as_bytes());
     }
 
-    let cover = jpeg();
+    let picture = cover.is_some();
+    let cover = cover.unwrap_or_default();
     let mut art = Vec::new();
     art.extend_from_slice(&3u32.to_be_bytes()); // picture type 3, front cover
     art.extend_from_slice(&(b"image/jpeg".len() as u32).to_be_bytes());
@@ -209,6 +215,58 @@ pub fn mp3(tags: &[Vec<u8>], trailer: Option<Vec<u8>>) -> Vec<u8> {
     file.extend_from_slice(&mpeg_frames());
     file.extend(trailer.unwrap_or_default());
     file
+}
+
+fn atom(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+    let mut atom = (8 + body.len() as u32).to_be_bytes().to_vec();
+    atom.extend_from_slice(kind);
+    atom.extend_from_slice(body);
+    atom
+}
+
+fn data(kind: u32, payload: &[u8]) -> Vec<u8> {
+    let mut body = kind.to_be_bytes().to_vec();
+    body.extend_from_slice(&0u32.to_be_bytes());
+    body.extend_from_slice(payload);
+    atom(b"data", &body)
+}
+
+fn handler(kind: &[u8; 4]) -> Vec<u8> {
+    let mut body = vec![0u8; 8];
+    body.extend_from_slice(kind);
+    body.extend_from_slice(&[0u8; 13]);
+    atom(b"hdlr", &body)
+}
+
+/// An M4A holding one second of nothing, a title, and a cover of the given size.
+pub fn m4a(title: &str, cover: usize) -> Vec<u8> {
+    let mut ftyp = b"M4A ".to_vec();
+    ftyp.extend_from_slice(&0u32.to_be_bytes());
+    ftyp.extend_from_slice(b"M4A isom");
+    let mut mdhd = Vec::new();
+    for value in [0u32, 0, 0, 44_100, 44_100, 0] {
+        mdhd.extend_from_slice(&value.to_be_bytes());
+    }
+    let mdia = [atom(b"mdhd", &mdhd), handler(b"soun")].concat();
+    let mut items = atom(&[0xA9, b'n', b'a', b'm'], &data(1, title.as_bytes()));
+    if cover > 0 {
+        let mut picture = jpeg();
+        picture.resize(cover, 0);
+        items.extend(atom(b"covr", &data(13, &picture)));
+    }
+    let meta = [vec![0u8; 4], handler(b"mdir"), atom(b"ilst", &items)].concat();
+    let moov = [
+        atom(b"mvhd", &[0u8; 100]),
+        atom(b"trak", &atom(b"mdia", &mdia)),
+        atom(b"udta", &atom(b"meta", &meta)),
+    ]
+    .concat();
+    [
+        atom(b"ftyp", &ftyp),
+        atom(b"moov", &moov),
+        atom(b"mdat", &[0u8; 1000]),
+    ]
+    .concat()
 }
 
 fn block(file: &mut Vec<u8>, kind: u8, body: &[u8], last: bool) {

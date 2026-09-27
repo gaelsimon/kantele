@@ -5,6 +5,8 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 
 const HEADER: u64 = 10;
+const UNSYNCHRONISED: u8 = 0x80;
+const EXTENDED: u8 = 0x40;
 const FOOTER: u8 = 0x10;
 /// A first tag larger than this is read as lofty reads it rather than copied.
 const LARGEST: u64 = 64 * 1024 * 1024;
@@ -67,6 +69,108 @@ pub fn first_only(file: &mut File, heading: Heading) -> io::Result<Option<Splice
     file.seek(SeekFrom::Start(0))?;
     file.read_exact(&mut first)?;
     Spliced::new(file, first, heading.all).map(Some)
+}
+
+/// The first tag rebuilt from the frames `parses` accepts one at a time, then the audio. A tag
+/// that cannot be walked is left out whole, so the file's other tags are still read.
+pub fn salvaged(
+    file: &mut File,
+    heading: Heading,
+    parses: impl Fn(&[u8]) -> bool,
+) -> io::Result<Spliced<'_>> {
+    let mut tag = vec![0; heading.first.min(LARGEST) as usize];
+    file.seek(SeekFrom::Start(0))?;
+    file.read_exact(&mut tag)?;
+    let head = rebuilt(&tag, &parses).unwrap_or_default();
+    Spliced::new(file, head, heading.all)
+}
+
+fn rebuilt(tag: &[u8], parses: &impl Fn(&[u8]) -> bool) -> Option<Vec<u8>> {
+    let (major, written) = (*tag.get(3)?, *tag.get(5)?);
+    let mut body = tag.get(HEADER as usize..)?.to_vec();
+    if major == 4 && written & FOOTER != 0 {
+        body.truncate(body.len().saturating_sub(HEADER as usize));
+    }
+    let mut flags = written & !(EXTENDED | FOOTER);
+    // Before 2.4 the whole tag is unsynchronised at once, frame headers included.
+    if major < 4 && written & UNSYNCHRONISED != 0 {
+        body = resynchronised(&body);
+        flags &= !UNSYNCHRONISED;
+    }
+    if written & EXTENDED != 0 {
+        let skip = extended_length(major, &body)?;
+        body.drain(..skip.min(body.len()));
+    }
+    let kept: Vec<u8> = frames(major, &body)
+        .into_iter()
+        .filter(|frame| parses(&tag_of(major, flags, frame)))
+        .flatten()
+        .copied()
+        .collect();
+    Some(tag_of(major, flags, &kept))
+}
+
+fn tag_of(major: u8, flags: u8, frames: &[u8]) -> Vec<u8> {
+    let size = frames.len() as u32;
+    let mut tag = vec![b'I', b'D', b'3', major, 0, flags];
+    tag.extend((0..4).rev().map(|at| ((size >> (7 * at)) & 0x7f) as u8));
+    tag.extend_from_slice(frames);
+    tag
+}
+
+fn resynchronised(body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(body.len());
+    for (at, byte) in body.iter().enumerate() {
+        if !(*byte == 0 && at > 0 && body[at - 1] == 0xff) {
+            out.push(*byte);
+        }
+    }
+    out
+}
+
+fn extended_length(major: u8, body: &[u8]) -> Option<usize> {
+    let size = body.get(..4)?;
+    match major {
+        3 => Some(4 + u32::from_be_bytes(size.try_into().ok()?) as usize),
+        4 => synchsafe(size).map(|size| size as usize),
+        // In 2.2 the flag says the tag is compressed, which nothing defines.
+        _ => None,
+    }
+}
+
+/// Every frame up to the padding, or up to the first header that makes no sense.
+fn frames(major: u8, body: &[u8]) -> Vec<&[u8]> {
+    let (id, header) = match major {
+        2 => (3, 6),
+        _ => (4, 10),
+    };
+    let mut found = Vec::new();
+    let mut at = 0;
+    while at + header <= body.len() {
+        if !body[at..at + id]
+            .iter()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        {
+            break;
+        }
+        let raw = &body[at + id..at + id + if major == 2 { 3 } else { 4 }];
+        let plain = raw
+            .iter()
+            .fold(0, |size, byte| (size << 8) | *byte as usize);
+        let size = match major {
+            4 => synchsafe(raw).map_or(plain, |size| size as usize),
+            _ => plain,
+        };
+        let Some(end) = (at + header)
+            .checked_add(size)
+            .filter(|end| *end <= body.len())
+        else {
+            break;
+        };
+        found.push(&body[at..end]);
+        at = end;
+    }
+    found
 }
 
 /// A file with its first bytes replaced: `head`, then the file from `from` to its end.
@@ -165,6 +269,46 @@ mod tests {
             .expect("reading")
             .expect("tags");
         assert_eq!(heading.count, 1);
+    }
+
+    fn frame(id: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut frame = id.to_vec();
+        frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&[0, 0]);
+        frame.extend_from_slice(body);
+        frame
+    }
+
+    #[test]
+    fn a_rebuilt_tag_keeps_the_frames_that_parse_and_their_order() {
+        let frames = [
+            frame(b"TIT2", b"\0Bam-Bam"),
+            frame(b"TCON", b"\xd8"),
+            frame(b"TPE1", b"\0Nancy"),
+        ];
+        let tag = tag_of(3, 0, &frames.concat());
+        let rebuilt =
+            rebuilt(&tag, &|one: &[u8]| !one.windows(4).any(|w| w == b"TCON")).expect("a tag");
+        assert_eq!(
+            rebuilt,
+            tag_of(3, 0, &[frames[0].clone(), frames[2].clone()].concat())
+        );
+    }
+
+    #[test]
+    fn an_unsynchronised_tag_before_2_4_is_rebuilt_in_the_clear() {
+        let clear = frame(b"TIT2", b"\0\xff\xe0");
+        let mut unsynchronised = clear.clone();
+        unsynchronised.splice(clear.len() - 1..clear.len() - 1, [0]);
+        let tag = tag_of(3, UNSYNCHRONISED, &unsynchronised);
+        assert_eq!(rebuilt(&tag, &|_: &[u8]| true), Some(tag_of(3, 0, &clear)));
+    }
+
+    #[test]
+    fn a_walk_stops_at_the_padding() {
+        let mut body = frame(b"TIT2", b"\0Bam-Bam");
+        body.resize(body.len() + 64, 0);
+        assert_eq!(frames(3, &body).len(), 1);
     }
 
     #[test]
