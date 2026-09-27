@@ -510,7 +510,7 @@ fn track_from(
             &tags.album_artist_sorts,
             &tags.musicbrainz_album_artist_ids,
         ),
-        composers: credits::paired(&tags.composers, &tags.composer_sorts),
+        composers: credits::composing(&tags.composers, &tags.composer_sorts),
         conductors: credits::paired(&tags.conductors, &[]),
         album: release
             .map(|release| release.title.clone())

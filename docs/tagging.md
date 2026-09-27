@@ -77,9 +77,13 @@ albums by many artists that carry neither.
 
 ## Several values in one tag
 
-Write two artists on one track as two values of `ARTIST`. Kantele never splits a value on a
+Write two artists on one track as two values of `ARTIST`. Kantele never splits an artist on a
 separator, because `Simon & Garfunkel` is one act and `Barbra Streisand & Barry Gibb` is two,
 and nothing in the text says which is which.
+
+`COMPOSER` is the exception: songwriters written one after another with `/`, as in
+`Louis Freese / Lawrence Muggerud`, are listed one by one. A web address, and a name with a part of
+one or two letters such as `AC/DC`, are kept whole.
 
 How you enter several values depends on the tagger: foobar2000 splits a field on `;`, and Mp3tag
 on `\\`. MusicBrainz Picard writes an `ARTISTS` tag with one value per person, which Kantele prefers

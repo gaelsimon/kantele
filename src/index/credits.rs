@@ -105,6 +105,41 @@ pub fn paired(names: &[String], sorts: &[String]) -> Vec<Credit> {
         .collect()
 }
 
+/// Songwriters are written one after another with a slash, as ID3v2.3 separates values. A web
+/// address keeps its slashes, and so does a name with a part too short to be anybody, as AC/DC.
+pub fn composing(names: &[String], sorts: &[String]) -> Vec<Credit> {
+    let mut credits: Vec<Credit> = Vec::new();
+    let mut credit = |credit: Credit| {
+        if !credits.iter().any(|held| held.name == credit.name) {
+            credits.push(credit);
+        }
+    };
+    for (at, name) in names.iter().enumerate() {
+        match writers(name) {
+            Some(parts) => parts.into_iter().map(Credit::new).for_each(&mut credit),
+            None => credit(Credit {
+                name: name.clone(),
+                sort: sort_at(sorts, at),
+            }),
+        }
+    }
+    credits
+}
+
+fn writers(name: &str) -> Option<Vec<String>> {
+    let lowered = name.to_lowercase();
+    if !name.contains('/') || lowered.contains("://") || lowered.starts_with("www.") {
+        return None;
+    }
+    let parts: Vec<String> = name
+        .split('/')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect();
+    (parts.len() > 1 && parts.iter().all(|part| part.chars().count() > 2)).then_some(parts)
+}
+
 fn sort_at(sorts: &[String], at: usize) -> Option<String> {
     sorts
         .get(at)
@@ -165,6 +200,47 @@ mod tests {
 
     fn shown(credits: &[Credit]) -> Vec<String> {
         credits.iter().map(|credit| credit.name.clone()).collect()
+    }
+
+    #[test]
+    fn songwriters_written_with_slashes_are_one_credit_each() {
+        assert_eq!(
+            shown(&composing(
+                &names(&["Louis Freese / Lawrence Muggerud / Senen Reyes"]),
+                &[]
+            )),
+            names(&["Louis Freese", "Lawrence Muggerud", "Senen Reyes"])
+        );
+        assert_eq!(
+            shown(&composing(&names(&["M.Hanson/C.Ridenhaur/K.Cobain"]), &[])),
+            names(&["M.Hanson", "C.Ridenhaur", "K.Cobain"])
+        );
+        assert_eq!(
+            shown(&composing(
+                &names(&["Dominique Aldridge / / Coolio", "Coolio"]),
+                &[]
+            )),
+            names(&["Dominique Aldridge", "Coolio"]),
+            "an empty part is no one, and a writer named twice is one credit"
+        );
+    }
+
+    #[test]
+    fn a_slash_that_does_not_part_songwriters_is_kept() {
+        for value in [
+            "http://dancehallworld.net/",
+            "www.dancehallarena.com/riddims",
+            "AC/DC",
+            "Joey Gardner/K7",
+        ] {
+            assert_eq!(shown(&composing(&names(&[value]), &[])), names(&[value]));
+        }
+    }
+
+    #[test]
+    fn a_composer_left_whole_keeps_its_sort_spelling() {
+        let credits = composing(&names(&["Duke Ellington"]), &names(&["Ellington, Duke"]));
+        assert_eq!(credits[0].sort.as_deref(), Some("Ellington, Duke"));
     }
 
     #[test]
