@@ -329,3 +329,34 @@ fn an_m4a_whose_cover_outgrows_what_lofty_allocates_keeps_its_tags() {
         tags::read_keeping(&tree.path("01.m4a"), tags::Cover::Wanted).expect("an m4a parses");
     assert_eq!(read.title.as_deref(), Some("Más Que Nada"));
 }
+
+#[test]
+fn a_flac_naming_its_album_artist_in_two_fields_is_believed_on_albumartist() {
+    let tree = Tree::new("tags-flac-two-album-artists");
+    let both = fixtures::flac(
+        &[
+            ("TITLE", "Nica's Dream"),
+            ("ALBUMARTIST", "Carlos “Patato” Valdés"),
+            ("ALBUM ARTIST", "Carlos Patato Valdes"),
+        ],
+        false,
+    );
+    let older = fixtures::flac(
+        &[
+            ("TITLE", "Descarga"),
+            ("ALBUM ARTIST", "Carlos Patato Valdes"),
+        ],
+        false,
+    );
+    std::fs::write(tree.path("07.flac"), both).expect("writing it");
+    std::fs::write(tree.path("08.flac"), older).expect("writing it");
+
+    let (read, _) = tags::read(&tree.path("07.flac")).expect("a flac parses");
+    assert_eq!(
+        read.album_artists,
+        ["Carlos “Patato” Valdés"],
+        "the second field is an older tagger's spelling, and would list the album twice"
+    );
+    let (read, _) = tags::read(&tree.path("08.flac")).expect("a flac parses");
+    assert_eq!(read.album_artists, ["Carlos Patato Valdes"]);
+}

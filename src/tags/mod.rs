@@ -230,7 +230,8 @@ fn containers(tagged: &lofty::file::TaggedFile) -> Vec<&lofty::tag::Tag> {
 /// the run a track belongs to, beside the `GROUPING` the crate reads.
 fn tags_from(file: &mut File, tagged: &lofty::file::TaggedFile) -> FileTags {
     let mut tags = tags_of(tagged);
-    let wanted = tags.composer_sorts.is_empty() || tags.grouping.is_none();
+    let wanted =
+        tags.composer_sorts.is_empty() || tags.grouping.is_none() || tags.album_artists.len() > 1;
     if wanted
         && tagged.file_type() == lofty::file::FileType::Flac
         && let Some(block) = vorbis::block(file)
@@ -240,6 +241,13 @@ fn tags_from(file: &mut File, tagged: &lofty::file::TaggedFile) -> FileTags {
         }
         if tags.grouping.is_none() {
             tags.grouping = vorbis::values(&block, "GROUP").into_iter().next();
+        }
+        // lofty reads `ALBUM ARTIST`, an older tagger's key, as more of `ALBUMARTIST`.
+        if tags.album_artists.len() > 1 && vorbis::values(&block, "ALBUMARTISTS").is_empty() {
+            let named = vorbis::values(&block, "ALBUMARTIST");
+            if !named.is_empty() {
+                tags.album_artists = named;
+            }
         }
     }
     tags
