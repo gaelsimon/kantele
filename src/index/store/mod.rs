@@ -26,7 +26,7 @@ const PLAYLIST_VERSION: &str = "2";
 /// rows from another reader are still served, so the library answers from the first second, and
 /// they miss in the cache, so the pass reads those files again and replaces them one by one.
 /// Emptying the tables instead costs a whole cold walk before anything is served at all.
-const READER_VERSION: i64 = 4;
+const READER_VERSION: i64 = 5;
 
 /// `STRICT` so a wrong type is refused at write time.
 const SCHEMA: &str = "

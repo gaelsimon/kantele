@@ -1,11 +1,12 @@
 //! Reading what is on disk, and nothing else.
 
 pub mod dsd;
+pub mod id3v2;
 pub mod vorbis;
 pub mod windows_1252;
 
 use std::fs::File;
-use std::io::{BufReader, Seek};
+use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 use std::time::Duration;
 
@@ -280,8 +281,24 @@ fn probe(
     path: &Path,
     options: ParseOptions,
 ) -> Result<lofty::file::TaggedFile, TagError> {
+    let heading = id3v2::heading(file).map_err(|source| refusal(path, source.into()))?;
+    if let Some(heading) = heading
+        && let Some(first) =
+            id3v2::first_only(file, heading).map_err(|source| refusal(path, source.into()))?
+    {
+        tracing::debug!(path = %path.display(), tags = heading.count, "ID3v2 tags stacked; the first is read");
+        return probe_from(first, path, options);
+    }
     rewound(file, path)?;
-    let mut probe = Probe::new(BufReader::new(file)).options(options);
+    probe_from(file, path, options)
+}
+
+fn probe_from<R: Read + Seek>(
+    reader: R,
+    path: &Path,
+    options: ParseOptions,
+) -> Result<lofty::file::TaggedFile, TagError> {
+    let mut probe = Probe::new(BufReader::new(reader)).options(options);
     if let Some(kind) = lofty::file::FileType::from_path(path) {
         probe = probe.set_file_type(kind);
     }

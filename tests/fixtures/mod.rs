@@ -140,6 +140,77 @@ pub fn flac(comments: &[(&str, &str)], picture: bool) -> Vec<u8> {
     file
 }
 
+/// Ten frames of MPEG-1 layer III silence at 128 kbit/s and 44.1 kHz.
+pub fn mpeg_frames() -> Vec<u8> {
+    let mut frame = vec![0xFF, 0xFB, 0x90, 0x00];
+    frame.resize(417, 0);
+    frame.repeat(10)
+}
+
+fn synchsafe(size: u32) -> [u8; 4] {
+    [
+        ((size >> 21) & 0x7F) as u8,
+        ((size >> 14) & 0x7F) as u8,
+        ((size >> 7) & 0x7F) as u8,
+        (size & 0x7F) as u8,
+    ]
+}
+
+/// An ID3v2 tag of version 2.3 or 2.4 around the given frames, with the given header flags.
+pub fn id3v2(version: u8, flags: u8, frames: &[Vec<u8>]) -> Vec<u8> {
+    let body = frames.concat();
+    let mut tag = b"ID3".to_vec();
+    tag.extend_from_slice(&[version, 0, flags]);
+    tag.extend_from_slice(&synchsafe(body.len() as u32));
+    tag.extend_from_slice(&body);
+    tag
+}
+
+/// One frame with the size its version writes and no frame flags.
+pub fn id3v2_frame(version: u8, id: &[u8; 4], body: &[u8]) -> Vec<u8> {
+    let size = body.len() as u32;
+    let mut frame = id.to_vec();
+    frame.extend_from_slice(&match version {
+        4 => synchsafe(size),
+        _ => size.to_be_bytes(),
+    });
+    frame.extend_from_slice(&[0, 0]);
+    frame.extend_from_slice(body);
+    frame
+}
+
+/// A text frame in ISO-8859-1, which the values the tests write are.
+pub fn id3v2_text(version: u8, id: &[u8; 4], value: &str) -> Vec<u8> {
+    let mut body = vec![0u8];
+    body.extend_from_slice(value.as_bytes());
+    id3v2_frame(version, id, &body)
+}
+
+/// The 128 bytes of an ID3v1 tag, with a genre byte.
+pub fn id3v1(title: &str, artist: &str, album: &str, genre: u8) -> Vec<u8> {
+    let padded = |value: &str, width: usize| {
+        let mut field = value.as_bytes().to_vec();
+        field.resize(width, 0);
+        field
+    };
+    let mut tag = b"TAG".to_vec();
+    tag.extend_from_slice(&padded(title, 30));
+    tag.extend_from_slice(&padded(artist, 30));
+    tag.extend_from_slice(&padded(album, 30));
+    tag.extend_from_slice(&padded("", 4));
+    tag.extend_from_slice(&padded("", 30));
+    tag.push(genre);
+    tag
+}
+
+/// The given tags, then the audio, then an optional ID3v1 tag.
+pub fn mp3(tags: &[Vec<u8>], trailer: Option<Vec<u8>>) -> Vec<u8> {
+    let mut file = tags.concat();
+    file.extend_from_slice(&mpeg_frames());
+    file.extend(trailer.unwrap_or_default());
+    file
+}
+
 fn block(file: &mut Vec<u8>, kind: u8, body: &[u8], last: bool) {
     file.push(if last { 0x80 | kind } else { kind });
     let length = body.len() as u32;
