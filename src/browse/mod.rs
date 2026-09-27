@@ -122,11 +122,11 @@ impl Facet {
     fn values(self, track: &Track) -> Values<'_> {
         match self {
             Self::Genre => Values::Many(&track.genres),
-            // A compilation is served under its own credit but stands under no artist: one entry
-            // holding every compilation is not an artist anybody looks for.
+            // A compilation stands under the album artist it names, and under nobody otherwise:
+            // one entry holding every other compilation is not an artist anybody looks for.
             Self::Artist => Values::Credited(match () {
+                () if names_somebody(&track.album_artists) => &track.album_artists,
                 () if track.compilation => &[],
-                () if !track.album_artists.is_empty() => &track.album_artists,
                 () => &track.artists,
             }),
             Self::AllArtists => Values::Credited(&track.artists),
@@ -169,6 +169,13 @@ impl Facet {
 }
 
 /// The year inside a date tag, which is the first run of four digits wherever a tagger put it.
+fn names_somebody(credits: &[Credit]) -> bool {
+    !credits.is_empty()
+        && credits
+            .iter()
+            .all(|credit| credit.name != crate::index::credits::VARIOUS_ARTISTS)
+}
+
 fn year(date: &str) -> Option<&str> {
     let bytes = date.as_bytes();
     (0..bytes.len().checked_sub(3)?)
@@ -941,6 +948,56 @@ mod tests {
 
     fn eager_view(library: &Library) -> View {
         View::with_settings(library, eager())
+    }
+
+    #[test]
+    fn a_compilation_that_names_its_album_artist_stands_under_that_artist() {
+        let mut best_of = tagged("The Chess Box", "My Babe", "Willie Dixon", "Blues", 1);
+        best_of.artists = vec!["Little Walter".to_owned()];
+        best_of.compilation = true;
+        let mut various = tagged(
+            "Pure Blues",
+            "Hoochie Coochie Man",
+            "Various Artists",
+            "Blues",
+            1,
+        );
+        various.artists = vec!["Muddy Waters".to_owned()];
+        let mut nameless = tagged("Blues Box", "Boom Boom", "Nobody", "Blues", 1);
+        nameless.album_artists.clear();
+        nameless.artists = vec!["John Lee Hooker".to_owned()];
+        nameless.compilation = true;
+        let library = Library::build(
+            "Music".to_owned(),
+            &[
+                file("chess/1.flac", best_of),
+                file("pure/1.flac", various),
+                file("box/1.flac", nameless),
+            ],
+        );
+        let view = eager_view(&library);
+        let under = |relative: &str| -> Vec<String> {
+            let at = library
+                .tracks()
+                .iter()
+                .position(|track| track.relative == relative)
+                .expect("the track");
+            places(&view, at)
+                .into_iter()
+                .filter(|place| place.facet == Facet::Artist)
+                .map(|place| place.value)
+                .collect()
+        };
+        assert_eq!(
+            under("chess/1.flac"),
+            ["Willie Dixon"],
+            "a best-of flagged as a compilation is still somebody's album"
+        );
+        assert!(under("pure/1.flac").is_empty(), "Various Artists is nobody");
+        assert!(
+            under("box/1.flac").is_empty(),
+            "a compilation naming nobody does not borrow its performers"
+        );
     }
 
     #[test]
