@@ -441,7 +441,11 @@ fn tags_of(tagged: &lofty::file::TaggedFile) -> FileTags {
         album: one(ItemKey::AlbumTitle),
         composers: many(ItemKey::Composer),
         conductors: many(ItemKey::Conductor),
-        genres: many(ItemKey::Genre),
+        genres: tags
+            .iter()
+            .map(|tag| genres_in(tag))
+            .find(|values| !values.is_empty())
+            .unwrap_or_default(),
         date: one(ItemKey::RecordingDate).or_else(|| one(ItemKey::Year)),
         track_number: one(ItemKey::TrackNumber).and_then(|v| leading_number(&v)),
         track_total: one(ItemKey::TrackTotal).and_then(|v| leading_number(&v)),
@@ -465,6 +469,15 @@ fn tags_of(tagged: &lofty::file::TaggedFile) -> FileTags {
             .map(canonical)
             .collect(),
     }
+}
+
+/// ID3v1 gives the genre one byte, and an encoder nobody asked leaves it at 0, Blues, or 12, Other.
+fn genres_in(tag: &lofty::tag::Tag) -> Vec<String> {
+    let mut genres = once_each(tag.get_strings(ItemKey::Genre));
+    if tag.tag_type() == lofty::tag::TagType::Id3v1 {
+        genres.retain(|genre| genre != "Blues" && genre != "Other");
+    }
+    genres
 }
 
 /// The values of one tag, with an exact repeat kept once.

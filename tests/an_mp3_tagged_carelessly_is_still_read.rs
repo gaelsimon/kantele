@@ -74,3 +74,52 @@ fn a_tag_with_nothing_left_to_read_leaves_the_id3v1_behind_it() {
     assert_eq!(read.title.as_deref(), Some("Shake Up"));
     assert_eq!(read.artists, ["Basement Jaxx"]);
 }
+
+#[test]
+fn the_genre_byte_an_encoder_leaves_at_blues_or_other_names_no_genre() {
+    let tree = Tree::new("mp3-id3v1-genre");
+    let files = [
+        (
+            "blues.mp3",
+            id3v1("Everyday People", "Arrested Development", "", 0),
+            None,
+        ),
+        ("other.mp3", id3v1("Glasswalk", "Manfredas", "", 12), None),
+        (
+            "reggae.mp3",
+            id3v1("Gal A Bubble", "Konshens", "", 16),
+            None,
+        ),
+        (
+            "written.mp3",
+            id3v1("Boom Boom", "John Lee Hooker", "", 0),
+            Some(id3v2(3, 0, &[id3v2_text(3, b"TCON", "Blues")])),
+        ),
+    ];
+    for (name, trailer, tag) in files {
+        let file = mp3(&tag.into_iter().collect::<Vec<_>>(), Some(trailer));
+        std::fs::write(tree.path(name), file).expect("writing it");
+    }
+    let genres = |name: &str| {
+        tags::read(&tree.path(name))
+            .expect("an mp3 parses")
+            .0
+            .genres
+    };
+
+    assert!(
+        genres("blues.mp3").is_empty(),
+        "genre 0 is what a zeroed tag says"
+    );
+    assert!(genres("other.mp3").is_empty());
+    assert_eq!(
+        genres("reggae.mp3"),
+        ["Reggae"],
+        "a genre somebody chose is kept"
+    );
+    assert_eq!(
+        genres("written.mp3"),
+        ["Blues"],
+        "Blues written out is Blues"
+    );
+}
