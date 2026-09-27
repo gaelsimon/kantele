@@ -35,6 +35,9 @@ Open **Genre**, then **Jazz**. If Jazz holds only a few albums, you see them. If
 are offered the other menus instead, **Artist**, **Date**, **Quality**, and so on, each narrowing
 Jazz further. Choose **Artist**, then **Miles Davis**, and you see his jazz albums.
 
+Those menus are headed by **312 albums** and **2140 items**, every album and every track of Jazz
+as two lists, so the whole of a genre can be played or shuffled from there.
+
 A menu that would not narrow anything is left out. If every jazz track in your library is from the
 same year, **Date** is not offered inside Jazz.
 

@@ -227,7 +227,7 @@ mod tests {
             },
         );
         match menu(&library, &view, &Position::default()).expect("the root is an object") {
-            Menu::Facets(offered) => {
+            Menu::Facets(offered, _) => {
                 let facets: Vec<Facet> = offered.into_iter().map(|(facet, _, _)| facet).collect();
                 assert_eq!(facets, [Facet::AllArtists, Facet::Artist]);
             }

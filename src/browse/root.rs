@@ -75,7 +75,7 @@ pub fn entries(library: &Library, view: &View) -> Vec<Entry> {
     }
     offer(Opens::Music, counted(library.len(), "item"), library.len());
 
-    if let Some(Menu::Facets(offered)) = menu(library, view, &Position::default()) {
+    if let Some(Menu::Facets(offered, _)) = menu(library, view, &Position::default()) {
         for (facet, at, values) in offered {
             offer(Opens::Axis(facet, at), facet.title().to_owned(), values);
         }

@@ -623,6 +623,93 @@ mod tests {
         assert!(!second.result.contains("<container "));
     }
 
+    fn reggae_and_latin() -> Library {
+        use crate::index::Scanned;
+        use crate::tags::{AudioProperties, FileTags};
+        use std::path::{Path, PathBuf};
+        use std::time::Duration;
+
+        let file = |relative: &str, album: Option<&str>, artist: &str, genre: &str| Scanned {
+            path: Path::new("/music").join(relative),
+            relative: PathBuf::from(relative),
+            tags: FileTags {
+                title: Some(relative.to_owned()),
+                album: album.map(str::to_owned),
+                artists: vec![artist.to_owned()],
+                genres: vec![genre.to_owned()],
+                track_number: Some(1),
+                ..FileTags::default()
+            },
+            properties: AudioProperties {
+                duration: Duration::from_secs(180),
+                ..AudioProperties::default()
+            },
+            size: 1,
+            artwork: None,
+        };
+        Library::build(
+            "Music".to_owned(),
+            &[
+                file("Dub/1.flac", Some("Dub"), "Scientist", "Reggae"),
+                file("Roots/1.flac", Some("Roots"), "Burning Spear", "Reggae"),
+                file("Loose/1.flac", None, "Burning Spear", "Reggae"),
+                file("Cuban/1.flac", Some("Cuban"), "Sierra Maestra", "Latin"),
+            ],
+        )
+    }
+
+    /// The `childCount` a listing gives the container `id`.
+    fn child_count_of(didl: &str, id: &str) -> Option<usize> {
+        let (_, after) = didl.split_once(&format!(r#"id="{id}""#))?;
+        let tag = after.split_once('>')?.0;
+        let (_, count) = tag.split_once(r#"childCount=""#)?;
+        count.split_once('"')?.0.parse().ok()
+    }
+
+    #[test]
+    fn a_narrowed_menu_opens_on_its_albums_and_its_items_and_says_so_from_above() {
+        let served = serving_with(
+            reggae_and_latin(),
+            browse::Settings {
+                album_threshold: 0,
+                ..browse::Settings::default()
+            },
+        );
+        let listing = browse::Position::default().listing(browse::Facet::Genre);
+        let Some(browse::Menu::Values(facet, values, _)) =
+            browse::menu(&served.library, &served.view, &listing)
+        else {
+            panic!("the genre listing is an object");
+        };
+        let digest = values
+            .iter()
+            .find(|entry| entry.display == "Reggae")
+            .expect("reggae is a genre")
+            .digest;
+        let reggae = listing.chose(facet, digest);
+
+        let opened = ask(&served, &reggae.id(), BrowseFlag::DirectChildren);
+        assert_eq!(titles(&opened.result)[..2], ["2 albums", "3 items"]);
+        let listed = ask(&served, &listing.id(), BrowseFlag::DirectChildren);
+        assert_eq!(
+            child_count_of(&listed.result, &reggae.id()),
+            Some(opened.total_matches),
+            "a count that disagrees with the children makes a client stop short"
+        );
+
+        let albums = reggae.showing(browse::Shown::Albums);
+        let shown = ask(&served, &albums.id(), BrowseFlag::DirectChildren);
+        assert_eq!(titles(&shown.result), ["Dub", "Roots"]);
+        let itself = ask(&served, &albums.id(), BrowseFlag::Metadata);
+        assert_eq!(titles(&itself.result), ["2 albums"]);
+        assert_eq!(child_count_of(&itself.result, &albums.id()), Some(2));
+
+        let items = reggae.showing(browse::Shown::Tracks);
+        let shown = ask(&served, &items.id(), BrowseFlag::DirectChildren);
+        assert_eq!(shown.total_matches, 3);
+        assert!(!shown.result.contains("<container "));
+    }
+
     fn titles(didl: &str) -> Vec<String> {
         didl.split("<dc:title>")
             .skip(1)

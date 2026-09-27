@@ -146,7 +146,7 @@ fn tag_view_inside(library: &Library, view: &View, path: &str) -> bool {
     !path.is_empty()
         && matches!(
             browse::menu(library, view, &browse::Position::inside(path)),
-            Some(browse::Menu::Facets(_))
+            Some(browse::Menu::Facets(..))
         )
 }
 
@@ -232,13 +232,13 @@ fn folder_children<'a>(
     // The root menu already offers these axes.
     let scoped = browse::Position::inside(path);
     if !path.is_empty()
-        && let Some(browse::Menu::Facets(axes)) = browse::menu(library, view, &scoped)
+        && let Some(browse::Menu::Facets(axes, whole)) = browse::menu(library, view, &scoped)
     {
         children.push(didl::Child::Container(didl::ContainerSpec::menu(
             ObjectId::new(scoped.id()).expect("a position identifier is inside the alphabet"),
             here.clone(),
             TAG_VIEW_TITLE,
-            axes.len(),
+            axes.len() + whole.map_or(0, |whole| whole.entries()),
         )));
     }
 
@@ -290,12 +290,15 @@ fn facet_children<'a>(
     };
 
     match menu {
-        browse::Menu::Facets(offered) => Listing::All(
-            offered
+        browse::Menu::Facets(offered, whole) => Listing::All(
+            whole
+                .map(|whole| whole.leading(position))
+                .unwrap_or_default()
                 .into_iter()
-                .map(|(facet, at, values)| {
+                .map(|(at, title, children)| container(at.id(), title, children, didl::MENU))
+                .chain(offered.into_iter().map(|(facet, at, values)| {
                     container(at.id(), facet.title().to_owned(), values, didl::MENU)
-                })
+                }))
                 .collect(),
         ),
         browse::Menu::Letters(_, groups) => Listing::All(
@@ -352,6 +355,23 @@ fn facet_children<'a>(
                 &menus.music,
             );
             Listing::All(albums.chain(loose).collect())
+        }
+        browse::Menu::Albums(selected) => {
+            let albums = browse::albums_in(library, &selected);
+            let page = window
+                .range(albums.len())
+                .filter_map(|at| library.albums().get(albums[at]))
+                .map(|album| album_child(album, parent))
+                .collect();
+            Listing::Page(page, albums.len())
+        }
+        browse::Menu::Items(selected) => {
+            let page = window
+                .range(selected.len())
+                .filter_map(|at| library.tracks().get(selected[at]))
+                .map(|track| didl::Child::item_under(track, parent.clone()))
+                .collect();
+            Listing::Page(page, selected.len())
         }
     }
 }
@@ -435,6 +455,12 @@ pub(super) fn metadata<'a>(
             )
             .total();
             let title = match (position.grouped, position.listing) {
+                _ if position.shown == Some(browse::Shown::Albums) => {
+                    browse::root::counted(children, "album")
+                }
+                _ if position.shown == Some(browse::Shown::Tracks) => {
+                    browse::root::counted(children, "item")
+                }
                 (Some(browse::Grouped::Letter(letter)), _) => browse::group_display(letter),
                 (Some(browse::Grouped::Index), _) => browse::INDEX_TITLE.to_owned(),
                 (None, Some(facet)) => facet.title().to_owned(),

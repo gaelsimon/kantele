@@ -11,7 +11,8 @@ folder. Give it a different **Server name** so your player lists both, and compa
 ## What is the same
 
 - **Menus that narrow.** Choosing a genre offers the other menus that split it, until few enough
-  albums are left to list them.
+  albums are left to list them. Those menus start with the genre's albums and items, as
+  MinimServer's do.
 - **Multi-disc albums.** A disc number alone plays the discs as one list; a disc subtitle, or a
   disc marker in the album title, opens the album disc by disc. An album that showed one way in
   MinimServer shows the same way here.

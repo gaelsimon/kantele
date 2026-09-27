@@ -94,11 +94,16 @@ pub fn level(served: &Served, asked: &Asked) -> Option<Level> {
     }
 
     let (kind, entries, tracks) = match browse::menu(&served.library, &served.view, &at)? {
-        Menu::Facets(offered) => (
+        Menu::Facets(offered, whole) => (
             Kind::Axes,
-            offered
+            whole
+                .map(|whole| whole.leading(&at))
+                .unwrap_or_default()
                 .into_iter()
-                .map(|(facet, to, values)| Entry::chosen(to.id(), facet.title().to_owned(), values))
+                .map(|(to, title, children)| Entry::given(to.id(), title, children))
+                .chain(offered.into_iter().map(|(facet, to, values)| {
+                    Entry::chosen(to.id(), facet.title().to_owned(), values)
+                }))
                 .collect(),
             0,
         ),
@@ -138,7 +143,9 @@ pub fn level(served: &Served, asked: &Asked) -> Option<Level> {
             }));
             (Kind::Values, entries, 0)
         }
-        Menu::Tracks(selected) => (Kind::Tracks, Vec::new(), selected.len()),
+        Menu::Tracks(selected) | Menu::Albums(selected) | Menu::Items(selected) => {
+            (Kind::Tracks, Vec::new(), selected.len())
+        }
     };
     Some(Level {
         at: at.id(),
