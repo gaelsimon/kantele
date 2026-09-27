@@ -11,11 +11,13 @@ pub const UNTAGGED: &str = "untagged";
 pub const PLAYLISTS: &str = "playlists";
 pub const FOLDERS: &str = "folders";
 pub const RECENT: &str = "recent";
+pub const COMPILATIONS: &str = "compilations";
 
 pub const UNTAGGED_TITLE: &str = "[untagged]";
 pub const PLAYLISTS_TITLE: &str = "Playlists";
 pub const FOLDERS_TITLE: &str = "[folder view]";
 pub const RECENT_TITLE: &str = "Recently added";
+pub const COMPILATIONS_TITLE: &str = "Compilations";
 
 /// What one root entry opens onto. The caller mints the identifier it publishes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,6 +26,7 @@ pub enum Opens {
     Music,
     /// One axis the owner chose, with the position that lists its values.
     Axis(Facet, Position),
+    Compilations,
     Untagged,
     Playlists,
     Recent,
@@ -37,6 +40,7 @@ impl Opens {
             Self::Albums => ALBUMS.to_owned(),
             Self::Music => MUSIC.to_owned(),
             Self::Axis(_, at) => at.id(),
+            Self::Compilations => COMPILATIONS.to_owned(),
             Self::Untagged => UNTAGGED.to_owned(),
             Self::Playlists => PLAYLISTS.to_owned(),
             Self::Recent => RECENT.to_owned(),
@@ -81,6 +85,14 @@ pub fn entries(library: &Library, view: &View) -> Vec<Entry> {
         }
     }
 
+    let compilations = view.compilations().len();
+    if compilations > 0 {
+        offer(
+            Opens::Compilations,
+            COMPILATIONS_TITLE.to_owned(),
+            compilations,
+        );
+    }
     let untagged = untagged_count(library, view);
     if untagged > 0 {
         offer(Opens::Untagged, UNTAGGED_TITLE.to_owned(), untagged);

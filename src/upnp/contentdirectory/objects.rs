@@ -7,8 +7,8 @@ use crate::upnp::{ObjectId, didl};
 use super::paging::{Listing, Window};
 use super::parts;
 use super::{
-    ALBUMS, ARTISTS, FOLDERS, FOLDERS_TITLE, MUSIC, Menus, PLAYLISTS, PLAYLISTS_TITLE, RECENT,
-    RECENT_TITLE, TAG_VIEW_TITLE, UNTAGGED, UNTAGGED_TITLE,
+    ALBUMS, ARTISTS, COMPILATIONS, COMPILATIONS_TITLE, FOLDERS, FOLDERS_TITLE, MUSIC, Menus,
+    PLAYLISTS, PLAYLISTS_TITLE, RECENT, RECENT_TITLE, TAG_VIEW_TITLE, UNTAGGED, UNTAGGED_TITLE,
 };
 
 enum Named {
@@ -20,6 +20,7 @@ enum Named {
     Playlists,
     Folders,
     Recent,
+    Compilations,
     Folder(String),
     Position(browse::Position),
     /// A disc or a run inside an album, which only the library can say exists.
@@ -38,6 +39,7 @@ fn named(view: &View, id: &str) -> Named {
         PLAYLISTS => Named::Playlists,
         FOLDERS => Named::Folders,
         RECENT => Named::Recent,
+        COMPILATIONS => Named::Compilations,
         other => {
             if let Some(path) = browse::folder_from_id(view, other) {
                 return Named::Folder(path);
@@ -89,6 +91,12 @@ pub(super) fn children<'a>(
         }),
         Named::Folders => all(folder_children(library, view, menus, "", &menus.folders)),
         Named::Recent => all(recent_children(library, view, menus)),
+        Named::Compilations => flat(view.compilations().len(), &|at| {
+            album_child(
+                &library.albums()[view.compilations()[at]],
+                &menus.compilations,
+            )
+        }),
         Named::Folder(path) => {
             let here = folder_object(&path)?;
             all(folder_children(library, view, menus, &path, &here))
@@ -198,6 +206,7 @@ fn root_children<'a>(
                 browse::root::Opens::Untagged => menus.untagged.clone(),
                 browse::root::Opens::Playlists => menus.playlists.clone(),
                 browse::root::Opens::Recent => menus.recent.clone(),
+                browse::root::Opens::Compilations => menus.compilations.clone(),
                 browse::root::Opens::Folders => menus.folders.clone(),
             };
             let spec = match entry.opens {
@@ -433,6 +442,12 @@ pub(super) fn metadata<'a>(
             menus.root.clone(),
             RECENT_TITLE,
             view.recent().len(),
+        )),
+        Named::Compilations => menu(didl::ContainerSpec::menu(
+            menus.compilations.clone(),
+            menus.root.clone(),
+            COMPILATIONS_TITLE,
+            view.compilations().len(),
         )),
         Named::Folders => menu(didl::ContainerSpec::folder_view(
             menus.folders.clone(),

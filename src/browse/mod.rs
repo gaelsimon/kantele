@@ -169,6 +169,21 @@ impl Facet {
 }
 
 /// The year inside a date tag, which is the first run of four digits wherever a tagger put it.
+/// The albums no Artist entry stands for: every track a compilation that names nobody.
+pub fn compilations(library: &Library) -> Vec<usize> {
+    library
+        .albums()
+        .iter()
+        .enumerate()
+        .filter(|(_, album)| {
+            let mut tracks = library.album_tracks(album).peekable();
+            tracks.peek().is_some()
+                && tracks.all(|track| track.compilation && !names_somebody(&track.album_artists))
+        })
+        .map(|(at, _)| at)
+        .collect()
+}
+
 fn names_somebody(credits: &[Credit]) -> bool {
     !credits.is_empty()
         && credits
@@ -1109,8 +1124,8 @@ mod tests {
         assert_eq!(sizes[reggae], axes.len() + whole.entries());
     }
 
-    #[test]
-    fn a_compilation_that_names_its_album_artist_stands_under_that_artist() {
+    /// A best-of that names its album artist, a Various Artists album, a compilation naming nobody.
+    fn blues_compilations() -> Library {
         let mut best_of = tagged("The Chess Box", "My Babe", "Willie Dixon", "Blues", 1);
         best_of.artists = vec!["Little Walter".to_owned()];
         best_of.compilation = true;
@@ -1126,14 +1141,48 @@ mod tests {
         nameless.album_artists.clear();
         nameless.artists = vec!["John Lee Hooker".to_owned()];
         nameless.compilation = true;
-        let library = Library::build(
+        Library::build(
             "Music".to_owned(),
             &[
                 file("chess/1.flac", best_of),
                 file("pure/1.flac", various),
                 file("box/1.flac", nameless),
             ],
+        )
+    }
+
+    #[test]
+    fn the_compilations_are_the_albums_no_artist_stands_for() {
+        let library = blues_compilations();
+        let view = eager_view(&library);
+        let titles: Vec<&str> = view
+            .compilations()
+            .iter()
+            .map(|at| library.albums()[*at].title.as_str())
+            .collect();
+        assert_eq!(titles, ["Blues Box", "Pure Blues"]);
+    }
+
+    #[test]
+    fn the_root_offers_the_compilations_only_where_there_are_some() {
+        let library = blues_compilations();
+        let entry = root::entries(&library, &eager_view(&library))
+            .into_iter()
+            .find(|entry| entry.opens == root::Opens::Compilations)
+            .expect("two albums stand under no artist");
+        assert_eq!((entry.title.as_str(), entry.children), ("Compilations", 2));
+
+        let plain = self::library();
+        assert!(
+            root::entries(&plain, &eager_view(&plain))
+                .iter()
+                .all(|entry| entry.opens != root::Opens::Compilations)
         );
+    }
+
+    #[test]
+    fn a_compilation_that_names_its_album_artist_stands_under_that_artist() {
+        let library = blues_compilations();
         let view = eager_view(&library);
         let under = |relative: &str| -> Vec<String> {
             let at = library

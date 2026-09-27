@@ -69,10 +69,11 @@ name.
 
 **A compilation** is an album by nobody in particular. Set `ALBUMARTIST` to `Various Artists`, or
 leave it empty and set `COMPILATION` to 1. The album is then not listed under any one artist in
-**Artist**, and each track is still found under its performer in **All Artists**. `Various`, `VA`,
-`V/A`, `Unknown Artist` and `None` are treated the same way as `Various Artists`. A compilation
-that names its `ALBUMARTIST`, as a best-of or a DJ mix does, is listed under that artist.
-**Unmarked compilations** on the Library tab finds the albums by many artists that carry neither.
+**Artist**: it is under **Compilations** on the first screen, and each track is still found under
+its performer in **All Artists**. `Various`, `VA`, `V/A`, `Unknown Artist` and `None` are treated
+the same way as `Various Artists`. A compilation that names its `ALBUMARTIST`, as a best-of or a
+DJ mix does, is listed under that artist. **Unmarked compilations** on the Library tab finds the
+albums by many artists that carry neither.
 
 ## Several values in one tag
 

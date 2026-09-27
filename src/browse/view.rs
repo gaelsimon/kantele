@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::index::{Checks, Coverage, Library};
 
-use super::{Axes, Folders, Recent, Settings, recently_added};
+use super::{Axes, Folders, Recent, Settings, compilations, recently_added};
 
 #[derive(Clone, Debug, Default)]
 pub struct View {
@@ -12,6 +12,7 @@ pub struct View {
     folders: Folders,
     /// Settled once here, since a root browse asks for it and the answer sorts the library.
     recent: Vec<Recent>,
+    compilations: Vec<usize>,
     pub settings: Settings,
 }
 
@@ -25,6 +26,7 @@ impl View {
             axes: Axes::build(library.tracks(), &settings.ignored()),
             folders: Folders::build(library.tracks()),
             recent: recently_added(library, &settings),
+            compilations: compilations(library),
             settings,
         }
     }
@@ -40,6 +42,11 @@ impl View {
     /// What the newest files belong to, newest first.
     pub fn recent(&self) -> &[Recent] {
         &self.recent
+    }
+
+    /// The albums no Artist entry stands for, as indices into the albums.
+    pub fn compilations(&self) -> &[usize] {
+        &self.compilations
     }
 }
 

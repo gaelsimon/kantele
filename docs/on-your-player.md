@@ -14,6 +14,7 @@ What your player shows when you open Kantele, and how to get from there to an al
 | **Composer** | The composers your tags name |
 | **Date** | Years |
 | **Quality** | One word per file: Lossy, Below CD, CD, CD+, HD, HD+, DXD, DSD64 and up |
+| **Compilations** | The albums by nobody in particular, which no entry in **Artist** stands for |
 | **[untagged]** | Tracks no menu above can reach, because their tags are missing |
 | **Playlists** | Your `.m3u`, `.m3u8` and `.pls` files |
 | **Recently added** | The albums you added last, newest first |

@@ -1,8 +1,10 @@
 //! The ContentDirectory service.
 
-pub use crate::browse::root::{ALBUMS, FOLDERS, MUSIC, PLAYLISTS, RECENT, UNTAGGED};
+pub use crate::browse::root::{ALBUMS, COMPILATIONS, FOLDERS, MUSIC, PLAYLISTS, RECENT, UNTAGGED};
 
-use crate::browse::root::{FOLDERS_TITLE, PLAYLISTS_TITLE, RECENT_TITLE, UNTAGGED_TITLE};
+use crate::browse::root::{
+    COMPILATIONS_TITLE, FOLDERS_TITLE, PLAYLISTS_TITLE, RECENT_TITLE, UNTAGGED_TITLE,
+};
 use crate::upnp::{ObjectId, didl, search};
 
 #[derive(Clone, Debug)]
@@ -51,6 +53,7 @@ struct Menus {
     playlists: ObjectId,
     folders: ObjectId,
     recent: ObjectId,
+    compilations: ObjectId,
 }
 
 /// The fixed identifiers, minted once: every browse and every search names them.
@@ -67,6 +70,7 @@ static MENUS: std::sync::LazyLock<Menus> = std::sync::LazyLock::new(|| {
         playlists: fixed(PLAYLISTS),
         folders: fixed(FOLDERS),
         recent: fixed(RECENT),
+        compilations: fixed(COMPILATIONS),
     }
 });
 
@@ -664,6 +668,44 @@ mod tests {
         let tag = after.split_once('>')?.0;
         let (_, count) = tag.split_once(r#"childCount=""#)?;
         count.split_once('"')?.0.parse().ok()
+    }
+
+    #[test]
+    fn the_compilations_are_a_root_entry_that_lists_their_albums() {
+        use crate::index::Scanned;
+        use crate::tags::FileTags;
+        use std::path::{Path, PathBuf};
+
+        let file = |relative: &str, album: &str, artist: &str, compilation: bool| Scanned {
+            path: Path::new("/music").join(relative),
+            relative: PathBuf::from(relative),
+            tags: FileTags {
+                title: Some(relative.to_owned()),
+                album: Some(album.to_owned()),
+                artists: vec![artist.to_owned()],
+                compilation,
+                ..FileTags::default()
+            },
+            properties: Default::default(),
+            size: 1,
+            artwork: None,
+        };
+        let served = serving(Library::build(
+            "Music".to_owned(),
+            &[
+                file("Kicks/1.flac", "DJ-Kicks", "Kruder & Dorfmeister", true),
+                file("Kicks/2.flac", "DJ-Kicks", "Rockers Hi-Fi", true),
+                file("Dub/1.flac", "Dub", "Scientist", false),
+            ],
+        ));
+
+        let root = ask(&served, ObjectId::ROOT, BrowseFlag::DirectChildren);
+        assert_eq!(child_count_of(&root.result, COMPILATIONS), Some(1));
+        let listed = ask(&served, COMPILATIONS, BrowseFlag::DirectChildren);
+        assert_eq!(titles(&listed.result), ["DJ-Kicks"]);
+        assert!(listed.result.contains(r#"parentID="compilations""#));
+        let itself = ask(&served, COMPILATIONS, BrowseFlag::Metadata);
+        assert_eq!(titles(&itself.result), ["Compilations"]);
     }
 
     #[test]

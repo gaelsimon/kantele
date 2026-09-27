@@ -48,7 +48,8 @@ All of them are on the Settings page, and none of them needs a restart.
   with letters beyond Latin-1 after Z.
 - **Recently added** uses the date Kantele first saw a file, so retagging an album does not bring
   it back to the top.
-- **`Various Artists`** and its variants are not listed as an artist.
+- **`Various Artists`** and its variants are not listed as an artist. Their albums are under
+  **Compilations** on the first screen.
 - **Setup** is a page with a folder picker. There is no Java to install, and nothing to buy.
 
 ## What Kantele does not do yet
