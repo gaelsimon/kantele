@@ -61,7 +61,7 @@ pub struct FileTags {
 
 impl FileTags {
     /// A whitespace-only value is no value and takes the entries aligned with it. What remains is
-    /// published in NFC.
+    /// published trimmed and in NFC.
     pub fn tidied(mut self) -> Self {
         for field in [
             &mut self.title,
@@ -72,14 +72,11 @@ impl FileTags {
             &mut self.movement_name,
             &mut self.grouping,
         ] {
-            if field
-                .as_deref()
-                .is_some_and(|value| value.trim().is_empty())
-            {
-                *field = None;
-            }
             if let Some(value) = field {
-                composed(value);
+                cleaned(value);
+            }
+            if field.as_deref().is_some_and(str::is_empty) {
+                *field = None;
             }
         }
         for list in [
@@ -92,9 +89,9 @@ impl FileTags {
             &mut self.conductors,
             &mut self.genres,
         ] {
-            list.iter_mut().for_each(composed);
+            list.iter_mut().for_each(cleaned);
         }
-        self.genres.retain(|genre| !genre.trim().is_empty());
+        self.genres.retain(|genre| !genre.is_empty());
         drop_blank(
             &mut self.artists,
             &mut [&mut self.artist_sorts, &mut self.musicbrainz_artist_ids],
@@ -112,8 +109,12 @@ impl FileTags {
     }
 }
 
-fn composed(value: &mut String) {
+fn cleaned(value: &mut String) {
     use unicode_normalization::UnicodeNormalization;
+    let trimmed = value.trim();
+    if trimmed.len() != value.len() {
+        *value = trimmed.to_owned();
+    }
     if !unicode_normalization::is_nfc(value) {
         *value = value.nfc().collect();
     }
@@ -456,6 +457,26 @@ mod tests {
         assert_eq!(tags.composer_sorts, vec!["Coltrane, John".to_owned()]);
         assert_eq!(tags.genres, vec!["Son".to_owned()]);
         assert_eq!(tags.work.as_deref(), Some("Kind of Blue"));
+    }
+
+    #[test]
+    fn the_spaces_around_a_value_are_not_part_of_it() {
+        let tags = FileTags {
+            title: Some("It Had To Be You              ".to_owned()),
+            album: Some(" Double Trouble ".to_owned()),
+            artists: vec!["Tricky ".to_owned()],
+            album_artists: vec!["P-Square ".to_owned()],
+            composers: vec![" Poté".to_owned()],
+            genres: vec![" Reggae".to_owned()],
+            ..FileTags::default()
+        }
+        .tidied();
+        assert_eq!(tags.title.as_deref(), Some("It Had To Be You"));
+        assert_eq!(tags.album.as_deref(), Some("Double Trouble"));
+        assert_eq!(tags.artists, ["Tricky"]);
+        assert_eq!(tags.album_artists, ["P-Square"]);
+        assert_eq!(tags.composers, ["Poté"]);
+        assert_eq!(tags.genres, ["Reggae"]);
     }
 
     #[test]
