@@ -17,7 +17,8 @@ use super::payload::{Image, Payload, digest};
 pub struct Cache {
     pub(super) roots: Roots,
     pub(super) files: HashMap<PathBuf, Row<Payload>>,
-    pub(super) covers: HashMap<PathBuf, Row<Image>>,
+    /// None for a folder image no file took, kept so a look at the tree knows it.
+    pub(super) covers: HashMap<PathBuf, Row<Option<Image>>>,
     pub(super) playlists: HashMap<PathBuf, Row<playlist::Contents>>,
     pub(super) refused: HashMap<PathBuf, Row<String>>,
     pub(super) hits: AtomicUsize,
@@ -205,10 +206,11 @@ impl Cache {
         if !row.answers_for(image.fingerprint) {
             return None;
         }
+        let described = row.payload.as_ref()?;
         Some(Artwork {
             source: Source::File(image.path.clone()),
-            mime: artwork::image_mime_named(&row.payload.mime)?,
-            dimensions: row.payload.dimensions,
+            mime: artwork::image_mime_named(&described.mime)?,
+            dimensions: described.dimensions,
         })
     }
 }

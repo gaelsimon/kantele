@@ -391,3 +391,23 @@ fn a_file_with_no_extension_beside_a_new_album_does_not_cost_the_album_its_pass(
         5
     );
 }
+
+#[test]
+fn a_folder_image_no_file_uses_is_not_a_change_every_look_reports() {
+    let tree = Tree::new("sweep-unused-cover");
+    let folder = tree.path("Sierra");
+    std::fs::create_dir_all(&folder).expect("creating the album folder");
+    std::fs::write(
+        folder.join("01.flac"),
+        fixtures::flac(&[("ALBUM", "Dundunbanza"), ("TITLE", "One")], true),
+    )
+    .expect("writing a flac carrying a picture");
+    std::fs::write(folder.join("cover.jpg"), fixtures::jpeg()).expect("writing a folder cover");
+    let store = remembering(&tree);
+
+    assert_eq!(
+        service::sweep(&Indexing::of(&tree.0), store.as_ref().expect("a store")).expect("a look"),
+        None,
+        "the picture in the file wins by default, so nothing reads cover.jpg, and it has not changed"
+    );
+}

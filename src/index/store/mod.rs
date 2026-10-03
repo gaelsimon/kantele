@@ -863,13 +863,14 @@ fn write_covers(
         let Some(text) = text(&relative) else {
             continue;
         };
-        let Some(described) = descriptions.get(image.path.as_path()) else {
-            continue;
-        };
         if image.fingerprint == Fingerprint::UNKNOWN {
             continue;
         }
-        let payload = serde_json::to_string(&Image::of(described, roots))?;
+        // Written even where no file took it, or every look at the tree reports it as new.
+        let described = descriptions
+            .get(image.path.as_path())
+            .map(|described| Image::of(described, roots));
+        let payload = serde_json::to_string(&described)?;
         if cache.agrees_on_cover(&relative, image.fingerprint, &payload) {
             saved.unchanged += 1;
             continue;
