@@ -533,7 +533,6 @@ impl Store {
         Ok(stamped)
     }
 
-    /// Which folder was awarded each album key, as the last pass left it.
     fn rows<T: serde::de::DeserializeOwned>(
         &self,
         table: &str,
@@ -582,6 +581,7 @@ impl Store {
         Ok((kept, unreadable))
     }
 
+    /// Which folder was awarded each album key, as the last pass left it.
     pub fn claims(&self) -> Result<crate::index::identity::Claims> {
         let mut statement = self.connection.prepare("SELECT key, scope FROM claims")?;
         let rows = statement.query_map([], |row| {
