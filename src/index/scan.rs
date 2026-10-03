@@ -153,6 +153,8 @@ pub struct Partial {
     /// and cleared when a read arms a new one: every pass after a first read has to agree with
     /// what that read published, for as long as no store holds the awards itself.
     awarded: Mutex<crate::index::identity::Claims>,
+    /// How many folders the last snapshot the hook took held.
+    handed: Mutex<usize>,
 }
 
 /// The folders a first read has finished, each with its place in the walk, shared rather than
@@ -196,6 +198,7 @@ impl Partial {
     fn arm_at(&self, hook: Hook, first: Duration, now: Instant) {
         *unpoisoned(&self.hook) = Some(hook);
         *unpoisoned(&self.awarded) = crate::index::identity::Claims::new();
+        *unpoisoned(&self.handed) = 0;
         *unpoisoned(&self.schedule) = Schedule {
             next: Some(now + first),
             interval: first,
@@ -238,11 +241,20 @@ impl Partial {
         true
     }
 
+    /// Held across the hook: two readers that found a publication due at once hand their
+    /// snapshots over in the order they took them, and the smaller one arriving late is dropped.
     fn publish(&self, files: Finished) {
-        let hook = unpoisoned(&self.hook).clone();
-        if let Some(hook) = hook
-            && !hook(files)
-        {
+        let Some(hook) = unpoisoned(&self.hook).clone() else {
+            return;
+        };
+        let mut handed = unpoisoned(&self.handed);
+        let folders = files.len();
+        if folders <= *handed {
+            return;
+        }
+        if hook(files) {
+            *handed = folders;
+        } else {
             self.retry_soon(Instant::now());
         }
     }
@@ -1186,6 +1198,29 @@ mod tests {
         assert!(
             partial.due_at(start + Duration::from_secs(4)),
             "two seconds on, not the four the doubling would have asked"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_taken_before_one_already_handed_over_is_dropped() {
+        let partial = Partial::default();
+        let handed: Arc<Mutex<Vec<usize>>> = Arc::default();
+        let recorded = handed.clone();
+        partial.arm(
+            Arc::new(move |finished| {
+                recorded.lock().expect("the record").push(finished.len());
+                true
+            }),
+            Duration::ZERO,
+        );
+        let folder = || Arc::new((Vec::new(), Vec::new()));
+
+        partial.publish(vec![(0, folder()), (1, folder())]);
+        partial.publish(vec![(0, folder())]);
+        assert_eq!(
+            *handed.lock().expect("the record"),
+            vec![2],
+            "a reader that lost the race to the hook would publish a library smaller than the last"
         );
     }
     use super::*;
