@@ -92,7 +92,9 @@ const PAGE: &str = include_str!("../../assets/web/index.html");
 /// because building the index from a store carries refusals a pass has since answered for.
 fn refusals_now(control: &Control, library: &crate::index::Library) -> Refusals {
     let Some(last) = control.passes.last() else {
-        return library.refusals().clone();
+        let mut refusals = library.refusals().clone();
+        refusals.absorb(library.stored_refusals().clone());
+        return refusals;
     };
     let mut refusals = last.refusals.clone();
     refusals.absorb(library.refusals().clone());

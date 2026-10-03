@@ -7,6 +7,7 @@ use std::sync::atomic::Ordering::Relaxed;
 
 use crate::index::artwork::{self, Artwork, Source};
 use crate::index::playlist;
+use crate::index::refusals::{Cause, Refusals};
 use crate::index::roots::Roots;
 use crate::index::scan::{Fingerprint, Found, Scanned, Scope};
 use crate::tags::{AudioProperties, FileTags};
@@ -74,6 +75,21 @@ impl Cache {
         }
         let row = self.refused.get(relative)?;
         row.answers_for(fingerprint).then_some(row.payload.as_str())
+    }
+
+    /// Every file a pass refused, as the next pass would refuse it again.
+    pub fn refusals(&self) -> Refusals {
+        let mut refused: Vec<(&PathBuf, &Row<String>)> = self.refused.iter().collect();
+        refused.sort_by_key(|(relative, _)| *relative);
+        let mut refusals = Refusals::default();
+        for (relative, row) in refused {
+            refusals.refuse(
+                Cause::UnreadableFile,
+                crate::index::fold::path(relative),
+                Some(row.payload.clone()),
+            );
+        }
+        refusals
     }
 
     pub(super) fn agrees_on_refused(

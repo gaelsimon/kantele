@@ -287,6 +287,7 @@ pub fn remembered(indexing: &Indexing, store: &mut Option<Store>) -> Option<Libr
     let rows = files.len();
     let playlists = cache.remembered_playlists();
     let held = store.as_ref()?.claims().unwrap_or_default();
+    let refused = cache.refusals();
     if let Some(store) = store.as_mut() {
         store.hold(cache);
     }
@@ -297,6 +298,7 @@ pub fn remembered(indexing: &Indexing, store: &mut Option<Store>) -> Option<Libr
         &indexing.menus.ignored(),
         &held,
     );
+    library.keep_stored_refusals(refused);
     drop(files);
     if let Some(store) = store.as_mut()
         && let Err(error) = store.stamp_dates_added(&mut library, now())

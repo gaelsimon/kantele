@@ -197,8 +197,12 @@ fn the_two_halves_of_the_record_never_hold_the_same_refusal() {
 }
 
 fn serving(tree: &Tree, pass: Option<service::PassReport>) -> Server {
+    serving_library(scanned(tree), pass)
+}
+
+fn serving_library(library: Library, pass: Option<service::PassReport>) -> Server {
     let server = Server::new(
-        scanned(tree),
+        library,
         kantele::browse::Settings::default(),
         DeviceIdentity {
             friendly_name: "Kantele Test".to_owned(),
@@ -754,5 +758,32 @@ fn a_link_out_of_the_music_folder_is_refused_and_named() {
             .as_deref()
             .is_some_and(|why| why.contains("Private"))),
         "a refusal says where the link pointed: {held:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_file_the_store_refused_is_counted_from_the_start_and_once_after_a_pass() {
+    let tree = Tree::new("refused-before-a-pass");
+    tree.album("Kremerata", &["01.wav"], false);
+    tree.text("Kremerata/02.wav", "this is not audio");
+    let mut store = Some(Store::in_memory().expect("a store"));
+    let indexing = Indexing::of(&tree.0);
+    service::index(&indexing, &mut store, Pass::Whole).expect("a first pass");
+
+    let remembered = service::remembered(&indexing, &mut store).expect("the store answers");
+    let server = serving_library(remembered, None);
+    let status = body_of(ask(&server, get("/api/status")).await).await;
+    assert!(
+        status.contains("refused.unreadable-file.total = 1\n"),
+        "the store knows the file would not read before any pass walks: {status}"
+    );
+
+    let agreed = service::index(&indexing, &mut store, Pass::Whole).expect("a second pass");
+    assert!(!agreed.changed, "the pass agrees with the index served");
+    server.passes.record(agreed.pass);
+    let status = body_of(ask(&server, get("/api/status")).await).await;
+    assert!(
+        status.contains("refused.unreadable-file.total = 1\n"),
+        "and once a pass has said so, it is not counted twice: {status}"
     );
 }
