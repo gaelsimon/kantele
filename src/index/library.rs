@@ -194,6 +194,8 @@ pub struct Artist {
 pub struct Library {
     searchable: Searchables,
     refusals: Refusals,
+    /// What the store said a pass refused, which stands until a pass says it again.
+    stored_refusals: Refusals,
     name: String,
     tracks: Vec<Track>,
     albums: Vec<Album>,
@@ -365,6 +367,14 @@ impl Library {
 
     pub fn refusals(&self) -> &Refusals {
         &self.refusals
+    }
+
+    pub fn stored_refusals(&self) -> &Refusals {
+        &self.stored_refusals
+    }
+
+    pub fn keep_stored_refusals(&mut self, refusals: Refusals) {
+        self.stored_refusals = refusals;
     }
 
     fn index_identifiers(&mut self) {

@@ -7,6 +7,7 @@ use std::sync::atomic::Ordering::Relaxed;
 
 use crate::index::artwork::{self, Artwork, Source};
 use crate::index::playlist;
+use crate::index::refusals::{Cause, Refusals};
 use crate::index::roots::Roots;
 use crate::index::scan::{Fingerprint, Found, Scanned, Scope};
 use crate::tags::{AudioProperties, FileTags};
@@ -17,7 +18,8 @@ use super::payload::{Image, Payload, digest};
 pub struct Cache {
     pub(super) roots: Roots,
     pub(super) files: HashMap<PathBuf, Row<Payload>>,
-    pub(super) covers: HashMap<PathBuf, Row<Image>>,
+    /// None for a folder image no file took, kept so a look at the tree knows it.
+    pub(super) covers: HashMap<PathBuf, Row<Option<Image>>>,
     pub(super) playlists: HashMap<PathBuf, Row<playlist::Contents>>,
     pub(super) refused: HashMap<PathBuf, Row<String>>,
     pub(super) hits: AtomicUsize,
@@ -73,6 +75,21 @@ impl Cache {
         }
         let row = self.refused.get(relative)?;
         row.answers_for(fingerprint).then_some(row.payload.as_str())
+    }
+
+    /// Every file a pass refused, as the next pass would refuse it again.
+    pub fn refusals(&self) -> Refusals {
+        let mut refused: Vec<(&PathBuf, &Row<String>)> = self.refused.iter().collect();
+        refused.sort_by_key(|(relative, _)| *relative);
+        let mut refusals = Refusals::default();
+        for (relative, row) in refused {
+            refusals.refuse(
+                Cause::UnreadableFile,
+                crate::index::fold::path(relative),
+                Some(row.payload.clone()),
+            );
+        }
+        refusals
     }
 
     pub(super) fn agrees_on_refused(
@@ -205,10 +222,11 @@ impl Cache {
         if !row.answers_for(image.fingerprint) {
             return None;
         }
+        let described = row.payload.as_ref()?;
         Some(Artwork {
             source: Source::File(image.path.clone()),
-            mime: artwork::image_mime_named(&row.payload.mime)?,
-            dimensions: row.payload.dimensions,
+            mime: artwork::image_mime_named(&described.mime)?,
+            dimensions: described.dimensions,
         })
     }
 }
