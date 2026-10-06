@@ -37,7 +37,7 @@ export function trailUnder(root: string, path: string): string[] {
   if (!path.startsWith(`${root}/`)) return [];
   const parts = path.slice(root.length + 1).split('/').filter(Boolean);
   const trail = [root];
-  for (const part of parts.slice(0, -1)) trail.push(`${trail[trail.length - 1]}/${part}`);
+  for (const part of parts.slice(0, -1)) trail.push(`${trail.at(-1)}/${part}`);
   return trail;
 }
 

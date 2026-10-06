@@ -109,13 +109,10 @@ export type FolderRow = {
   issues: Issue[];
 };
 
-/// What the tree can be narrowed to, one box each.
-/// A check's name as `only=` takes it. The server declares them, so the page knows none by heart.
-export type Flag = string;
-
 /// One check the tree can be narrowed to, as the server declares it.
 export type Declared = {
-  flag: Flag;
+  /// A check's name as `only=` takes it. The server declares them, so the page knows none by heart.
+  flag: string;
   /// Where the fix is made: `files` in a file manager or a playlist, `tags` in a tagger.
   group: string;
   label: string;
@@ -181,11 +178,17 @@ export async function getLog(lines = 200): Promise<LogTail> {
   return ask(`/api/log?lines=${lines}`);
 }
 
+/// `path` with its query, or alone where nothing is asked.
+function withQuery(path: string, asked: URLSearchParams): string {
+  const query = asked.toString();
+  return query ? `${path}?${query}` : path;
+}
+
 /// The body, or the server's own words as the error, which are written to be read.
 async function ask<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
-    headers: { Accept: 'application/json', ...(init?.headers ?? {}) },
+    headers: { Accept: 'application/json', ...init?.headers },
   });
   const text = await response.text();
   if (!response.ok) {
@@ -265,12 +268,11 @@ export type TrackDetail = {
 export const getStatus = () => ask<Status>('/api/status');
 export const getProgress = () => ask<Progress>('/api/progress');
 export const getConfiguration = () => ask<Configuration>('/api/config');
-export function getFiles(folder: string, only: Flag[] = []) {
+export function getFiles(folder: string, only: string[] = []) {
   const asked = new URLSearchParams();
   if (folder) asked.set('folder', folder);
   if (only.length > 0) asked.set('only', only.join(','));
-  const query = asked.toString();
-  return ask<FolderFiles>(`/api/files${query ? `?${query}` : ''}`);
+  return ask<FolderFiles>(withQuery('/api/files', asked));
 }
 
 export const getFlags = () => ask<Declared[]>('/api/flags');
@@ -278,17 +280,19 @@ export const getFlags = () => ask<Declared[]>('/api/flags');
 export const getTrack = (path: string) =>
   ask<TrackDetail>(`/api/track?path=${encodeURIComponent(path)}`);
 
-export const getMenu = (at = '') =>
-  ask<Menu>(`/api/menu${at ? `?at=${encodeURIComponent(at)}` : ''}`);
+export function getMenu(at = '') {
+  const asked = new URLSearchParams();
+  if (at) asked.set('at', at);
+  return ask<Menu>(withQuery('/api/menu', asked));
+}
 
-export function getFolders(under: string, search: string, changed: boolean, only: Flag[] = []) {
+export function getFolders(under: string, search: string, changed: boolean, only: string[] = []) {
   const asked = new URLSearchParams();
   if (under) asked.set('under', under);
   if (search) asked.set('q', search);
   if (changed) asked.set('changed', 'true');
   if (only.length > 0) asked.set('only', only.join(','));
-  const query = asked.toString();
-  return ask<FolderListing>(`/api/folders${query ? `?${query}` : ''}`);
+  return ask<FolderListing>(withQuery('/api/folders', asked));
 }
 
 export function getProblems(folder: string, cause: string) {
@@ -301,8 +305,7 @@ export function getShares(under: string, images: boolean) {
   const asked = new URLSearchParams();
   if (under) asked.set('under', under);
   if (images) asked.set('images', 'true');
-  const query = asked.toString();
-  return ask<Shares>(`/api/shares${query ? `?${query}` : ''}`);
+  return ask<Shares>(withQuery('/api/shares', asked));
 }
 
 export function writeConfiguration(changes: Record<string, unknown>) {

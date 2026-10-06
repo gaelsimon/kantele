@@ -10,5 +10,5 @@ export type Selection =
 /// The last part of a path, which is what a heading shows. The whole path is the crumb above it.
 export function leaf(path: string): string {
   const parts = path.split('/').filter((part) => part.length > 0);
-  return parts[parts.length - 1] ?? path;
+  return parts.at(-1) ?? path;
 }

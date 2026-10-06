@@ -14,7 +14,7 @@ export class Walk<T> {
   waiting = $state<string[]>([]);
   /// The latest read asked for per folder, so an answer that arrives late is dropped.
   #asked: Record<string, number> = {};
-  #fill: Fill<T>;
+  readonly #fill: Fill<T>;
 
   constructor(fill: Fill<T>) {
     this.#fill = fill;
@@ -76,7 +76,7 @@ export class Walk<T> {
     const kept: string[] = [];
     for (const path of trail) {
       if (!this.entries(kept.at(-1) ?? '').some((entry) => entry.path === path)) break;
-      await this.read(path);
+      await this.read(path); // NOSONAR: a column is read after the one holding it, which says whether it is still there
       kept.push(path);
     }
     // A folder opened while this read is newer than the trail it started from.
@@ -94,9 +94,7 @@ export class Walk<T> {
     );
     if (!under) return;
     const wanted = trailUnder(under.path, start);
-    for (const path of wanted) {
-      if (!this.levels[path]) await this.read(path);
-    }
+    await Promise.all(wanted.filter((path) => !this.levels[path]).map((path) => this.read(path)));
     this.trail = wanted;
   }
 }

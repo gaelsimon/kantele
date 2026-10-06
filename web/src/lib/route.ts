@@ -1,6 +1,5 @@
 // Where the page is, as an address: the tab, the folder or file shown, and the checks ticked.
 
-import type { Flag } from './api';
 
 /// Where the server serves the page. Everything under it answers with the same page.
 export const BASE = '/config';
@@ -12,7 +11,7 @@ export type Route = {
   tab: Tab | null;
   /// A path relative to the music folder, empty for the library itself.
   path: string;
-  only: Flag[];
+  only: string[];
 };
 
 export function parse(pathname: string, search: string): Route {
@@ -30,7 +29,7 @@ export function parse(pathname: string, search: string): Route {
   return { tab, path, only: tab === 'library' ? only : [] };
 }
 
-export function href(route: { tab: Tab; path?: string; only?: Flag[] }): string {
+export function href(route: { tab: Tab; path?: string; only?: string[] }): string {
   const path = (route.path ?? '').split('/').filter(Boolean).map(encodeURIComponent);
   const at = [BASE, route.tab, ...(route.tab === 'library' ? path : [])].join('/');
   const only = route.tab === 'library' && route.only?.length ? `?only=${route.only.join(',')}` : '';
