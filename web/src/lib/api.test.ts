@@ -27,17 +27,16 @@ beforeEach(() => answering({}));
 afterEach(() => vi.unstubAllGlobals());
 
 describe('asking for a folder listing', () => {
-  it('asks for the top of the library with no query at all', async () => {
+  it.each([
+    ['', '/api/folders'],
+    ['Blue Note', '/api/folders?under=Blue+Note'],
+    ['Rock & Roll/AC?DC', '/api/folders?under=Rock+%26+Roll%2FAC%3FDC'],
+  ])('asks for the folder %j as %s, escaped and with no empty query', async (folder, path) => {
     const fetch = answering({});
-    await getFolders('', '', false);
-    expect(asked(fetch)).toBe('/api/folders');
+    await getFolders(folder, '', false);
+    expect(asked(fetch)).toBe(path);
   });
 
-  it('names the folder it is opening', async () => {
-    const fetch = answering({});
-    await getFolders('Blue Note', '', false);
-    expect(asked(fetch)).toBe('/api/folders?under=Blue+Note');
-  });
 
   it('carries the search and the changed filter', async () => {
     const fetch = answering({});
@@ -62,12 +61,6 @@ describe('asking for a folder listing', () => {
     const fetch = answering({});
     await getFiles('Blue Note', ['no-artist']);
     expect(asked(fetch)).toBe('/api/files?folder=Blue+Note&only=no-artist');
-  });
-
-  it('escapes a folder name that would break the query', async () => {
-    const fetch = answering({});
-    await getFolders('Rock & Roll/AC?DC', '', false);
-    expect(asked(fetch)).toBe('/api/folders?under=Rock+%26+Roll%2FAC%3FDC');
   });
 });
 

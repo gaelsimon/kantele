@@ -111,7 +111,7 @@ pub fn preferred_cover(entries: &[PathBuf]) -> Option<PathBuf> {
         for path in &entries {
             let matches = path
                 .file_name()
-                .and_then(|name| name.to_str())
+                .and_then(std::ffi::OsStr::to_str)
                 .is_some_and(|name| name.eq_ignore_ascii_case(wanted));
             if matches {
                 return Some((*path).clone());
@@ -126,7 +126,7 @@ pub fn preferred_cover(entries: &[PathBuf]) -> Option<PathBuf> {
 
 /// Whole words: `disc` is inside `disco`.
 fn says_front(path: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+    let Some(name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
         return false;
     };
     let lowered = name.to_ascii_lowercase();

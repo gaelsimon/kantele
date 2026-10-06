@@ -117,7 +117,7 @@ fn volumes() -> Vec<PathBuf> {
 
 fn is_volume(path: &Path) -> bool {
     path.file_name()
-        .and_then(|name| name.to_str())
+        .and_then(std::ffi::OsStr::to_str)
         .and_then(|name| name.strip_prefix("volume"))
         .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|digit| digit.is_ascii_digit()))
 }
@@ -166,7 +166,7 @@ fn read(under: &Path, images: bool) -> std::io::Result<Vec<Entry>> {
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(under)?.filter_map(Result::ok) {
         let path = entry.path();
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        let Some(name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
             continue;
         };
         if crate::index::is_skipped(name) {

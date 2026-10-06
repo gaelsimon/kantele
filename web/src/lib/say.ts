@@ -57,7 +57,7 @@ export function clock(epochSeconds: number): string {
 /// A list in prose: "a, b and c".
 export function listed(parts: string[]): string {
   if (parts.length <= 1) return parts[0] ?? '';
-  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
 }
 
 /// A file's size as a file browser writes it: one decimal below ten, none above.

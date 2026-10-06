@@ -438,51 +438,71 @@ impl Position {
         for part in parts {
             let mut characters = part.chars();
             let code = characters.next()?;
-            let value: String = characters.collect();
-            let hex = value.len() == DIGEST && value.chars().all(|c| c.is_ascii_hexdigit());
-            if position.shown.is_some() {
-                return None;
-            }
-            if let Some(shown) = Shown::from_code(code) {
-                if !value.is_empty() || position.chosen.is_empty() || position.listing.is_some() {
-                    return None;
-                }
-                position.shown = Some(shown);
-                continue;
-            }
-            if code == GROUP {
-                // The index and its letters both live inside a listing.
-                if position.listing.is_none() || position.grouped.is_some() {
-                    return None;
-                }
-                position.grouped = match value.chars().collect::<Vec<char>>()[..] {
-                    [] => Some(Grouped::Index),
-                    [letter] if group_key(letter) => Some(Grouped::Letter(letter)),
-                    _ => return None,
-                };
-                continue;
-            }
-            if position.listing.is_some() {
-                return None;
-            }
-            if code == SCOPE {
-                if !hex || position.scope.is_some() || !position.chosen.is_empty() {
-                    return None;
-                }
-                position.scope = Some(value);
-                continue;
-            }
-            let facet = Facet::from_code(code)?;
-            let in_order = position.chosen.last().is_none_or(|(last, _)| *last < facet);
-            if value.is_empty() {
-                position.listing = Some(facet);
-            } else if hex && in_order {
-                position.chosen.push((facet, value));
-            } else {
-                return None;
-            }
+            position.take(code, characters.collect())?;
         }
         Some(position)
+    }
+
+    /// Nothing where the part cannot follow the ones before it.
+    fn take(&mut self, code: char, value: String) -> Option<()> {
+        if self.shown.is_some() {
+            return None;
+        }
+        if let Some(shown) = Shown::from_code(code) {
+            return self.take_shown(shown, &value);
+        }
+        if code == GROUP {
+            return self.take_group(&value);
+        }
+        if self.listing.is_some() {
+            return None;
+        }
+        let hex = value.len() == DIGEST && value.chars().all(|c| c.is_ascii_hexdigit());
+        if code == SCOPE {
+            return self.take_scope(value, hex);
+        }
+        self.take_facet(Facet::from_code(code)?, value, hex)
+    }
+
+    fn take_shown(&mut self, shown: Shown, value: &str) -> Option<()> {
+        if !value.is_empty() || self.chosen.is_empty() || self.listing.is_some() {
+            return None;
+        }
+        self.shown = Some(shown);
+        Some(())
+    }
+
+    /// The index and its letters both live inside a listing.
+    fn take_group(&mut self, value: &str) -> Option<()> {
+        if self.listing.is_none() || self.grouped.is_some() {
+            return None;
+        }
+        self.grouped = match value.chars().collect::<Vec<char>>()[..] {
+            [] => Some(Grouped::Index),
+            [letter] if group_key(letter) => Some(Grouped::Letter(letter)),
+            _ => return None,
+        };
+        Some(())
+    }
+
+    fn take_scope(&mut self, value: String, hex: bool) -> Option<()> {
+        if !hex || self.scope.is_some() || !self.chosen.is_empty() {
+            return None;
+        }
+        self.scope = Some(value);
+        Some(())
+    }
+
+    fn take_facet(&mut self, facet: Facet, value: String, hex: bool) -> Option<()> {
+        let in_order = self.chosen.last().is_none_or(|(last, _)| *last < facet);
+        if value.is_empty() {
+            self.listing = Some(facet);
+        } else if hex && in_order {
+            self.chosen.push((facet, value));
+        } else {
+            return None;
+        }
+        Some(())
     }
 
     /// The same choices with one more made.

@@ -35,7 +35,7 @@ pub enum Cause {
 }
 
 impl Cause {
-    pub const ALL: &'static [Self] = &[
+    pub const ALL: &[Self] = &[
         Self::UnreadableFolder,
         Self::UnreadableFile,
         Self::UnreadablePlaylist,

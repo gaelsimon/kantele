@@ -61,7 +61,7 @@ impl Sink {
         let mut held = self
             .0
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Held::Pending(early) = &*held {
             rolling.write_all(early)?;
         }
@@ -74,7 +74,7 @@ impl Sink {
         let mut held = self
             .0
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *held = Held::Off;
     }
 
@@ -82,7 +82,7 @@ impl Sink {
         let mut held = self
             .0
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match &mut *held {
             Held::Pending(early) => {
                 early.extend_from_slice(buf);

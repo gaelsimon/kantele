@@ -9,7 +9,6 @@
     type Configuration,
     type Declared,
     type FolderAlbum,
-    type Flag,
     type FolderRow,
     type Status,
   } from './api';
@@ -40,7 +39,7 @@
   let changedFirst = $state(false);
   /// Where the address says to open, read once: from then on the page writes the address.
   const arrived = parse(location.pathname, location.search);
-  let ticked = $state<Flag[]>(arrived.only);
+  let ticked = $state<string[]>(arrived.only);
   let asking = $state(false);
   let said = $state('');
   /// What the detail pane is showing. One at a time.
@@ -205,7 +204,7 @@
   const every = $derived(declared.map((one) => one.flag));
 
   /// Kept in the order of the boxes, so the same boxes ask the server the same question.
-  function tick(flags: Flag[], on: boolean) {
+  function tick(flags: string[], on: boolean) {
     ticked = every.filter((one) => (flags.includes(one) ? on : ticked.includes(one)));
   }
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Declared, Flag } from './api';
+  import type { Declared } from './api';
 
   let {
     name,
@@ -13,8 +13,8 @@
     glyph: string;
     warn?: boolean;
     boxes: Declared[];
-    ticked: Flag[];
-    ontick: (flags: Flag[], on: boolean) => void;
+    ticked: string[];
+    ontick: (flags: string[], on: boolean) => void;
   } = $props();
 
   let open = $state(false);
