@@ -158,7 +158,7 @@ fn matters(path: &Path, kind: &EventKind, roots: &Roots, exclude: &scan::Exclusi
     }
     let name = path
         .file_name()
-        .and_then(|name| name.to_str())
+        .and_then(std::ffi::OsStr::to_str)
         .unwrap_or_default();
     scan::mime_for(path).is_some()
         || scan::is_image(name)

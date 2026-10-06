@@ -21,7 +21,7 @@ pub enum ObjectIdError {
 
 impl ObjectId {
     /// The specification fixes the root container as `0`.
-    pub const ROOT: &'static str = "0";
+    pub const ROOT: &str = "0";
 
     pub fn new(value: impl Into<String>) -> Result<Self, ObjectIdError> {
         let value = value.into();

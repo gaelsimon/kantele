@@ -622,7 +622,7 @@ fn grouping_scope(relative: &Path, tags: &FileTags) -> (String, Option<u32>) {
     };
     let name = folder
         .file_name()
-        .and_then(|name| name.to_str())
+        .and_then(std::ffi::OsStr::to_str)
         .unwrap_or_default();
     if let Some(disc) = folder_disc(name) {
         return (above(), Some(disc));

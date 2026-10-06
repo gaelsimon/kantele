@@ -250,7 +250,7 @@ fn holding_folder(relative: &str) -> Option<&str> {
 
 fn is_pls(path: &Path) -> bool {
     path.extension()
-        .and_then(|extension| extension.to_str())
+        .and_then(std::ffi::OsStr::to_str)
         .is_some_and(|extension| extension.eq_ignore_ascii_case("pls"))
 }
 

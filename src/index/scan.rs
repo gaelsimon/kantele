@@ -498,7 +498,7 @@ impl Scope {
     pub fn of(changed: impl IntoIterator<Item = PathBuf>) -> Self {
         let mut regions: Vec<Region> = Vec::new();
         for path in changed {
-            let region = match path.file_name().and_then(|name| name.to_str()) {
+            let region = match path.file_name().and_then(std::ffi::OsStr::to_str) {
                 Some(name) if mime_for(&path).is_some() || is_image(name) || is_playlist(name) => {
                     Region::Folder(path.parent().unwrap_or(Path::new("")).to_path_buf())
                 }
@@ -714,7 +714,7 @@ impl Walk {
                 }
             };
             let path = entry.path();
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            let Some(name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
                 self.unnamed(roots, &path);
                 continue;
             };

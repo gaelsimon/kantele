@@ -63,35 +63,26 @@ pub(super) fn indexed_matches<'a>(
     let searchable = library.searchable();
     for kind in kinds {
         match kind {
-            Kind::Albums => {
-                for (at, album) in library.albums().iter().enumerate() {
-                    if criteria.matches(&searchable.albums.object(at)) {
-                        matched.keep(|| album_child(album, &menus.albums));
-                    }
-                }
-            }
-            Kind::Artists => {
-                for (at, artist) in library.artists().iter().enumerate() {
-                    if criteria.matches(&searchable.artists.object(at)) {
-                        matched.keep(|| artist_child(artist, &menus.artists));
-                    }
-                }
-            }
-            Kind::Tracks => {
-                for (at, track) in library.tracks().iter().enumerate() {
-                    if criteria.matches(&searchable.tracks.object(at)) {
-                        matched
-                            .keep(|| didl::Child::item(track, track_parent(library, menus, track)));
-                    }
-                }
-            }
-            Kind::Playlists => {
-                for (at, playlist) in library.playlists().iter().enumerate() {
-                    if criteria.matches(&searchable.playlists.object(at)) {
-                        matched.keep(|| playlist_child(playlist, &menus.playlists));
-                    }
-                }
-            }
+            Kind::Albums => matched.keep_matching(
+                library.albums(),
+                |at| criteria.matches(&searchable.albums.object(at)),
+                |album| album_child(album, &menus.albums),
+            ),
+            Kind::Artists => matched.keep_matching(
+                library.artists(),
+                |at| criteria.matches(&searchable.artists.object(at)),
+                |artist| artist_child(artist, &menus.artists),
+            ),
+            Kind::Tracks => matched.keep_matching(
+                library.tracks(),
+                |at| criteria.matches(&searchable.tracks.object(at)),
+                |track| didl::Child::item(track, track_parent(library, menus, track)),
+            ),
+            Kind::Playlists => matched.keep_matching(
+                library.playlists(),
+                |at| criteria.matches(&searchable.playlists.object(at)),
+                |playlist| playlist_child(playlist, &menus.playlists),
+            ),
             Kind::Genres => {
                 for genre in genres(library, view, menus) {
                     if criteria.matches(&folded(&genre)) {
@@ -144,6 +135,20 @@ impl<'a> Matched<'a> {
             self.page.push(child());
         }
         self.total += 1;
+    }
+
+    /// `matches` is asked by position, which is how the searchable fields are held.
+    fn keep_matching<T>(
+        &mut self,
+        items: &'a [T],
+        matches: impl Fn(usize) -> bool,
+        child: impl Fn(&'a T) -> didl::Child<'a>,
+    ) {
+        for (at, item) in items.iter().enumerate() {
+            if matches(at) {
+                self.keep(|| child(item));
+            }
+        }
     }
 
     fn listing(self) -> Listing<'a> {
