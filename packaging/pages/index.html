@@ -1,118 +1,123 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kantele</title>
-<meta name="description" content="A UPnP/DLNA music server for amplifiers and streamers.">
-<style>
-  :root {
-    --text: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    --mono: ui-monospace, Menlo, Consolas, 'DejaVu Sans Mono', monospace;
-    --paper: #f4f3ef;
-    --surface: #ffffff;
-    --ink: #2a2e33;
-    --ink-soft: #4b5563;
-    --muted: #6b7280;
-    --hairline: #e5e2da;
-    --edge: #c9c5bc;
-    --link: #1f4b99;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --paper: #1b1d20;
-      --surface: #24272b;
-      --ink: #e8e6e1;
-      --ink-soft: #c3c7cd;
-      --muted: #9ca3af;
-      --hairline: #34383d;
-      --edge: #44484e;
-      --link: #8ab4f8;
-    }
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    padding: 48px 20px 64px;
-    background: var(--paper);
-    color: var(--ink);
-    font: 16px/1.6 var(--text);
-  }
-  main { max-width: 42rem; margin: 0 auto; }
-  h1 { font-size: 2rem; margin: 0 0 .25rem; letter-spacing: -0.01em; }
-  h2 { font-size: 1.05rem; margin: 2.5rem 0 .6rem; }
-  p { margin: 0 0 1rem; color: var(--ink-soft); }
-  .lead { font-size: 1.1rem; color: var(--ink); }
-  a { color: var(--link); }
-  code, pre { font-family: var(--mono); font-size: .9rem; }
-  pre {
-    background: var(--surface);
-    border: 1px solid var(--hairline);
-    border-radius: 8px;
-    padding: 12px 14px;
-    margin: 0 0 1rem;
-    overflow-x: auto;
-  }
-  .source { border-color: var(--edge); }
-  dl { margin: 0; }
-  dt { font-weight: 600; margin-top: 1rem; }
-  dd { margin: .2rem 0 0; color: var(--ink-soft); }
-  ul { margin: 0 0 1rem; padding-left: 1.1rem; color: var(--ink-soft); }
-  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--hairline); color: var(--muted); font-size: .9rem; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kantele</title>
+  <meta name="description" content="A UPnP/DLNA music server for amplifiers, streamers and phones. Free and open source.">
+  <link rel="icon" href="kantele.png">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<main>
-  <h1>Kantele</h1>
-  <p class="lead">A music server for your amplifier, streamer or phone. Point it at your music
-  folder, and every UPnP/DLNA player on your network can browse it by album, artist, genre,
-  composer or year, search it, and play it.</p>
+  <div class="wrap">
+    <header class="site">
+      <a class="brand" href="./"><img src="kantele.png" alt="">Kantele</a>
+      <nav>
+        <a href="#install">Install</a>
+        <a href="#documentation">Documentation</a>
+        <a href="https://github.com/gaelsimon/kantele">GitHub</a>
+      </nav>
+    </header>
+  </div>
 
-  <h2>Synology</h2>
-  <p>In Package Center, open Settings, then Package Sources, then Add, and give it this address:</p>
-  <pre class="source">https://gaelsimon.github.io/kantele/index.json</pre>
-  <p>Kantele then appears in Package Center, and every later version arrives there as an update.
-  One package runs on every model. Nothing is signed, so the trust level has to allow any
-  publisher.</p>
+  <main class="wrap narrow doc">
+    <h1>Kantele</h1>
+    <p class="lead">A music server for your amplifier, streamer or phone. Point it at your music folder, and every UPnP/DLNA player on your network can browse it by album, artist, genre, composer or year, search it, and play it.</p>
+    <p>It runs on a Synology NAS, a Mac or a Linux machine. It is free and open source, and it makes no request to the internet.</p>
 
-  <h2>macOS and Linux</h2>
-  <p>Take the archive for your machine from the
-  <a href="https://github.com/gaelsimon/kantele/releases/latest">latest release</a> and run the
-  installer inside it. On macOS it installs a launch agent, on Linux a systemd service.</p>
+    <figure>
+      <img class="shot" src="images/library.jpg" data-full="images/library@2x.jpg" alt="The Library tab: the music folder as columns, with the album a folder holds" width="1440" height="900">
+      <figcaption>The page that comes with it shows each folder as your players will list it, and which files need fixing.</figcaption>
+    </figure>
 
-  <h2>Then</h2>
-  <p>Open <code>http://localhost:8200/config</code>, choose a music folder, and the amplifier finds
-  the server on its own. <a href="https://github.com/gaelsimon/kantele/blob/main/docs/getting-started.md">Getting
-  started</a> walks through it, and says what to expect while the library is read.</p>
+    <h2>What it does</h2>
+    <ul>
+      <li><strong>Albums as you tagged them.</strong> One album per folder, the discs of one album joined when the tags or the folder names say so, and compilations kept together under Compilations rather than under an artist called Various Artists.</li>
+      <li><strong>Menus that narrow.</strong> Open a genre and you are offered its artists, then their albums. A menu that would not narrow anything is left out.</li>
+      <li><strong>Long lists you can jump through.</strong> An A–Z entry at the top of a long list, Recently added, your playlists, a folder view, and the search box of your player.</li>
+      <li><strong>Files sent as they are.</strong> FLAC, ALAC and AAC, MP3, Ogg Vorbis and Opus, WAV, AIFF, WavPack, Monkey's Audio, and DSD in DSF and DFF. Nothing is converted.</li>
+      <li><strong>New music appears on its own.</strong> Add an album to the folder and your players find it, without a rescan.</li>
+      <li><strong>A library you can check.</strong> The page lists the files with no artist, album, genre or cover, the duplicate tracks, and the playlist entries that point nowhere.</li>
+    </ul>
 
-  <h2>Reading</h2>
-  <dl>
-    <dt><a href="https://github.com/gaelsimon/kantele#readme">Readme</a></dt>
-    <dd>What it does, and how to install it.</dd>
-    <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/getting-started.md">Getting started</a></dt>
-    <dd>Install, choose the folder, find the server on your player.</dd>
-    <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/on-your-player.md">Your library on your player</a></dt>
-    <dd>What each menu holds and how the menus narrow.</dd>
-    <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/tagging.md">Tagging your music</a></dt>
-    <dd>Which tags make albums, artists, discs and covers.</dd>
-    <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/settings.md">Settings</a></dt>
-    <dd>What each setting on the page does.</dd>
-    <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/troubleshooting.md">Troubleshooting</a></dt>
-    <dd>No player finds it, the menus are empty, an album is split.</dd>
-    <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/players.md">Players</a></dt>
-    <dd>The players it is used with, and how to report yours.</dd>
-    <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/coming-from-minimserver.md">Coming from MinimServer</a></dt>
-    <dd>What is the same, what is different, what is missing.</dd>
-  </dl>
+    <h2 id="install">Install</h2>
+    <h3>Synology</h3>
+    <p>In Package Center, open Settings, then Package Sources, then Add, and give it this address:</p>
+    <pre>https://gaelsimon.github.io/kantele/index.json</pre>
+    <p>Kantele then appears in Package Center, and every later version arrives there as an update. One package runs on every model. Nothing is signed, so the trust level has to allow any publisher.</p>
 
-  <h2>What it does not do</h2>
-  <p>It does not transcode, play video, or reach a streaming service. There is no password on it,
-  so it belongs on a home network and not on the open internet. It asks nothing of the internet
-  either: no account, and no request of its own to anywhere.</p>
+    <h3>macOS and Linux</h3>
+    <p>Take the archive for your machine from the <a href="https://github.com/gaelsimon/kantele/releases/latest">latest release</a> and run the installer inside it. On macOS it installs a launch agent, on Linux a systemd service.</p>
 
-  <footer>
-    <a href="https://github.com/gaelsimon/kantele">Source and issues on GitHub</a> · GPL-3.0
+    <h3>Then</h3>
+    <p>Open <code>http://&lt;your server&gt;:8200/config</code>, choose a music folder, and your player finds the server on its own. <a href="https://github.com/gaelsimon/kantele/blob/main/docs/getting-started.md">Getting started</a> walks through it, and says what to expect while the library is read.</p>
+
+    <figure>
+      <img class="shot" src="images/settings.jpg" data-full="images/settings@2x.jpg" alt="The Settings tab: the music folder, the menu sequence and a preview of the first screen" width="1440" height="900">
+      <figcaption>Settings: the music folder, and the menus your players show, with a preview of the first screen.</figcaption>
+    </figure>
+
+    <h2 id="documentation">Documentation</h2>
+    <dl>
+      <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/getting-started.md">Getting started</a></dt>
+      <dd>Install, choose the folder, find the server on your player.</dd>
+      <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/on-your-player.md">Your library on your player</a></dt>
+      <dd>What each menu holds and how the menus narrow.</dd>
+      <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/tagging.md">Tagging your music</a></dt>
+      <dd>Which tags make albums, artists, discs and covers.</dd>
+      <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/settings.md">Settings</a></dt>
+      <dd>What each setting on the page does.</dd>
+      <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/troubleshooting.md">Troubleshooting</a></dt>
+      <dd>No player finds it, the menus are empty, an album is split.</dd>
+      <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/players.md">Players</a></dt>
+      <dd>The players it is used with, and how to report yours.</dd>
+      <dt><a href="https://github.com/gaelsimon/kantele/blob/main/docs/coming-from-minimserver.md">Coming from MinimServer</a></dt>
+      <dd>Where things are, what is different, what is missing.</dd>
+    </dl>
+
+    <h2>What it does not do</h2>
+    <p>It does not transcode, play video, or reach a streaming service. There is no password on it, so it belongs on a home network and not on the open internet.</p>
+
+    <h2>Help</h2>
+    <p>If something doesn't work, or your player shows something odd, <a href="https://github.com/gaelsimon/kantele/issues/new">open an issue on GitHub</a> and say which player or amplifier you use.</p>
+  </main>
+
+  <footer class="site">
+    <div class="wrap">
+      <p>Kantele needs a UPnP/DLNA player on the same network as the machine it runs on.</p>
+      <p>Synology and DSM are trademarks of Synology Inc. Kantele is an independent project and is not affiliated with it.</p>
+      <p>© 2026 Gael Simon · <a href="https://github.com/gaelsimon/kantele">GitHub</a> · GPL-3.0</p>
+    </div>
   </footer>
-</main>
+  <div class="lightbox" id="lightbox" aria-hidden="true">
+    <button class="close" type="button" aria-label="Close">&times;</button>
+    <img src="" alt="">
+  </div>
+  <script>
+    const shots = Array.from(document.querySelectorAll('img.shot'));
+    const box = document.getElementById('lightbox');
+    const large = box.querySelector('img');
+    let current = -1;
+    function show(i) {
+      current = (i + shots.length) % shots.length;
+      large.src = shots[current].dataset.full || shots[current].src;
+      large.alt = shots[current].alt;
+      box.classList.add('open');
+      document.body.classList.add('lightbox-open');
+    }
+    function hide() {
+      box.classList.remove('open');
+      document.body.classList.remove('lightbox-open');
+      current = -1;
+    }
+    shots.forEach((shot, i) => shot.addEventListener('click', () => show(i)));
+    box.addEventListener('click', hide);
+    document.addEventListener('keydown', e => {
+      if (current < 0) return;
+      if (e.key === 'Escape') hide();
+      if (e.key === 'ArrowRight') show(current + 1);
+      if (e.key === 'ArrowLeft') show(current - 1);
+    });
+  </script>
 </body>
 </html>
