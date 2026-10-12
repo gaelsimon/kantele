@@ -24,12 +24,14 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
-.narrow { max-width: 720px; }
+.narrow { max-width: 768px; }
 
 header.site {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 24px;
   padding: 20px 0;
 }
 header.site .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 600; font-size: 18px; }
@@ -37,6 +39,7 @@ header.site .brand img { width: 32px; height: 32px; }
 header.site nav { display: flex; gap: 22px; font-size: 15px; }
 header.site nav a { color: var(--text-secondary); }
 header.site nav a:hover { color: var(--text); text-decoration: none; }
+@media (max-width: 480px) { header.site nav { gap: 16px; } }
 
 .shot {
   width: 100%;
@@ -47,7 +50,7 @@ header.site nav a:hover { color: var(--text); text-decoration: none; }
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
 }
 
-.doc { padding: 24px 0 72px; }
+.doc { padding-top: 24px; padding-bottom: 72px; }
 .doc h1 { font-size: 36px; letter-spacing: -0.01em; margin: 24px 0 8px; }
 .doc h2 { font-size: 21px; margin: 36px 0 8px; }
 .doc p, .doc li { color: var(--text-secondary); }
