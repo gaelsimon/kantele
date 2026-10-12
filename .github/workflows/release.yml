@@ -39,16 +39,8 @@ jobs:
             tar -czf "dist/kantele-${GITHUB_REF_NAME}-linux-${name}.tar.gz" -C dist kantele-linux
             rm -rf dist/kantele-linux
           done
-      - name: The catalogue a package source serves, read off the package itself
-        run: |
-          spk="$(ls dist/kantele-*.spk)"
-          mkdir -p pages
-          cp packaging/pages/index.html pages/index.html
-          tar -xOf "$spk" PACKAGE_ICON_256.PNG > pages/kantele.png
-          python3 tools/package-index.py "$spk" \
-            --link "${{ github.server_url }}/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/$(basename "$spk")" \
-            --thumbnail "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/kantele.png" \
-            --out pages/index.json
+      - name: The site and the catalogue a package source serves, read off the package itself
+        run: tools/package-pages.sh "$(ls dist/kantele-*.spk)" "$GITHUB_REF_NAME"
       - uses: actions/upload-artifact@v7
         with:
           name: synology
