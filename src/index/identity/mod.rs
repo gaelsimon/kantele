@@ -16,7 +16,7 @@ use crate::tags::FileTags;
 use discs::folder_disc;
 
 /// Bump whenever a rule below changes.
-pub const IDENTITY_VERSION: u16 = 4;
+pub const IDENTITY_VERSION: u16 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rule {
@@ -162,6 +162,7 @@ pub fn group_releases(files: &[FileFacts]) -> Grouping {
 pub fn group_releases_holding(files: &[FileFacts], held: &Claims) -> Grouping {
     let prepared: Vec<Option<Prepared>> = files.iter().map(prepare).collect();
     let mut folded = bucket_by_folder_and_title(&prepared);
+    part_siblings_by_artist(files, &prepared, &mut folded);
     let adopted = adopt_orphans(files, &prepared, &mut folded);
 
     let mut grouping = Grouping {
@@ -279,6 +280,75 @@ fn bucket_by_folder_and_title(prepared: &[Option<Prepared>]) -> Buckets {
             .push(index);
     }
     held
+}
+
+/// A scope widened to the folder above holds every album of that title beneath it, so two
+/// records of one name by two artists would meet there. The folders of such a bucket part ways
+/// by the artist each one names; a folder naming nobody stays with the first of them.
+fn part_siblings_by_artist(
+    files: &[FileFacts],
+    prepared: &[Option<Prepared>],
+    folded: &mut Buckets,
+) {
+    let mut order = Vec::with_capacity(folded.order.len());
+    for bucket in std::mem::take(&mut folded.order) {
+        let widened = folded.buckets[&bucket]
+            .iter()
+            .any(|index| prepared[*index].as_ref().is_some_and(|p| p.widened));
+        let parted = match widened {
+            true => by_artist(files, &folded.buckets[&bucket]),
+            false => Vec::new(),
+        };
+        if parted.len() < 2 {
+            order.push(bucket);
+            continue;
+        }
+        tracing::debug!(
+            folder = %bucket.0,
+            album = %bucket.1,
+            albums = parted.len(),
+            "the folders beside each other name different artists and are served as several albums"
+        );
+        folded.buckets.remove(&bucket);
+        for members in parted {
+            let folder = files[members[0]]
+                .relative_path
+                .parent()
+                .unwrap_or(Path::new(""));
+            let own = (folder.to_string_lossy().into_owned(), bucket.1.clone());
+            order.push(own.clone());
+            folded.buckets.insert(own, members);
+        }
+    }
+    folded.order = order;
+}
+
+/// The members grouped by the artist their folder names, in the order the folders were met.
+fn by_artist(files: &[FileFacts], members: &[usize]) -> Vec<Vec<usize>> {
+    let mut folders: Vec<(&Path, Vec<usize>)> = Vec::new();
+    for index in members {
+        let folder = files[*index]
+            .relative_path
+            .parent()
+            .unwrap_or(Path::new(""));
+        match folders.iter_mut().find(|(held, _)| *held == folder) {
+            Some((_, held)) => held.push(*index),
+            None => folders.push((folder, vec![*index])),
+        }
+    }
+    let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+    for (_, indices) in folders {
+        let artist = release_artist(files, &indices);
+        let at = groups
+            .iter()
+            .position(|(named, _)| artist.is_empty() || *named == artist)
+            .unwrap_or_else(|| {
+                groups.push((artist.clone(), Vec::new()));
+                groups.len() - 1
+            });
+        groups[at].1.extend(indices);
+    }
+    groups.into_iter().map(|(_, members)| members).collect()
 }
 
 fn adopt_orphans(
@@ -594,6 +664,8 @@ pub fn group_artists(mentions: &[ArtistMention]) -> Vec<ArtistGroup> {
 #[derive(Clone, Debug)]
 struct Prepared {
     scope: String,
+    /// Whether the scope is the folder above the file's own.
+    widened: bool,
     title: String,
     folded_title: String,
     disc: Option<u32>,
@@ -603,7 +675,9 @@ fn prepare(file: &FileFacts) -> Option<Prepared> {
     let album = clean(file.tags.album.as_deref())?;
     let (title, title_disc) = strip_disc_marker(album);
     let (scope, folder_disc) = grouping_scope(file.relative_path, file.tags);
+    let own = file.relative_path.parent().unwrap_or(Path::new(""));
     Some(Prepared {
+        widened: Path::new(&scope) != own,
         scope,
         folded_title: fold(&title),
         title: title.into_owned(),
@@ -963,6 +1037,61 @@ mod tests {
                 .iter()
                 .all(|release| release.rule == Rule::Strings)
         );
+    }
+
+    /// A disc count widens the folder an album is looked for in to the one above, where a
+    /// neighbour of the same title by somebody else may sit.
+    #[test]
+    fn multi_disc_albums_of_one_title_by_two_artists_under_one_folder_stay_two_albums() {
+        let mut elton = tags("Gold", "Your Song", 1);
+        elton.album_artists = vec!["Elton John".to_owned()];
+        elton.disc_total = Some(2);
+        let mut velvet = tags("Gold", "Sunday Morning", 1);
+        velvet.album_artists = vec!["The Velvet Underground".to_owned()];
+        velvet.disc_total = Some(2);
+        let files = vec![
+            (PathBuf::from("Elton John - Gold/01.flac"), elton.clone()),
+            (PathBuf::from("Elton John - Gold/02.flac"), elton),
+            (
+                PathBuf::from("The Velvet Underground - Gold/01.flac"),
+                velvet.clone(),
+            ),
+            (
+                PathBuf::from("The Velvet Underground - Gold/02.flac"),
+                velvet,
+            ),
+        ];
+        let grouping = group_releases(&facts(&files));
+        assert_eq!(grouping.releases.len(), 2);
+        assert_ne!(grouping.releases[0].id, grouping.releases[1].id);
+        assert_eq!(grouping.placement[0].release, grouping.placement[1].release);
+        assert_eq!(grouping.placement[2].release, grouping.placement[3].release);
+        assert!(
+            grouping
+                .releases
+                .iter()
+                .all(|release| release.rule == Rule::Strings),
+            "each is keyed on its own title and artist, not on a path"
+        );
+    }
+
+    #[test]
+    fn a_disc_folder_naming_nobody_stays_with_the_discs_beside_it() {
+        let mut named = tags("The Wall", "In the Flesh?", 1);
+        named.album_artists = vec!["Pink Floyd".to_owned()];
+        let mut by_track = tags("The Wall", "Hey You", 1);
+        by_track.album_artists = Vec::new();
+        by_track.artists = vec!["Pink Floyd".to_owned()];
+        let mut silent = tags("The Wall", "The Trial", 2);
+        silent.album_artists = Vec::new();
+        let files = vec![
+            (PathBuf::from("The Wall/CD1/01.flac"), named),
+            (PathBuf::from("The Wall/CD2/01.flac"), by_track),
+            (PathBuf::from("The Wall/CD2/02.flac"), silent),
+        ];
+        let grouping = group_releases(&facts(&files));
+        assert_eq!(grouping.releases.len(), 1);
+        assert_eq!(grouping.releases[0].files.len(), 3);
     }
 
     #[test]
