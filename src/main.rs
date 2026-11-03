@@ -429,6 +429,7 @@ async fn serve(
         .with_context(|| format!("binding {address}"))?;
     let bound = listener.local_addr()?;
     tracing::info!(%bound, "http listening");
+    server.device.note_bound_port(bound.port());
     let interfaces = ssdp::interfaces();
     for (name, address) in &interfaces.announced {
         tracing::info!(

@@ -36,6 +36,8 @@ pub struct Device {
     /// Every address that searched, read, subscribed, browsed or played, and when.
     pub peers: Peers,
     capture: ArcSwapOption<Recorder>,
+    /// The port the listener bound, for a URL built for a client that named no host.
+    bound_port: std::sync::atomic::AtomicU16,
 }
 
 impl Device {
@@ -57,7 +59,17 @@ impl Device {
             clients,
             peers: Peers::default(),
             capture: ArcSwapOption::empty(),
+            bound_port: std::sync::atomic::AtomicU16::new(0),
         }
+    }
+
+    pub fn note_bound_port(&self, port: u16) {
+        self.bound_port
+            .store(port, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn bound_port(&self) -> u16 {
+        self.bound_port.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn capture_to(&self, recorder: Recorder) {
