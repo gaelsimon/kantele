@@ -10,6 +10,7 @@ use kantele::api::Operation;
 use kantele::config::{Config, Resolved};
 use kantele::index::Library;
 use kantele::server::{self, Server};
+use kantele::service::Pass;
 use kantele::upnp::client::Profiles;
 use kantele::upnp::description::DeviceIdentity;
 use tower::ServiceExt;
@@ -340,6 +341,59 @@ async fn a_menu_setting_saved_beside_one_for_the_next_check_still_applies_at_onc
     assert!(
         body.contains("the menus were applied"),
         "and the answer says so rather than only the slower key's news: {body}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The sort words shape the index a pass builds, not the rows it compares the tree against: a pass
+/// that finds every file where it was would publish nothing, and the new order with it.
+#[tokio::test]
+async fn a_setting_only_a_pass_can_show_makes_that_pass_publish_whatever_it_finds() {
+    let dir = std::env::temp_dir().join(format!("kantele-owed-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a folder");
+    let file = dir.join("kantele.toml");
+    std::fs::write(&file, "[menus]\nalbum_threshold = 24\n").expect("writing the file");
+    let server = serving_from(&file);
+    assert!(!server.control.passes.publication_owed());
+
+    let (status, body) = put(&server, r#"{"menus.sort_ignore": ["The"]}"#, &[]).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(server.control.passes.taken(), Some(Pass::Whole));
+    assert!(
+        server.control.passes.publication_owed(),
+        "the pass asked for has to publish even where no file moved"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The strongest mode says what the save came to; the keys below it are still carried out.
+#[tokio::test]
+async fn a_cover_preference_saved_beside_a_key_needing_a_restart_is_still_read_again() {
+    let dir = std::env::temp_dir().join(format!("kantele-reread-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a folder");
+    let file = dir.join("kantele.toml");
+    std::fs::write(&file, "[menus]\nalbum_threshold = 24\n").expect("writing the file");
+    let server = serving_from(&file);
+
+    let (status, body) = put(
+        &server,
+        r#"{"scan.cover_art": "folder", "friendly_name": "Salon"}"#,
+        &[("Accept", "application/json")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let answered: serde_json::Value = serde_json::from_str(&body).expect("a write answers json");
+    assert_eq!(answered["apply"], "restart");
+    assert_eq!(answered["needs_restart"], true);
+    assert_eq!(
+        server.control.passes.taken(),
+        Some(Pass::Reread),
+        "the rows chose their covers under the old preference, and a restart reuses them"
+    );
+    assert!(server.control.passes.publication_owed());
+    assert!(
+        body.contains("read again") && body.contains("starts again"),
+        "and the answer says both: {body}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

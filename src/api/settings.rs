@@ -66,7 +66,11 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
                 format!("the body is not a JSON object of settings: {error}"),
             )
         })?;
-    let (mode, menus_now) = writable(&describe::effective(&operation.config), &changes)?;
+    let Modes {
+        strongest: mode,
+        menus_now,
+        reread,
+    } = writable(&describe::effective(&operation.config), &changes)?;
     let path = operation.config.file_path().map(Path::to_path_buf).ok_or_else(|| {
         refuse(StatusCode::CONFLICT, "no configuration file was read at startup, so there is nothing to write: start with --config".to_owned())
     })?;
@@ -140,7 +144,7 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
     } else {
         Pass::Whole
     };
-    let says = applied(control, mode, pass, menus_now, &path, settings).await;
+    let says = applied(control, mode, pass, menus_now, reread, &path, settings).await;
     tracing::info!(keys = ?written, mode = mode.as_str(), "settings written");
     Ok(Written {
         written,
@@ -150,14 +154,23 @@ async fn write_settings(control: &Control, body: &str) -> Result<Written, (Statu
     })
 }
 
-/// Every key the page may write now, the strongest mode among them and whether one of them applies
-/// at once, or the refusal.
+/// What the keys of one save ask for between them.
+struct Modes {
+    strongest: Apply,
+    /// One of them applies at once.
+    menus_now: bool,
+    /// One of them needs a pass, whatever the strongest says besides.
+    reread: bool,
+}
+
+/// Every key the page may write now and the modes they ask for, or the refusal.
 fn writable(
     effective: &Effective,
     changes: &serde_json::Map<String, serde_json::Value>,
-) -> Result<(Apply, bool), (StatusCode, String)> {
+) -> Result<Modes, (StatusCode, String)> {
     let mut mode = Apply::Never;
     let mut immediate = false;
+    let mut reread = false;
     for key in changes.keys() {
         let Some(setting) = effective.settings.iter().find(|setting| setting.key == key) else {
             return Err((
@@ -183,16 +196,22 @@ fn writable(
         }
         mode = mode.max(setting.apply);
         immediate |= setting.apply == Apply::Immediate;
+        reread |= setting.apply == Apply::Reread;
     }
-    Ok((mode, immediate))
+    Ok(Modes {
+        strongest: mode,
+        menus_now: immediate,
+        reread,
+    })
 }
 
-/// Carries out what the mode asks for, and says what happened in the owner's words.
+/// Carries out what the modes ask for, and says what happened in the owner's words.
 async fn applied(
     control: &Control,
     mode: Apply,
     pass: Pass,
     menus_now: bool,
+    reread: bool,
     path: &Path,
     settings: crate::browse::Settings,
 ) -> String {
@@ -203,33 +222,50 @@ async fn applied(
     if menus_first {
         control.device.apply_settings(settings.clone()).await;
     }
+    // A key needing a restart beside it does not excuse the pass: a restart reuses the rows.
+    let reading = match reread {
+        true => reading_again(control, pass, menus_now, settings.clone()).await,
+        false => String::new(),
+    };
     let said = match mode {
         Apply::Immediate => {
             let id = control.device.apply_settings(settings).await;
             tracing::info!(system_update_id = id, "the menus were rebuilt");
             format!("saved to {file} and applied")
         }
-        Apply::Reread => match control.passes.request(pass) {
-            Asked::NobodyIsListening => {
-                // No pass will carry it, so what the menus can take now they take now.
-                if !menus_now {
-                    control.device.apply_settings(settings).await;
-                }
-                format!(
-                    "saved to {file}, but nothing in this process is watching the library, so it \
-                     cannot be read again"
-                )
-            }
-            _ => format!("saved to {file}; the library is being read again"),
-        },
+        Apply::Reread => format!("saved to {file}{reading}"),
         Apply::NextPass => format!("saved to {file} and used at the next check"),
-        Apply::Restart => format!("saved to {file}; it takes effect when the server starts again"),
+        Apply::Restart => {
+            format!("saved to {file}{reading}; it takes effect when the server starts again")
+        }
         // Only an empty save gets here, and the file was written back as it was.
         Apply::Never => format!("saved to {file}"),
     };
     match menus_first {
         true => format!("{said}; the menus were applied now"),
         false => said,
+    }
+}
+
+/// Asks for the pass a written key needs, and says whether one will run. The rows cannot show
+/// what the key changed, so the pass has to publish whatever it finds.
+async fn reading_again(
+    control: &Control,
+    pass: Pass,
+    menus_now: bool,
+    settings: crate::browse::Settings,
+) -> String {
+    control.passes.owe_publication();
+    match control.passes.request(pass) {
+        Asked::NobodyIsListening => {
+            // No pass will carry it, so what the menus can take now they take now.
+            if !menus_now {
+                control.device.apply_settings(settings).await;
+            }
+            ", but nothing in this process is watching the library, so it cannot be read again"
+                .to_owned()
+        }
+        _ => "; the library is being read again".to_owned(),
     }
 }
 

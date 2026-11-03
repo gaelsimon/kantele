@@ -113,8 +113,13 @@ impl Passes {
         self.owed.store(true, Ordering::Relaxed);
     }
 
+    /// Whether a publication is owed and no pass has taken it up yet.
+    pub fn publication_owed(&self) -> bool {
+        self.owed.load(Ordering::Relaxed)
+    }
+
     /// Takes the debt for the pass about to run; a pass that does not publish owes it again.
-    fn publication_owed(&self) -> bool {
+    fn take_publication_owed(&self) -> bool {
         self.owed.swap(false, Ordering::Relaxed)
     }
 
@@ -1020,7 +1025,7 @@ async fn rebuild(
     let mut moved = store;
     let began = passes.begin();
     let serving_nothing = device.served().library.is_empty();
-    let owed = passes.publication_owed();
+    let owed = passes.take_publication_owed();
     let underway = indexing.underway.clone();
     let mut publisher = None;
     if serving_nothing && scope.is_whole_tree() {
