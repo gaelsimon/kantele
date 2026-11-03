@@ -36,6 +36,10 @@ const DEAF: usize = 5;
 /// How long to wait before taking the socket again, and between tries where something holds it.
 const AGAIN: Duration = Duration::from_secs(2);
 
+/// Searches being answered at once; past that a search is dropped, since each answer holds a
+/// socket for up to the searcher's window and a flood of searches would hold thousands.
+const ANSWERS_AT_ONCE: usize = 32;
+
 fn notification_types(udn: &str) -> Vec<(String, String)> {
     let uuid = format!("uuid:{udn}");
     vec![
@@ -65,6 +69,7 @@ pub struct Advertiser {
     /// UPnP 1.1 requires `BOOTID` to increase every boot.
     boot_id: u32,
     peers: Peers,
+    answering: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl Advertiser {
@@ -74,6 +79,7 @@ impl Advertiser {
             http_port,
             boot_id,
             peers,
+            answering: std::sync::Arc::new(tokio::sync::Semaphore::new(ANSWERS_AT_ONCE)),
         }
     }
 
@@ -261,6 +267,10 @@ impl Advertiser {
             let Some(replies) = self.replies_to(answers, from) else {
                 continue;
             };
+            let Ok(answering) = self.answering.clone().try_acquire_owned() else {
+                tracing::debug!(%from, "searches arriving faster than they are answered: dropping one");
+                continue;
+            };
             let delay = response_delay(header_value(&request, "MX").as_deref());
             tracing::debug!(%from, %st, replies = replies.len(), "answering M-SEARCH");
             tokio::spawn(async move {
@@ -270,6 +280,7 @@ impl Advertiser {
                         let _ = socket.send_to(reply.as_bytes(), from).await;
                     }
                 }
+                drop(answering);
             });
         }
     }
@@ -279,6 +290,15 @@ impl Advertiser {
             tracing::warn!(%from, "no route back: not answering");
             return None;
         };
+        let SocketAddr::V4(searcher) = from else {
+            return None;
+        };
+        // A search from past the network's edge is not a neighbour's, and five answers to a
+        // forged source would make this server a reflector.
+        if !on_network(*searcher.ip(), address, netmask_of(address)) {
+            tracing::debug!(%from, %address, "a search from outside this network: not answering");
+            return None;
+        }
         let location = self.location(address);
         Some(
             answers
@@ -512,12 +532,35 @@ pub fn local_addresses() -> Vec<Ipv4Addr> {
         .collect()
 }
 
-fn local_address_towards(peer: SocketAddr) -> Option<Ipv4Addr> {
+/// The address this host would send from towards `peer`, or nothing where only loopback would.
+pub(crate) fn local_address_towards(peer: SocketAddr) -> Option<Ipv4Addr> {
     let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
     socket.connect(peer).ok()?;
     match socket.local_addr().ok()? {
         SocketAddr::V4(address) if !address.ip().is_loopback() => Some(*address.ip()),
         _ => None,
+    }
+}
+
+/// The netmask of the interface holding `local`, or nothing where the system does not say.
+fn netmask_of(local: Ipv4Addr) -> Option<Ipv4Addr> {
+    if_addrs::get_if_addrs()
+        .into_iter()
+        .flatten()
+        .find_map(|interface| match interface.addr {
+            if_addrs::IfAddr::V4(held) if held.ip == local => Some(held.netmask),
+            _ => None,
+        })
+}
+
+/// Whether `peer` is on the network `local` belongs to. With no mask to go by, it is taken to be.
+fn on_network(peer: Ipv4Addr, local: Ipv4Addr, netmask: Option<Ipv4Addr>) -> bool {
+    match netmask {
+        Some(mask) => {
+            let mask = u32::from(mask);
+            u32::from(peer) & mask == u32::from(local) & mask
+        }
+        None => true,
     }
 }
 
@@ -825,6 +868,25 @@ mod tests {
         for (_, usn) in advertiser.answers_to("ssdp:all") {
             assert!(usn.starts_with(&format!("uuid:{UDN}")), "{usn}");
         }
+    }
+
+    #[test]
+    fn a_search_is_answered_only_from_the_network_it_arrived_on() {
+        let local = Ipv4Addr::new(192, 168, 1, 5);
+        let mask = Some(Ipv4Addr::new(255, 255, 255, 0));
+        assert!(on_network(Ipv4Addr::new(192, 168, 1, 20), local, mask));
+        assert!(
+            !on_network(Ipv4Addr::new(10, 0, 0, 9), local, mask),
+            "a forged source past the edge would be answered five times over"
+        );
+        assert!(
+            !on_network(Ipv4Addr::new(192, 168, 2, 20), local, mask),
+            "the next subnet over is another network"
+        );
+        assert!(
+            on_network(Ipv4Addr::new(10, 0, 0, 9), local, None),
+            "a system that names no mask is not a reason to answer nobody"
+        );
     }
 
     #[test]
