@@ -34,6 +34,10 @@ pub struct Passes {
     failing_since: std::sync::atomic::AtomicI64,
     /// Seconds between timed looks at the library as they run now, or zero where none run.
     sweep_seconds: std::sync::atomic::AtomicU64,
+    /// Whether the index being served is known to be behind what a pass would build: one that
+    /// was kept, or a setting the rows cannot show. A pass that finds the rows unchanged publishes
+    /// all the same while this stands.
+    owed: AtomicBool,
 }
 
 impl Default for Passes {
@@ -47,6 +51,7 @@ impl Default for Passes {
             pending: std::sync::Mutex::new(None),
             failing_since: std::sync::atomic::AtomicI64::new(0),
             sweep_seconds: std::sync::atomic::AtomicU64::new(0),
+            owed: AtomicBool::new(false),
         }
     }
 }
@@ -101,6 +106,16 @@ impl Passes {
 
     pub fn end(&self) {
         self.running.store(false, Ordering::Relaxed);
+    }
+
+    /// Says the next pass has to publish whatever it finds.
+    pub fn owe_publication(&self) {
+        self.owed.store(true, Ordering::Relaxed);
+    }
+
+    /// Takes the debt for the pass about to run; a pass that does not publish owes it again.
+    fn publication_owed(&self) -> bool {
+        self.owed.swap(false, Ordering::Relaxed)
     }
 
     /// Asks for a pass, folded into whatever is already waiting: two folders make one pass, and a
@@ -1005,6 +1020,7 @@ async fn rebuild(
     let mut moved = store;
     let began = passes.begin();
     let serving_nothing = device.served().library.is_empty();
+    let owed = passes.publication_owed();
     let underway = indexing.underway.clone();
     let mut publisher = None;
     if serving_nothing && scope.is_whole_tree() {
@@ -1018,7 +1034,7 @@ async fn rebuild(
             let indexed = index(&indexing, &mut moved, pass)?;
             // The browse view is derived here rather than inside `publish`. It is hundreds.
             // Only what gets published is worth the menus and the counts over every track.
-            let worth_it = indexed.changed || serving_nothing;
+            let worth_it = indexed.changed || serving_nothing || owed;
             Ok(Derived {
                 served: worth_it
                     .then(|| browse::Served::new(indexed.library, indexing.menus.clone())),
@@ -1047,6 +1063,7 @@ async fn rebuild(
             passes.record(PassReport::failed(format!(
                 "the pass did not finish: {error}"
             )));
+            passes.owe_publication();
             return None;
         }
     };
@@ -1055,6 +1072,7 @@ async fn rebuild(
         Err(error) => {
             tracing::error!(%error, "the library was not rescanned");
             passes.record(PassReport::failed(format!("{error:#}")));
+            passes.owe_publication();
             return store;
         }
     };
@@ -1067,6 +1085,9 @@ async fn rebuild(
         Some(served) => {
             if let Some(why) = keeping(&served.library, fresh.complete, device) {
                 fresh.pass.outcome = Outcome::Kept { why };
+                // The rows were written, so the next pass will find the tree agreeing with
+                // them. The index served is what it does not agree with.
+                passes.owe_publication();
             } else {
                 // The loop persists the number: this task is the only one holding the store,
                 // and the settings page moves it too.
@@ -1672,5 +1693,104 @@ mod tests {
         let empty = device(Library::default());
         assert!(keeping(&Library::default(), true, &empty).is_none());
         assert!(keeping(&one_track(), true, &empty).is_none());
+    }
+
+    /// A wav header and a few samples, enough for a pass to read the file.
+    fn wav() -> Vec<u8> {
+        let samples = [0x80u8; 800];
+        let mut file = Vec::new();
+        file.extend_from_slice(b"RIFF");
+        file.extend_from_slice(&(36 + samples.len() as u32).to_le_bytes());
+        file.extend_from_slice(b"WAVEfmt ");
+        file.extend_from_slice(&16u32.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes());
+        file.extend_from_slice(&8_000u32.to_le_bytes());
+        file.extend_from_slice(&8_000u32.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes());
+        file.extend_from_slice(&8u16.to_le_bytes());
+        file.extend_from_slice(b"data");
+        file.extend_from_slice(&(samples.len() as u32).to_le_bytes());
+        file.extend_from_slice(&samples);
+        file
+    }
+
+    struct Tree(PathBuf);
+
+    impl Tree {
+        fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("kantele-service-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("the test tree");
+            Self(root.canonicalize().expect("the test tree is there"))
+        }
+
+        fn album(&self, folder: &str, tracks: usize) {
+            let folder = self.0.join(folder);
+            std::fs::create_dir_all(&folder).expect("an album folder");
+            for track in 1..=tracks {
+                std::fs::write(folder.join(format!("{track:02}.wav")), wav()).expect("a track");
+            }
+        }
+
+        #[cfg(unix)]
+        fn shut(&self, folder: &str, shut: bool) {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = if shut { 0o000 } else { 0o755 };
+            std::fs::set_permissions(self.0.join(folder), std::fs::Permissions::from_mode(mode))
+                .expect("changing the folder's mode");
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            for entry in std::fs::read_dir(&self.0).into_iter().flatten().flatten() {
+                self.shut(&entry.file_name().to_string_lossy(), false);
+            }
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A pass whose index was kept has still written the store, so the next pass finds the tree
+    /// agreeing with the rows. The music that arrived meanwhile has to be published all the same.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn music_added_while_a_pass_was_kept_is_published_by_the_next_one() {
+        let tree = Tree::new("kept-then-agreed");
+        tree.album("Sierra Maestra", 2);
+        tree.album("Kremerata", 2);
+        let device = Arc::new(device(Library::default()));
+        let passes = Passes::default();
+        let indexing = Indexing::of(&tree.0);
+        let store = Some(Store::in_memory().expect("a store"));
+
+        let store = rebuild(&device, &passes, &indexing, store, Pass::Whole, "first").await;
+        assert_eq!(device.served().library.len(), 4);
+
+        tree.shut("Kremerata", true);
+        tree.album("New Arrival", 1);
+        let store = rebuild(&device, &passes, &indexing, store, Pass::Whole, "shut").await;
+        assert!(
+            matches!(
+                passes.last().expect("a report").outcome,
+                Outcome::Kept { .. }
+            ),
+            "the walk came back smaller with a hole in it"
+        );
+        assert_eq!(
+            device.served().library.len(),
+            4,
+            "the index served was kept"
+        );
+
+        tree.shut("Kremerata", false);
+        let _store = rebuild(&device, &passes, &indexing, store, Pass::Whole, "open").await;
+        assert_eq!(
+            passes.last().expect("a report").outcome,
+            Outcome::Published,
+            "the tree agrees with the rows, but not with the index being served"
+        );
+        assert_eq!(device.served().library.len(), 5);
     }
 }
