@@ -102,6 +102,20 @@ impl Device {
         self.commit(Arc::new(served)).await
     }
 
+    /// Publishes a library under the menus in force as it lands, asked for under the lock: a
+    /// setting written while the library was being built applies on top of it, not under it.
+    pub async fn publish_library(&self, library: Library, menus: impl FnOnce() -> Settings) -> u32 {
+        let _writing = self.publishing.lock().await;
+        let settings = menus();
+        match tokio::task::spawn_blocking(move || Served::new(library, settings)).await {
+            Ok(served) => self.commit(Arc::new(served)).await,
+            Err(error) => {
+                tracing::error!(%error, "the library was not published");
+                self.system_update_id()
+            }
+        }
+    }
+
     /// Rebuilds the menus over the catalogue being served. The lock is taken before that
     /// catalogue is read, not after the rebuild: the pair has to be one step.
     pub async fn apply_settings(&self, settings: Settings) -> u32 {
