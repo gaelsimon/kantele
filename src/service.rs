@@ -1774,6 +1774,7 @@ mod tests {
 
     impl Drop for Tree {
         fn drop(&mut self) {
+            #[cfg(unix)]
             for entry in std::fs::read_dir(&self.0).into_iter().flatten().flatten() {
                 self.shut(&entry.file_name().to_string_lossy(), false);
             }
