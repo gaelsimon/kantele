@@ -44,9 +44,11 @@ titles, stay two albums.
 
 Folders whose name holds a disc number, such as `CD1`, `Disc 2`, `Disque 1` or `The Wall (CD 2)`,
 are joined with the other discs beside them into one album. So are folders side by side whose tracks
-share an album title and say the album has more than one disc (`DISCTOTAL` of 2 or more). A disc
-marker at the end of the album title, such as `The Wall [Disc 2]`, is taken off the title, so both
-discs share one title.
+share an album title and say the album has more than one disc (`DISCTOTAL` of 2 or more). Folders
+joined this way that name different album artists stay apart, so two records called *Gold* under one
+folder are two albums; a disc naming nobody goes with the discs beside it. A disc marker at the end
+of the album title, such as `The Wall [Disc 2]`, is taken off the title, so both discs share one
+title. A title that is nothing but a disc marker, such as *Disco 2*, is kept as it is.
 
 **Two folders with the same album tags are two albums.** Two editions of one record, in two
 folders, stay apart. The Library tab notes them as *Identical album tags*.

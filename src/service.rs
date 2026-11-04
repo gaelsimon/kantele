@@ -34,6 +34,10 @@ pub struct Passes {
     failing_since: std::sync::atomic::AtomicI64,
     /// Seconds between timed looks at the library as they run now, or zero where none run.
     sweep_seconds: std::sync::atomic::AtomicU64,
+    /// Whether the index being served is known to be behind what a pass would build: one that
+    /// was kept, or a setting the rows cannot show. A pass that finds the rows unchanged publishes
+    /// all the same while this stands.
+    owed: AtomicBool,
 }
 
 impl Default for Passes {
@@ -47,6 +51,7 @@ impl Default for Passes {
             pending: std::sync::Mutex::new(None),
             failing_since: std::sync::atomic::AtomicI64::new(0),
             sweep_seconds: std::sync::atomic::AtomicU64::new(0),
+            owed: AtomicBool::new(false),
         }
     }
 }
@@ -101,6 +106,21 @@ impl Passes {
 
     pub fn end(&self) {
         self.running.store(false, Ordering::Relaxed);
+    }
+
+    /// Says the next pass has to publish whatever it finds.
+    pub fn owe_publication(&self) {
+        self.owed.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether a publication is owed and no pass has taken it up yet.
+    pub fn publication_owed(&self) -> bool {
+        self.owed.load(Ordering::Relaxed)
+    }
+
+    /// Takes the debt for the pass about to run; a pass that does not publish owes it again.
+    fn take_publication_owed(&self) -> bool {
+        self.owed.swap(false, Ordering::Relaxed)
     }
 
     /// Asks for a pass, folded into whatever is already waiting: two folders make one pass, and a
@@ -264,6 +284,12 @@ impl Live {
     /// Resolves the next time somebody replaces these settings.
     pub async fn changed(&self) {
         self.changed.notified().await;
+    }
+
+    /// The menus in force at the moment of asking, for a publication to take as it lands.
+    pub fn menus_now(self: &Arc<Self>) -> impl Fn() -> browse::Settings + Send + Sync + 'static {
+        let live = self.clone();
+        move || live.indexing.load().menus.clone()
     }
 }
 
@@ -718,7 +744,16 @@ pub async fn keep_fresh(
     let mut store = store;
     if verify {
         let first = if reread { Pass::Reread } else { Pass::Whole };
-        store = rebuild(&device, &passes, &settings, store, first, "index verified").await;
+        store = rebuild(
+            &device,
+            &passes,
+            &indexing,
+            &settings,
+            store,
+            first,
+            "index verified",
+        )
+        .await;
         ceiling_advice(&mut ceiling, &passes, &settings);
     }
     let mut asked = passes.requests_asked_for();
@@ -763,7 +798,16 @@ pub async fn keep_fresh(
         }
         settings = fresh;
         let Some(pass) = pass else { continue };
-        store = rebuild(&device, &passes, &settings, store, pass, "index replaced").await;
+        store = rebuild(
+            &device,
+            &passes,
+            &indexing,
+            &settings,
+            store,
+            pass,
+            "index replaced",
+        )
+        .await;
         ceiling_advice(&mut ceiling, &passes, &settings);
     }
 }
@@ -991,6 +1035,7 @@ async fn next_request(asked: &mut Option<tokio::sync::mpsc::Receiver<()>>) -> Op
 async fn rebuild(
     device: &Arc<Device>,
     passes: &Passes,
+    live: &Arc<Live>,
     indexing: &Indexing,
     store: Option<Store>,
     pass: Pass,
@@ -1005,10 +1050,11 @@ async fn rebuild(
     let mut moved = store;
     let began = passes.begin();
     let serving_nothing = device.served().library.is_empty();
+    let owed = passes.take_publication_owed();
     let underway = indexing.underway.clone();
     let mut publisher = None;
     if serving_nothing && scope.is_whole_tree() {
-        let (hook, task) = publishing_as_it_goes(device, &indexing);
+        let (hook, task) = publishing_as_it_goes(device, &indexing, live.menus_now());
         underway.partial.arm(hook, scan::Partial::FIRST);
         publisher = Some(task);
     }
@@ -1016,12 +1062,11 @@ async fn rebuild(
         // The store stays outside the guard.
         let derived = guarded(|| {
             let indexed = index(&indexing, &mut moved, pass)?;
-            // The browse view is derived here rather than inside `publish`. It is hundreds.
-            // Only what gets published is worth the menus and the counts over every track.
-            let worth_it = indexed.changed || serving_nothing;
+            // Only what gets published is worth the menus and the counts over every track,
+            // which the device builds under its lock.
+            let worth_it = indexed.changed || serving_nothing || owed;
             Ok(Derived {
-                served: worth_it
-                    .then(|| browse::Served::new(indexed.library, indexing.menus.clone())),
+                library: worth_it.then_some(indexed.library),
                 complete: indexed.complete,
                 pass: indexed.pass,
             })
@@ -1047,6 +1092,7 @@ async fn rebuild(
             passes.record(PassReport::failed(format!(
                 "the pass did not finish: {error}"
             )));
+            passes.owe_publication();
             return None;
         }
     };
@@ -1055,22 +1101,26 @@ async fn rebuild(
         Err(error) => {
             tracing::error!(%error, "the library was not rescanned");
             passes.record(PassReport::failed(format!("{error:#}")));
+            passes.owe_publication();
             return store;
         }
     };
     carry_forward(passes, &scope, &mut fresh.pass);
-    match fresh.served.take() {
+    match fresh.library.take() {
         None => {
             fresh.pass.outcome = Outcome::Agreed;
             tracing::info!("{done}: the tree agrees with the index being served");
         }
-        Some(served) => {
-            if let Some(why) = keeping(&served.library, fresh.complete, device) {
+        Some(library) => {
+            if let Some(why) = keeping(&library, fresh.complete, device) {
                 fresh.pass.outcome = Outcome::Kept { why };
+                // The rows were written, so the next pass will find the tree agreeing with
+                // them. The index served is what it does not agree with.
+                passes.owe_publication();
             } else {
                 // The loop persists the number: this task is the only one holding the store,
                 // and the settings page moves it too.
-                let id = device.publish(served).await;
+                let id = device.publish_library(library, live.menus_now()).await;
                 fresh.pass.outcome = Outcome::Published;
                 tracing::info!(system_update_id = id, "{done}");
             }
@@ -1088,16 +1138,16 @@ async fn rebuild(
 fn publishing_as_it_goes(
     device: &Arc<Device>,
     indexing: &Indexing,
+    menus: impl Fn() -> browse::Settings + Send + Sync + 'static,
 ) -> (scan::Hook, tokio::task::JoinHandle<()>) {
     let (sender, mut snapshots) = mpsc::channel::<scan::Finished>(1);
     let device = device.clone();
     let name = indexing.roots.name();
     let ignored = indexing.menus.ignored();
-    let menus = indexing.menus.clone();
     let underway = indexing.underway.clone();
     let task = tokio::spawn(async move {
         while let Some(finished) = snapshots.recv().await {
-            let (name, ignored, menus) = (name.clone(), ignored.clone(), menus.clone());
+            let (name, ignored) = (name.clone(), ignored.clone());
             // What the last publication awarded, so an album keeps the identifier it was
             // published under rather than one settled afresh by what has been read so far.
             let (underway, held) = (underway.clone(), underway.partial.awarded());
@@ -1105,13 +1155,13 @@ fn publishing_as_it_goes(
                 let files = scan::in_walk_order(finished);
                 let library = Library::build_holding(name, &files, &[], &ignored, &held);
                 underway.partial.award(library.claims().clone());
-                browse::Served::new(library, menus)
+                library
             })
             .await;
             match built {
-                Ok(served) => {
-                    let tracks = served.library.len();
-                    let id = device.publish(served).await;
+                Ok(library) => {
+                    let tracks = library.len();
+                    let id = device.publish_library(library, &menus).await;
                     tracing::info!(
                         tracks,
                         system_update_id = id,
@@ -1162,7 +1212,7 @@ fn guarded<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {
 
 struct Derived {
     /// Nothing where the pass agreed with what is already served, since none of it is published.
-    served: Option<browse::Served>,
+    library: Option<Library>,
     complete: bool,
     pass: PassReport,
 }
@@ -1362,7 +1412,7 @@ mod tests {
     async fn an_album_published_mid_read_keeps_its_identifier_in_the_next_publication() {
         let device = Arc::new(device(Library::default()));
         let indexing = Indexing::default();
-        let (hook, task) = publishing_as_it_goes(&device, &indexing);
+        let (hook, task) = publishing_as_it_goes(&device, &indexing, browse::Settings::default);
         indexing.underway.partial.arm(hook.clone(), Duration::ZERO);
 
         let before = device.system_update_id();
@@ -1672,5 +1722,160 @@ mod tests {
         let empty = device(Library::default());
         assert!(keeping(&Library::default(), true, &empty).is_none());
         assert!(keeping(&one_track(), true, &empty).is_none());
+    }
+
+    /// A wav header and a few samples, enough for a pass to read the file.
+    fn wav() -> Vec<u8> {
+        let samples = [0x80u8; 800];
+        let mut file = Vec::new();
+        file.extend_from_slice(b"RIFF");
+        file.extend_from_slice(&(36 + samples.len() as u32).to_le_bytes());
+        file.extend_from_slice(b"WAVEfmt ");
+        file.extend_from_slice(&16u32.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes());
+        file.extend_from_slice(&8_000u32.to_le_bytes());
+        file.extend_from_slice(&8_000u32.to_le_bytes());
+        file.extend_from_slice(&1u16.to_le_bytes());
+        file.extend_from_slice(&8u16.to_le_bytes());
+        file.extend_from_slice(b"data");
+        file.extend_from_slice(&(samples.len() as u32).to_le_bytes());
+        file.extend_from_slice(&samples);
+        file
+    }
+
+    struct Tree(PathBuf);
+
+    impl Tree {
+        fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("kantele-service-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("the test tree");
+            Self(root.canonicalize().expect("the test tree is there"))
+        }
+
+        fn album(&self, folder: &str, tracks: usize) {
+            let folder = self.0.join(folder);
+            std::fs::create_dir_all(&folder).expect("an album folder");
+            for track in 1..=tracks {
+                std::fs::write(folder.join(format!("{track:02}.wav")), wav()).expect("a track");
+            }
+        }
+
+        #[cfg(unix)]
+        fn shut(&self, folder: &str, shut: bool) {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = if shut { 0o000 } else { 0o755 };
+            std::fs::set_permissions(self.0.join(folder), std::fs::Permissions::from_mode(mode))
+                .expect("changing the folder's mode");
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            #[cfg(unix)]
+            for entry in std::fs::read_dir(&self.0).into_iter().flatten().flatten() {
+                self.shut(&entry.file_name().to_string_lossy(), false);
+            }
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A pass whose index was kept has still written the store, so the next pass finds the tree
+    /// agreeing with the rows. The music that arrived meanwhile has to be published all the same.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn music_added_while_a_pass_was_kept_is_published_by_the_next_one() {
+        let tree = Tree::new("kept-then-agreed");
+        tree.album("Sierra Maestra", 2);
+        tree.album("Kremerata", 2);
+        let device = Arc::new(device(Library::default()));
+        let passes = Passes::default();
+        let indexing = Indexing::of(&tree.0);
+        let live = Arc::new(Live::new(indexing.clone()));
+        let store = Some(Store::in_memory().expect("a store"));
+
+        let store = rebuild(
+            &device,
+            &passes,
+            &live,
+            &indexing,
+            store,
+            Pass::Whole,
+            "first",
+        )
+        .await;
+        assert_eq!(device.served().library.len(), 4);
+
+        tree.shut("Kremerata", true);
+        tree.album("New Arrival", 1);
+        let store = rebuild(
+            &device,
+            &passes,
+            &live,
+            &indexing,
+            store,
+            Pass::Whole,
+            "shut",
+        )
+        .await;
+        assert!(
+            matches!(
+                passes.last().expect("a report").outcome,
+                Outcome::Kept { .. }
+            ),
+            "the walk came back smaller with a hole in it"
+        );
+        assert_eq!(
+            device.served().library.len(),
+            4,
+            "the index served was kept"
+        );
+
+        tree.shut("Kremerata", false);
+        let _store = rebuild(
+            &device,
+            &passes,
+            &live,
+            &indexing,
+            store,
+            Pass::Whole,
+            "open",
+        )
+        .await;
+        assert_eq!(
+            passes.last().expect("a report").outcome,
+            Outcome::Published,
+            "the tree agrees with the rows, but not with the index being served"
+        );
+        assert_eq!(device.served().library.len(), 5);
+    }
+
+    /// The pass loop holds the settings it started under; a setting written while the pass ran
+    /// is the one in force when it ends.
+    #[tokio::test]
+    async fn a_pass_publishes_under_the_menus_in_force_when_it_ends_not_when_it_began() {
+        let tree = Tree::new("menus-in-force");
+        tree.album("Sierra Maestra", 2);
+        let device = Arc::new(device(Library::default()));
+        let passes = Passes::default();
+        let began = Indexing::of(&tree.0);
+        let live = Arc::new(Live::new(began.clone()));
+        live.replace(Indexing {
+            menus: browse::Settings {
+                album_threshold: 3,
+                ..browse::Settings::default()
+            },
+            ..began.clone()
+        });
+
+        rebuild(&device, &passes, &live, &began, None, Pass::Whole, "first").await;
+        assert_eq!(device.served().library.len(), 2);
+        assert_eq!(
+            device.served().view.settings.album_threshold,
+            3,
+            "the menus written mid-pass were put back the way they were"
+        );
     }
 }

@@ -1,6 +1,6 @@
 //! The HTTP surface: description, service definitions, SOAP control and the media itself.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use axum::Router;
@@ -17,7 +17,7 @@ use crate::upnp::description;
 use crate::upnp::device::Device;
 use crate::upnp::gena::{self, Service};
 use crate::upnp::peers::Step;
-use crate::upnp::{ObjectId, capture, contentdirectory, didl, search};
+use crate::upnp::{ObjectId, capture, contentdirectory, didl, search, ssdp};
 
 type Shared = Arc<Device>;
 
@@ -201,12 +201,20 @@ async fn connection_manager_scpd() -> Response {
     xml(description::CONNECTION_MANAGER_SCPD.to_owned())
 }
 
-fn base_url(headers: &HeaderMap) -> String {
-    let host = headers
+/// Where the resources are: the host the client used, or, for a client sending none, the address
+/// this server has towards it on the port it bound. Never loopback, which no renderer can fetch.
+fn base_url(headers: &HeaderMap, device: &Device, peer: Option<IpAddr>) -> String {
+    if let Some(host) = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
-        .unwrap_or("127.0.0.1");
-    format!("http://{host}")
+    {
+        return format!("http://{host}");
+    }
+    let port = device.bound_port();
+    match peer.and_then(|peer| ssdp::local_address_towards(SocketAddr::new(peer, port))) {
+        Some(address) => format!("http://{address}:{port}"),
+        None => format!("http://127.0.0.1:{port}"),
+    }
 }
 
 fn soap_action(headers: &HeaderMap) -> Option<String> {
@@ -215,18 +223,21 @@ fn soap_action(headers: &HeaderMap) -> Option<String> {
     Some(trimmed.rsplit('#').next()?.to_owned())
 }
 
-async fn content_directory_control(
-    State(device): State<Shared>,
-    headers: HeaderMap,
-    body: String,
-) -> Response {
+async fn content_directory_control(State(device): State<Shared>, request: Request) -> Response {
+    let peer = peer_address(&request);
+    let (parts, body) = request.into_parts();
+    let headers = parts.headers;
+    let Ok(body) = to_bytes(body, CAPTURED_BODY_LIMIT).await else {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    };
+    let body = String::from_utf8_lossy(&body);
     let action = soap_action(&headers).unwrap_or_default();
     tracing::debug!(%action, body = %body.replace('\n', " "), "ContentDirectory request");
 
     match action.as_str() {
         "Browse" => match contentdirectory::parse_browse(&body) {
             Ok(request) => {
-                let base = base_url(&headers);
+                let base = base_url(&headers, &device, peer);
                 let to = didl::To::new(&base, device.clients.resolve(&headers));
                 let published = device.published();
                 match contentdirectory::browse(&published.served, &request, to, published.update_id)
@@ -247,7 +258,7 @@ async fn content_directory_control(
         },
         "Search" => match contentdirectory::parse_search(&body) {
             Ok(request) => {
-                let base = base_url(&headers);
+                let base = base_url(&headers, &device, peer);
                 let to = didl::To::new(&base, device.clients.resolve(&headers));
                 let published = device.published();
                 match contentdirectory::search(&published.served, &request, to, published.update_id)
@@ -445,7 +456,9 @@ async fn event(
             _ => (StatusCode::BAD_REQUEST, "SUBSCRIBE needs CALLBACK or SID").into_response(),
         },
         "UNSUBSCRIBE" => match sid {
-            Some(sid) if device.subscriptions.unsubscribe(&sid) => StatusCode::OK.into_response(),
+            Some(sid) if device.subscriptions.unsubscribe(&sid, peer) => {
+                StatusCode::OK.into_response()
+            }
             _ => (StatusCode::PRECONDITION_FAILED, "unknown SID").into_response(),
         },
         other => {
@@ -746,7 +759,23 @@ mod tests {
 
     #[test]
     fn resource_urls_follow_the_host_the_client_used() {
+        let device = Device::new(
+            crate::index::Library::build("Music".to_owned(), &[]),
+            crate::browse::Settings::default(),
+            crate::upnp::description::DeviceIdentity {
+                friendly_name: "Kantele".to_owned(),
+                udn: "uuid:test".to_owned(),
+                icon: Default::default(),
+            },
+            crate::upnp::client::Profiles::default(),
+        );
+        device.note_bound_port(8200);
         let headers = headers_with("host", "192.0.2.42:8200");
-        assert_eq!(base_url(&headers), "http://192.0.2.42:8200");
+        assert_eq!(base_url(&headers, &device, None), "http://192.0.2.42:8200");
+        // An HTTP/1.0 control point names no host: the address it reached, never loopback.
+        let peer = "192.0.2.42".parse().ok();
+        let without = base_url(&HeaderMap::new(), &device, peer);
+        assert!(!without.contains("127.0.0.1"), "{without}");
+        assert!(without.ends_with(":8200"), "{without}");
     }
 }

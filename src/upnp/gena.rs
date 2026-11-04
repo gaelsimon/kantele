@@ -175,8 +175,17 @@ impl Subscriptions {
         })
     }
 
-    pub fn unsubscribe(&self, sid: &str) -> bool {
-        crate::held(&self.inner).remove(sid).is_some()
+    /// Honoured from the address that subscribed, as a renewal is: the identifiers are no secret.
+    pub fn unsubscribe(&self, sid: &str, peer: Option<IpAddr>) -> bool {
+        let mut guard = crate::held(&self.inner);
+        let Some(subscription) = guard.get(sid) else {
+            return false;
+        };
+        if peer.is_some_and(|asking| asking != subscription.peer) {
+            tracing::warn!(%sid, "an unsubscribe from another address than the one that subscribed");
+            return false;
+        }
+        guard.remove(sid).is_some()
     }
 
     pub fn expire(&self) {
@@ -278,7 +287,7 @@ impl Subscriptions {
         tracing::warn!(%sid, seq, missed, "no callback of this subscriber took the event");
         if missed >= MISSED {
             tracing::warn!(%sid, "nothing reached this subscriber: it is dropped");
-            self.unsubscribe(sid);
+            self.unsubscribe(sid, None);
         }
     }
 
@@ -1000,7 +1009,12 @@ mod tests {
         assert!(subs.renew(&granted.sid, None, Some("Second-600")).is_some());
         assert!(subs.renew("uuid:nobody", None, None).is_none());
 
-        assert!(subs.unsubscribe(&granted.sid));
+        assert!(
+            !subs.unsubscribe(&granted.sid, at("192.0.2.9")),
+            "another device may not end a subscription it did not take"
+        );
+        assert_eq!(subs.len(), 1);
+        assert!(subs.unsubscribe(&granted.sid, at("192.0.2.1")));
         assert!(subs.is_empty());
     }
 

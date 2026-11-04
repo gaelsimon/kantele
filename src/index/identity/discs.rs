@@ -4,24 +4,33 @@ use std::borrow::Cow;
 
 pub fn strip_disc_marker(title: &str) -> (Cow<'_, str>, Option<u32>) {
     let trimmed = title.trim();
+    match marker_stripped(trimmed) {
+        // A title that was only the marker is the record's name, not a disc of a nameless one.
+        Some((stripped, disc)) if !stripped.is_empty() => (stripped, Some(disc)),
+        _ => (Cow::Borrowed(trimmed), None),
+    }
+}
+
+fn marker_stripped(trimmed: &str) -> Option<(Cow<'_, str>, u32)> {
     if let Some((before, disc)) = bracketed_disc(trimmed) {
-        return (Cow::Borrowed(before), Some(disc));
+        return Some((Cow::Borrowed(before), disc));
     }
     // `Symphonies (Disc 2) (Remastered)`: the marker goes, the bracket after it stays.
     if let Some(open) = bracketed_tail(trimmed)
         && let Some((before, disc)) = bracketed_disc(trimmed[..open].trim_end())
     {
-        return (
-            Cow::Owned(format!("{before} {}", &trimmed[open..])),
-            Some(disc),
-        );
+        let kept = &trimmed[open..];
+        return Some((
+            match before.is_empty() {
+                true => Cow::Borrowed(""),
+                false => Cow::Owned(format!("{before} {kept}")),
+            },
+            disc,
+        ));
     }
-    if let Some(start) = last_keyword(trimmed)
-        && let Some(disc) = disc_phrase(&trimmed[start..])
-    {
-        return (Cow::Borrowed(trim_separator(&trimmed[..start])), Some(disc));
-    }
-    (Cow::Borrowed(trimmed), None)
+    let start = last_keyword(trimmed)?;
+    let disc = disc_phrase(&trimmed[start..])?;
+    Some((Cow::Borrowed(trim_separator(&trimmed[..start])), disc))
 }
 
 /// The title before a closing bracket that holds a disc marker, and the disc.
@@ -167,6 +176,18 @@ mod tests {
             ("Bitches Brew (Remastered)", None)
         );
         assert_eq!(borrowed("Disc Jockey Hits"), ("Disc Jockey Hits", None));
+    }
+
+    /// Pet Shop Boys' `Disco 2` and `Disco 3` are two records, not two discs of a record with no name.
+    #[test]
+    fn a_title_that_is_only_a_disc_marker_is_kept_whole() {
+        assert_eq!(borrowed("Disco 2"), ("Disco 2", None));
+        assert_eq!(borrowed("Disc 1"), ("Disc 1", None));
+        assert_eq!(borrowed("(CD 2)"), ("(CD 2)", None));
+        assert_eq!(
+            borrowed("[Disc 2] (Remastered)"),
+            ("[Disc 2] (Remastered)", None)
+        );
     }
     #[test]
     fn disc_folders_are_recognised_and_ordinary_folders_are_not() {
