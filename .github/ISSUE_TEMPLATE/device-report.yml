@@ -27,11 +27,11 @@ body:
   - type: textarea
     id: stopped
     attributes:
-      label: Where it stopped
+      label: Where it stopped, if it did
       description: What you saw, and what the log said at that moment. Every request is traced
         there with the user agent that sent it.
     validations:
-      required: true
+      required: false
   - type: input
     id: version
     attributes:

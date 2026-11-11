@@ -58,10 +58,10 @@ All of them are on the Settings page, and none of them needs a restart.
 
 ## What is different
 
-- **Albums follow folders.** MinimServer joins tracks from different folders when their album and
-  artist tags match. Kantele keeps one album per folder and joins folders only when they are discs
-  of one album (see [tagging](tagging.md#albums)). Two recordings of the same work, tagged alike in
-  two folders, stay two albums.
+- **Albums follow folders.** Like MinimServer by default, Kantele keeps one album per folder and
+  joins folders only when they are discs of one album, and then only folders side by side (see
+  [tagging](tagging.md#albums)). Nothing matches MinimServer's `mergeFolderAlbums`: two recordings
+  of the same work, tagged alike in two folders, stay two albums.
 - **A long list keeps all its entries.** MinimServer's `alphaGroup` replaces a long list with
   letters, and **Show All** takes two steps to get back. Kantele keeps the whole list and adds an
   **A-Z** entry at its top.
@@ -77,7 +77,7 @@ All of them are on the Settings page, and none of them needs a restart.
   it back to the top.
 - **`Various Artists`** and its variants are not listed as an artist. Their albums are under
   **Compilations** on the first screen.
-- **Setup** is a page with a folder picker. There is no Java to install, and nothing to buy.
+- **Setup** is a page with a folder picker, and there is nothing to buy.
 
 ## What Kantele does not do yet
 
