@@ -418,6 +418,31 @@ async fn a_rescan_is_asked_for_once_and_the_second_request_says_so() {
 }
 
 #[tokio::test]
+async fn a_page_opened_under_a_router_name_is_told_which_address_may_write() {
+    let tree = library_with_a_broken_playlist("rescan-router-name");
+    let server = serving(&tree, None);
+    let post = Request::builder()
+        .method(Method::POST)
+        .uri("/api/rescan")
+        .header(header::HOST, "diskstation.fritz.box:8200")
+        .header(header::ORIGIN, "http://diskstation.fritz.box:8200")
+        .body(Body::empty())
+        .expect("a request");
+
+    let refused = ask(&server, post).await;
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    let says = String::from_utf8(
+        to_bytes(refused.into_body(), usize::MAX)
+            .await
+            .expect("a body")
+            .to_vec(),
+    )
+    .expect("text");
+    assert!(says.contains("diskstation.fritz.box"), "{says}");
+    assert!(says.contains(":8200/config"), "{says}");
+}
+
+#[tokio::test]
 async fn a_pass_asked_for_from_another_site_is_refused() {
     let tree = library_with_a_broken_playlist("rescan-origin");
     let server = serving(&tree, None);

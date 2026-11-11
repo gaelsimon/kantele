@@ -99,3 +99,9 @@ The command line and the environment win over the file; `kantele --help` lists b
 Anyone on your home network can open the page, as anyone on it can already play your music. The page
 refuses any request that changes a setting, starts a rescan or lists your disks when it comes from
 outside your local network. Do not forward the port to the internet anyway.
+
+The same requests are refused when the page was opened under a name that ends in a real domain,
+such as `diskstation.fritz.box`, `name.synology.me` or a QuickConnect address, since any site could
+point such a name at the server. The page then says which address to open instead:
+`http://<address of the server>:8200/config`. Names ending in `.local`, `.lan`, `.home.arpa` or
+`.internal`, a name with no dot, and an address all work.

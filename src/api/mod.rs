@@ -371,8 +371,9 @@ async fn share_listing(
             StatusCode::FORBIDDEN,
             format!(
                 "{path}: this server may not read it. It reads as the user it runs as, which on a \
-                 Synology is the package user, given read access to a shared folder in Control \
-                 Panel.\n"
+                 Synology is kantele: in Control Panel, Shared Folder, select the share, Edit, \
+                 Permissions, switch the list to System internal user and tick Read only for \
+                 kantele.\n"
             ),
         )
             .into_response(),
@@ -463,7 +464,38 @@ async fn rescan(
 /// The refusal of a command from beyond this network or from another site's page, or nothing.
 fn refused(peer: Peer, headers: &HeaderMap, what: &str, answer: &'static str) -> Option<Response> {
     let peer = peer.map(|Extension(ConnectInfo(address))| address.ip());
-    from_outside(peer, what).or_else(|| from_elsewhere(headers, what, answer))
+    from_outside(peer, what)
+        .or_else(|| under_a_public_name(headers, peer, what))
+        .or_else(|| from_elsewhere(headers, what, answer))
+}
+
+/// A page opened under a router or DDNS name is told the address that may write.
+fn under_a_public_name(headers: &HeaderMap, peer: Option<IpAddr>, what: &str) -> Option<Response> {
+    let host = headers.get(header::HOST)?.to_str().ok()?;
+    if named_on_this_network(host) {
+        return None;
+    }
+    let (name, port) = host
+        .rsplit_once(':')
+        .and_then(|(name, port)| Some((name, port.parse::<u16>().ok()?)))
+        .unwrap_or((host, 80));
+    let page = peer
+        .and_then(|peer| crate::upnp::ssdp::local_address_towards(SocketAddr::new(peer, port)))
+        .map_or_else(
+            || format!("http://<address of this server>:{port}/config"),
+            |address| format!("http://{address}:{port}/config"),
+        );
+    tracing::warn!(host, "refusing {what} on a page opened under a name");
+    Some(
+        (
+            StatusCode::FORBIDDEN,
+            format!(
+                "this page was opened as {name}, a name any site could point here, so it may not \
+                 change anything: open {page} instead\n"
+            ),
+        )
+            .into_response(),
+    )
 }
 
 fn from_outside(peer: Option<IpAddr>, what: &str) -> Option<Response> {
@@ -679,12 +711,12 @@ mod tests {
             "10.0.0.7",
             "172.16.0.1",
             "172.31.255.254",
-            "192.168.8.227",
+            "192.168.1.20",
             "169.254.10.1",
             "::1",
             "fd12:3456::1",
             "fe80::1",
-            "::ffff:192.168.8.227",
+            "::ffff:192.168.1.20",
         ] {
             let address: IpAddr = local.parse().expect("an address");
             assert!(on_this_network(address), "{local} is on this network");
