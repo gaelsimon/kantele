@@ -14,6 +14,9 @@ Players find servers by a broadcast on the local network, and home networks some
   mode, keeps them apart. Wired and wireless on one router is fine.
 - **Does the router let the broadcast through?** A setting called *IGMP snooping* or *multicast
   filtering* on a router or switch can drop it. This is the most common cause.
+- **Is there a firewall on the server?** It must let in UDP port 1900, where players search, and TCP
+  port 8200, where they read and play. On a Synology this is **Control Panel**, **Security**,
+  **Firewall**, when the firewall is on.
 - **On a Mac**, macOS asks once whether Kantele may accept incoming connections. If you said no,
   allow it in **System Settings**, **Network**, **Firewall**, **Options**.
 - **On a Mac, the other way round**: an app on the Mac that plays from media servers needs
@@ -134,8 +137,9 @@ answered.
 | macOS | `~/Library/Application Support/Kantele/kantele.log` |
 | Linux | `/var/lib/kantele/kantele.log`, and `journalctl -u kantele` |
 
-The end of the log is also on the Settings page. Every request from a player is in it, with the name
-the player gave, so it shows what the player asked for and what it got. Anything refused says why.
+The end of the log is also on the Settings page. Each request from a player is in it, with the name
+the player gave, so it shows what the player asked for and what it got. A request a device repeats
+the same way is written once, and `/api/status` counts the repeats. Anything refused says why.
 
 ## Still stuck
 

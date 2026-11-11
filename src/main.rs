@@ -426,7 +426,13 @@ async fn serve(
     ));
     let listener = tokio::net::TcpListener::bind(address)
         .await
-        .with_context(|| format!("binding {address}"))?;
+        .with_context(|| {
+            format!(
+                "port {} is not free: another program may hold it, so set http_port in the \
+                 settings file or KANTELE_PORT",
+                address.port()
+            )
+        })?;
     let bound = listener.local_addr()?;
     tracing::info!(%bound, "http listening");
     server.device.note_bound_port(bound.port());
