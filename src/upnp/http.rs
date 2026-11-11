@@ -52,6 +52,10 @@ pub fn router(device: Shared) -> Router {
         .with_state(device)
 }
 
+/// Marks an answer as the repeat of an exchange already written to the log.
+#[derive(Clone, Copy, Debug)]
+pub struct Again;
+
 fn peer_address(request: &Request) -> Option<std::net::IpAddr> {
     request
         .extensions()
@@ -81,6 +85,7 @@ async fn note_peer(
     request: Request,
     next: axum::middleware::Next,
 ) -> Response {
+    let mut again = false;
     if let Some(address) = peer_address(&request)
         && let Some(step) = step_of(request.method(), request.uri().path(), request.headers())
     {
@@ -88,9 +93,13 @@ async fn note_peer(
             .headers()
             .get(header::USER_AGENT)
             .and_then(|value| value.to_str().ok());
-        device.peers.note(address, step, agent);
+        again = device.peers.note(address, step, agent) && step == Step::Described;
     }
-    next.run(request).await
+    let mut response = next.run(request).await;
+    if again {
+        response.extensions_mut().insert(Again);
+    }
+    response
 }
 
 /// The same bound axum's own body extractors apply.
@@ -418,8 +427,15 @@ async fn event(
             (Some(sid), None) => match device.subscriptions.renew(&sid, peer, timeout.as_deref()) {
                 Some(granted) => granted_response(&granted),
                 None => {
-                    tracing::warn!(%sid, "renewal for an unknown subscription");
-                    (StatusCode::PRECONDITION_FAILED, "unknown SID").into_response()
+                    let mut refused =
+                        (StatusCode::PRECONDITION_FAILED, "unknown SID").into_response();
+                    if device.subscriptions.first_refusal(&sid) {
+                        tracing::warn!(%sid, "renewal for an unknown subscription");
+                    } else {
+                        tracing::debug!(%sid, "renewal for an unknown subscription, again");
+                        refused.extensions_mut().insert(Again);
+                    }
+                    refused
                 }
             },
             (None, Some(callback)) => match device.subscriptions.subscribe(

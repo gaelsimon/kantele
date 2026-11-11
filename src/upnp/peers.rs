@@ -97,11 +97,12 @@ pub struct Peers {
 }
 
 impl Peers {
-    pub fn note(&self, address: IpAddr, step: Step, agent: Option<&str>) {
-        self.note_at(address, step, agent, epoch_seconds());
+    /// Whether the address had taken this step before.
+    pub fn note(&self, address: IpAddr, step: Step, agent: Option<&str>) -> bool {
+        self.note_at(address, step, agent, epoch_seconds())
     }
 
-    fn note_at(&self, address: IpAddr, step: Step, agent: Option<&str>, at: i64) {
+    fn note_at(&self, address: IpAddr, step: Step, agent: Option<&str>, at: i64) -> bool {
         let mut seen = crate::held(&self.seen);
         if !seen.contains_key(&address) {
             tracing::info!(%address, agent = agent.unwrap_or("unnamed"), "{}", step.said());
@@ -116,6 +117,7 @@ impl Peers {
         let slot = peer.slot(step);
         let times = slot.map_or(0, |seen| seen.times).saturating_add(1);
         *slot = Some(Seen { last: at, times });
+        times > 1
     }
 
     /// Every address, the most recently active first.
@@ -171,6 +173,15 @@ mod tests {
 
     fn ip(last: u8) -> IpAddr {
         IpAddr::V4(Ipv4Addr::new(192, 0, 2, last))
+    }
+
+    #[test]
+    fn a_step_is_new_the_first_time_an_address_takes_it() {
+        let peers = Peers::default();
+        assert!(!peers.note_at(ip(9), Step::Searched, None, 100));
+        assert!(!peers.note_at(ip(9), Step::Described, None, 110));
+        assert!(peers.note_at(ip(9), Step::Described, None, 120));
+        assert!(!peers.note_at(ip(7), Step::Described, None, 130));
     }
 
     #[test]

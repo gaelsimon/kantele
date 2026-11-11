@@ -1,6 +1,6 @@
 //! GENA eventing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -67,7 +67,11 @@ pub struct Listed {
 #[derive(Clone, Default)]
 pub struct Subscriptions {
     inner: Arc<Mutex<HashMap<String, Subscription>>>,
+    refused: Arc<Mutex<VecDeque<String>>>,
 }
+
+/// Refused identifiers remembered at most; a device inventing them must not grow this.
+const REFUSED_REMEMBERED: usize = 16;
 
 pub struct Granted {
     pub sid: String,
@@ -186,6 +190,20 @@ impl Subscriptions {
             return false;
         }
         guard.remove(sid).is_some()
+    }
+
+    /// Whether this identifier is refused for the first time, so a device repeating one it was
+    /// already refused is written down once.
+    pub fn first_refusal(&self, sid: &str) -> bool {
+        let mut refused = crate::held(&self.refused);
+        if refused.iter().any(|known| known == sid) {
+            return false;
+        }
+        if refused.len() == REFUSED_REMEMBERED {
+            refused.pop_front();
+        }
+        refused.push_back(sid.to_owned());
+        true
     }
 
     pub fn expire(&self) {
@@ -1035,6 +1053,22 @@ mod tests {
         let granted = subscribed(&subs, Service::ContentDirectory, 1);
         assert_eq!(subs.next(&granted.sid).unwrap().1, 1);
         assert_eq!(subs.next(&granted.sid).unwrap().1, 2);
+    }
+
+    #[test]
+    fn a_refused_identifier_is_new_once_and_the_memory_of_them_is_bounded() {
+        let subscriptions = Subscriptions::default();
+        assert!(subscriptions.first_refusal("uuid:stale"));
+        assert!(!subscriptions.first_refusal("uuid:stale"));
+        assert!(subscriptions.first_refusal("uuid:other"));
+        assert!(!subscriptions.first_refusal("uuid:stale"));
+        for invented in 0..REFUSED_REMEMBERED {
+            subscriptions.first_refusal(&format!("uuid:invented-{invented}"));
+        }
+        assert!(
+            subscriptions.first_refusal("uuid:stale"),
+            "the oldest is forgotten rather than kept beside every identifier ever refused"
+        );
     }
 
     #[test]
