@@ -11,12 +11,13 @@ unit=/etc/systemd/system/kantele.service
 command -v systemctl >/dev/null || { echo "this installer wants systemd; run the binary yourself otherwise" >&2; exit 1; }
 
 # A system user with no login and no home: it reads music and writes its index, nothing else.
-id kantele >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin kantele
+id kantele >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /var/lib/kantele --shell /usr/sbin/nologin kantele
 
 install -m 755 "$here/kantele" "$bin/kantele"
 mkdir -p "$config" "$state"
 [ -f "$config/kantele.toml" ] || install -m 644 "$here/kantele.example.toml" "$config/kantele.toml"
-chown -R kantele:kantele "$state"
+# The page saves the settings beside the file, so the service user owns the folder.
+chown -R kantele:kantele "$config" "$state"
 
 install -m 644 "$here/kantele.service" "$unit"
 systemctl daemon-reload

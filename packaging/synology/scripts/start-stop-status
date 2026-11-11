@@ -7,7 +7,7 @@ PKG_VAR="${SYNOPKG_PKGVAR:-/var/packages/kantele/var}"
 case "$(uname -m)" in
   x86_64) BIN="$PKG_DEST/bin/kantele-x86_64" ;;
   aarch64|arm64) BIN="$PKG_DEST/bin/kantele-armv8" ;;
-  *) BIN="$PKG_DEST/bin/kantele-x86_64" ;;
+  *) BIN="" ;;
 esac
 CONF="$PKG_VAR/kantele.toml"
 LOG="$PKG_VAR/kantele.log"
@@ -21,6 +21,10 @@ case "$1" in
   start)
     if running; then exit 0; fi
     mkdir -p "$PKG_VAR"
+    if [ -z "$BIN" ]; then
+      echo "Kantele runs on 64-bit Intel, AMD and ARM models; this one is $(uname -m)." | tee "$PKG_VAR/kantele.err" >> "$LOG"
+      exit 1
+    fi
     # The first start gets the example file, which documents every key beside its default.
     [ -f "$CONF" ] || cp "$PKG_DEST/share/kantele.example.toml" "$CONF"
     # The server writes and rolls $LOG itself. What reaches stderr is what came before it could.
