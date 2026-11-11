@@ -1572,3 +1572,40 @@ async fn without_a_capture_folder_nothing_is_written() {
     assert_eq!(response.status(), StatusCode::OK);
     assert!(!tree.path("captures").exists());
 }
+
+fn from_peer(method: &str, path: &str, sid: Option<&str>) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(Method::from_bytes(method.as_bytes()).expect("a method"))
+        .uri(path);
+    if let Some(sid) = sid {
+        request = request.header("sid", sid);
+    }
+    let mut request = request.body(Body::empty()).expect("a request");
+    let peer: SocketAddr = "192.0.2.42:40000".parse().expect("an address");
+    request.extensions_mut().insert(ConnectInfo(peer));
+    request
+}
+
+#[tokio::test]
+async fn a_renewal_refused_again_is_marked_as_a_repeat() {
+    let tree = Tree::new("wire-renewal-again");
+    let server = serving(&tree);
+    let renewal = || from_peer("SUBSCRIBE", "/event/ContentDirectory", Some("uuid:stale"));
+    let first = ask(&server, renewal()).await;
+    assert_eq!(first.status(), StatusCode::PRECONDITION_FAILED);
+    assert!(first.extensions().get::<http::Again>().is_none());
+    let second = ask(&server, renewal()).await;
+    assert_eq!(second.status(), StatusCode::PRECONDITION_FAILED);
+    assert!(second.extensions().get::<http::Again>().is_some());
+}
+
+#[tokio::test]
+async fn a_description_read_again_by_the_same_device_is_marked_as_a_repeat() {
+    let tree = Tree::new("wire-description-again");
+    let server = serving(&tree);
+    let first = ask(&server, from_peer("GET", "/description.xml", None)).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    assert!(first.extensions().get::<http::Again>().is_none());
+    let second = ask(&server, from_peer("GET", "/description.xml", None)).await;
+    assert!(second.extensions().get::<http::Again>().is_some());
+}

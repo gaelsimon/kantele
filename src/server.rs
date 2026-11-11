@@ -49,7 +49,7 @@ pub fn router(server: &Server) -> Router {
         .layer(axum::middleware::from_fn(trace_request))
 }
 
-/// One line per request, at `debug` for the polls and renewals that would fill the log.
+/// One line per request, at `debug` for the polls, renewals and repeats that would fill the log.
 async fn trace_request(request: Request, next: axum::middleware::Next) -> Response {
     let method = request.method().clone();
     let uri = request.uri().clone();
@@ -73,7 +73,8 @@ async fn trace_request(request: Request, next: axum::middleware::Next) -> Respon
     let status = response.status().as_u16();
     let headers = headers.join("; ");
     let path = uri.path();
-    if routine(&method, path, status, &asked) {
+    let again = response.extensions().get::<http::Again>().is_some();
+    if quiet(&method, path, status, &asked, again) {
         tracing::debug!(%peer, %method, %path, status, %headers, "request");
     } else {
         tracing::info!(%peer, %method, %path, status, %headers, "request");
@@ -86,6 +87,10 @@ async fn trace_request(request: Request, next: axum::middleware::Next) -> Respon
         http::trace_renderer(&peer, &method, uri.path(), status, &asked);
     }
     response
+}
+
+fn quiet(method: &Method, path: &str, status: u16, headers: &HeaderMap, again: bool) -> bool {
+    again || routine(method, path, status, headers)
 }
 
 fn routine(method: &Method, path: &str, status: u16, headers: &HeaderMap) -> bool {
@@ -139,6 +144,17 @@ mod tests {
             !routine(&subscribe, "/event/ContentDirectory", 412, &renewing),
             "a renewal that was refused is what somebody will look for"
         );
+        assert!(
+            quiet(&subscribe, "/event/ContentDirectory", 412, &renewing, true),
+            "and is found once: a device repeating it every few seconds fills the log"
+        );
+        assert!(!quiet(
+            &subscribe,
+            "/event/ContentDirectory",
+            412,
+            &renewing,
+            false
+        ));
         let arriving = headers_with("callback", "<http://192.0.2.9:1/>");
         assert!(
             !routine(&subscribe, "/event/ContentDirectory", 200, &arriving),
