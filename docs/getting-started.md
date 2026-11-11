@@ -15,7 +15,7 @@ Three steps: install the server, choose the folder your music is in, and open it
    there as an update. It needs DSM 7 on a 64-bit model, Intel, AMD or ARM; the 32-bit ARM models
    such as the DS218j or DS216j cannot run it.
 2. Install Kantele. The package is not signed, so DSM warns that it comes from a third party and is
-   not verified by Synology; confirm to go on.
+   not verified by Synology; click **Agree**.
 3. Give it read access to your music. In Control Panel, **Shared Folder**, select your music share,
    **Edit**, **Permissions**. Change the list at the top from **Local users** to **System internal
    user**, find `kantele`, and tick **Read only**. Without this, every folder looks empty to the
