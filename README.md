@@ -29,7 +29,7 @@ It does not convert formats, play video or radio, or reach a streaming service.
 
     https://gaelsimon.github.io/kantele/index.json
 
-Then install Kantele, give it read access to your music share, and choose the folder.
+It needs DSM 7 on a 64-bit model. Then install Kantele, give it read access to your music share, and choose the folder.
 [Getting started](docs/getting-started.md) walks through the three steps.
 
 **macOS and Linux.** Download the archive for your machine from the

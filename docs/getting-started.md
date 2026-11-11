@@ -12,11 +12,11 @@ Three steps: install the server, choose the folder your music is in, and open it
        https://gaelsimon.github.io/kantele/index.json
 
    Kantele then appears in Package Center like any other package, and each new version arrives
-   there as an update. One package runs on every model.
-2. The package is not signed, so Package Center installs it only when **Settings**, **General**,
-   **Trust Level** is set to **Any publisher**.
-3. Install Kantele.
-4. Give it read access to your music. In Control Panel, **Shared Folder**, select your music share,
+   there as an update. It needs DSM 7 on a 64-bit model, Intel, AMD or ARM; the 32-bit ARM models
+   such as the DS218j or DS216j cannot run it.
+2. Install Kantele. The package is not signed, so DSM warns that it comes from a third party and is
+   not verified by Synology; click **Agree**.
+3. Give it read access to your music. In Control Panel, **Shared Folder**, select your music share,
    **Edit**, **Permissions**. Change the list at the top from **Local users** to **System internal
    user**, find `kantele`, and tick **Read only**. Without this, every folder looks empty to the
    server.

@@ -293,10 +293,8 @@ impl Advertiser {
         let SocketAddr::V4(searcher) = from else {
             return None;
         };
-        // A search from past the network's edge is not a neighbour's, and five answers to a
-        // forged source would make this server a reflector.
-        if !on_network(*searcher.ip(), address, netmask_of(address)) {
-            tracing::debug!(%from, %address, "a search from outside this network: not answering");
+        if !answerable(*searcher.ip(), address, netmask_of(address)) {
+            tracing::debug!(%from, %address, "a search from a public address: not answering");
             return None;
         }
         let location = self.location(address);
@@ -554,6 +552,12 @@ fn netmask_of(local: Ipv4Addr) -> Option<Ipv4Addr> {
 }
 
 /// Whether `peer` is on the network `local` belongs to. With no mask to go by, it is taken to be.
+/// A home address, or this server's own network: five answers to a forged public source would make
+/// this server a reflector.
+fn answerable(peer: Ipv4Addr, local: Ipv4Addr, netmask: Option<Ipv4Addr>) -> bool {
+    peer.is_private() || peer.is_link_local() || on_network(peer, local, netmask)
+}
+
 fn on_network(peer: Ipv4Addr, local: Ipv4Addr, netmask: Option<Ipv4Addr>) -> bool {
     match netmask {
         Some(mask) => {
@@ -871,20 +875,30 @@ mod tests {
     }
 
     #[test]
-    fn a_search_is_answered_only_from_the_network_it_arrived_on() {
+    fn a_search_is_answered_from_a_home_network_and_refused_from_a_public_source() {
         let local = Ipv4Addr::new(192, 168, 1, 5);
         let mask = Some(Ipv4Addr::new(255, 255, 255, 0));
-        assert!(on_network(Ipv4Addr::new(192, 168, 1, 20), local, mask));
+        assert!(answerable(Ipv4Addr::new(192, 168, 1, 20), local, mask));
         assert!(
-            !on_network(Ipv4Addr::new(10, 0, 0, 9), local, mask),
-            "a forged source past the edge would be answered five times over"
+            answerable(Ipv4Addr::new(192, 168, 20, 7), local, mask),
+            "a player on another VLAN, its search carried over by a relay"
+        );
+        assert!(answerable(Ipv4Addr::new(10, 0, 0, 9), local, mask));
+        assert!(answerable(Ipv4Addr::new(169, 254, 3, 4), local, mask));
+        assert!(
+            !answerable(Ipv4Addr::new(203, 0, 113, 9), local, mask),
+            "a forged public source would be answered five times over"
         );
         assert!(
-            !on_network(Ipv4Addr::new(192, 168, 2, 20), local, mask),
-            "the next subnet over is another network"
+            answerable(
+                Ipv4Addr::new(203, 0, 113, 9),
+                Ipv4Addr::new(203, 0, 113, 1),
+                mask
+            ),
+            "a server whose own network is public addresses answers its neighbours"
         );
         assert!(
-            on_network(Ipv4Addr::new(10, 0, 0, 9), local, None),
+            answerable(Ipv4Addr::new(203, 0, 113, 9), local, None),
             "a system that names no mask is not a reason to answer nobody"
         );
     }
